@@ -2,34 +2,17 @@
 import requests
 import pandas as pd
 
-SPOT_BASE    = "https://api.binance.com"
 FUTURES_BASE = "https://fapi.binance.com"
 
-# Futures-only symbols (set mutable — tự mở rộng khi gặp 400 từ Spot)
-FUTURES_ONLY = {
-    "XAUUSDT", "XAGUSDT", "CCUSDT", "HYPEUSDT",
-    "1000PEPEUSDT", "1000SHIBUSDT", "BTCDOMUSDT", "DEFIUSDT",
-}
-
-def is_futures(symbol: str) -> bool:
-    return symbol in FUTURES_ONLY or symbol.startswith("1000")
-
+# Luôn dùng Futures API — tránh 451 geo-block của Spot API
+# Dashboard chỉ trade futures nên data futures là chính xác hơn
 
 def fetch_klines(symbol: str, interval: str, limit: int = 300,
                  force_futures: bool = False) -> pd.DataFrame:
-    use_futures = force_futures or is_futures(symbol)
-    if use_futures:
-        url = FUTURES_BASE + "/fapi/v1/klines"
-        r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-        r.raise_for_status()
-    else:
-        url = SPOT_BASE + "/api/v3/klines"
-        r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-        if r.status_code == 400:
-            FUTURES_ONLY.add(symbol)
-            url = FUTURES_BASE + "/fapi/v1/klines"
-            r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-        r.raise_for_status()
+    # Luôn dùng fapi — không dùng Spot API nữa
+    url = FUTURES_BASE + "/fapi/v1/klines"
+    r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
+    r.raise_for_status()
 
     df = pd.DataFrame(r.json(), columns=[
         "open_time","open","high","low","close","volume",

@@ -124,42 +124,47 @@ def _save_signal_to_history(result: dict):
 
 
 def _send_high_alert(result: dict, token: str, chat_id: str):
-    """Gửi Telegram alert cho tín hiệu HIGH — kèm verdict."""
-    verdict = result.get("entry_verdict", "WAIT")
-    dir_emoji = "🟢" if result["direction"] == "LONG" else "🔴"
+    """Gửi Telegram alert cho tín hiệu HIGH — plain text, không Markdown."""
+    verdict   = result.get("entry_verdict", "WAIT")
+    sym       = result.get("symbol", "?")
+    dirr      = result.get("direction", "?")
+    dir_emoji = "🟢" if dirr == "LONG" else "🔴"
 
     if verdict == "GO":
-        verdict_line = "✅ *ĐÃ SẴN SÀNG VÀO LỆNH*"
+        verdict_line = "✅ DA SAN SANG VAO LENH"
     elif verdict == "NO":
-        verdict_line = "🔴 *CHƯA NÊN VÀO — chờ setup rõ hơn*"
+        verdict_line = "🔴 CHUA NEN VAO — cho setup ro hon"
     else:
-        verdict_line = "🟡 *CHỜ THÊM TÍN HIỆU*"
+        verdict_line = "🟡 CHO THEM TIN HIEU"
 
-    mk = result.get("market", {})
-    funding_str = mk.get("funding_pct", "N/A")
-    oi_str      = mk.get("oi_str", "N/A")
-    atr_str     = f"{mk.get('atr_ratio','?')}x"
+    mk          = result.get("market", {})
+    funding_str = str(mk.get("funding_pct", "N/A"))
+    oi_str      = str(mk.get("oi_str", "N/A"))
+    atr_val     = mk.get("atr_ratio", "?")
+    atr_str     = str(atr_val) + "x"
 
-    # Checklist summary
-    checklist = result.get("entry_checklist", [])
+    checklist   = result.get("entry_checklist", [])
     check_lines = ""
     for c in checklist[:6]:
         icon = "OK" if c.get("ok") is True else "XX" if c.get("ok") is False else "--"
-        check_lines += "  " + icon + " " + c.get("text","") + "\n"
+        check_lines += "  " + icon + " " + str(c.get("text", "")) + chr(10)
 
-    msg = (
-        verdict_line + "\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Price: " + str(result["price"]) + " | R:R 1:" + str(result["rr"]) + "\n"
-        "Entry: " + str(result["entry"]) + "\n"
-        "SL: " + str(result["sl"]) + " (-" + str(result["sl_pct"]) + "%)\n"
-        "TP1: " + str(result["tp1"]) + " (+" + str(result["tp1_pct"]) + "%) | TP2: " + str(result.get("tp2","")) + "\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "D1: " + str(result.get("d1",{}).get("bias","")) + " | H4: " + str(result.get("h4",{}).get("bias","")) + "\n"
-        "Funding: " + funding_str + " | OI: " + oi_str + " | ATR: " + atr_str + "\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Checklist:\n" + check_lines
-    )
+    lines = [
+        dir_emoji + " " + sym + " — " + dirr + " | HIGH",
+        verdict_line,
+        "--------------------",
+        "Price: " + str(result.get("price","")) + " | R:R 1:" + str(result.get("rr","")),
+        "Entry: " + str(result.get("entry","")),
+        "SL: " + str(result.get("sl","")) + " (-" + str(result.get("sl_pct","")) + "%)",
+        "TP1: " + str(result.get("tp1","")) + " (+" + str(result.get("tp1_pct","")) + "%) | TP2: " + str(result.get("tp2","")),
+        "--------------------",
+        "D1: " + str(result.get("d1",{}).get("bias","")) + " | H4: " + str(result.get("h4",{}).get("bias","")),
+        "Funding: " + funding_str + " | OI: " + oi_str + " | ATR: " + atr_str,
+        "--------------------",
+        "Checklist:",
+        check_lines.rstrip(),
+    ]
+    msg = chr(10).join(lines)
     send_telegram(token, chat_id, msg)
 
 
@@ -509,7 +514,7 @@ def send_telegram(token, chat_id, msg):
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+            json={"chat_id": chat_id, "text": msg},
             timeout=5)
         return r.status_code == 200
     except: return False

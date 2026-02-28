@@ -1,0 +1,16 @@
+{
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "ARBUSDT",
+    "KITEUSDT",
+    "HUSDT",
+    "GUAUSDT"
+  ],
+  "interval_minutes": 15,
+  "telegram_token": "8676249206:AAEUGQNfL5xVQ4DP6krTNRRW-Zs7zqEQLqg",
+  "telegram_chat": "636406779",
+  "alert_confidence": "HIGH",
+  "alert_rr": 1,
+  "rr_ratio": 1
+}

@@ -52,7 +52,9 @@ def analyze_symbol(sym_info: dict):
         result["atr_ratio"]   = mk.get("atr_ratio")
 
         return sanitize(result)
-    except Exception:
+    except Exception as e:
+        import traceback
+        print(f"[SCAN ERROR] {symbol}: {e}")
         return None
 
 
@@ -87,6 +89,9 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 10):
         scan_state["results"]     = results
         scan_state["finished_at"] = datetime.now().isoformat()
     except Exception as e:
+        import traceback
         scan_state["error"] = str(e)
+        print(f"[SCAN FATAL] {e}")
+        traceback.print_exc()
     finally:
         scan_state["running"] = False

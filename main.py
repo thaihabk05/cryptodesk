@@ -70,62 +70,125 @@ scanner_running = False
 scanner_status  = {"is_scanning": False, "last_scan": None,
                    "next_scan": None, "scan_count": 0}
 
-def dashboard_scan_cycle(cfg):
-    min_rr   = cfg.get("rr_ratio", 1.5)
-    min_conf = cfg.get("alert_confidence", "MEDIUM")
-    alert_rr = cfg.get("alert_rr", 1.5)
-    conf_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "ALL": -1}
+def _save_signal_to_history(result: dict):
+    """Lưu signal HIGH vào history."""
+    history = load_history()
+    # Tránh duplicate: không lưu cùng symbol+direction trong 30 phút
+    cutoff = time.time() - 1800
+    for h in history[-50:]:
+        try:
+            ts = datetime.fromisoformat(h.get("time","")).timestamp()
+            if h.get("symbol") == result.get("symbol") and                h.get("direction") == result.get("direction") and                ts > cutoff:
+                return  # duplicate, skip
+        except: pass
+    history.append({
+        "time":       result.get("timestamp", datetime.now().isoformat()),
+        "symbol":     result.get("symbol",""),
+        "direction":  result.get("direction",""),
+        "confidence": result.get("confidence",""),
+        "price":      result.get("price", 0),
+        "entry":      result.get("entry", 0),
+        "sl":         result.get("sl", 0),
+        "sl_pct":     result.get("sl_pct", 0),
+        "tp1":        result.get("tp1", 0),
+        "tp1_pct":    result.get("tp1_pct", 0),
+        "tp2":        result.get("tp2", 0),
+        "rr":         result.get("rr", 0),
+        "d1_bias":    result.get("d1", {}).get("bias", ""),
+        "h4_bias":    result.get("h4", {}).get("bias", ""),
+        "score":      result.get("score", 0),
+        "verdict":    result.get("entry_verdict", "WAIT"),
+    })
+    save_history(history)
 
+
+def _send_high_alert(result: dict, token: str, chat_id: str):
+    """Gửi Telegram alert cho tín hiệu HIGH — kèm verdict."""
+    verdict = result.get("entry_verdict", "WAIT")
+    dir_emoji = "🟢" if result["direction"] == "LONG" else "🔴"
+
+    if verdict == "GO":
+        verdict_line = "✅ *ĐÃ SẴN SÀNG VÀO LỆNH*"
+    elif verdict == "NO":
+        verdict_line = "🔴 *CHƯA NÊN VÀO — chờ setup rõ hơn*"
+    else:
+        verdict_line = "🟡 *CHỜ THÊM TÍN HIỆU*"
+
+    mk = result.get("market", {})
+    funding_str = mk.get("funding_pct", "N/A")
+    oi_str      = mk.get("oi_str", "N/A")
+    atr_str     = f"{mk.get('atr_ratio','?')}x"
+
+    # Checklist summary
+    checklist = result.get("entry_checklist", [])
+    check_lines = ""
+    for c in checklist[:6]:
+        icon = "OK" if c.get("ok") is True else "XX" if c.get("ok") is False else "--"
+        check_lines += "  " + icon + " " + c.get("text","") + "\n"
+
+    msg = (
+        verdict_line + "\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Price: " + str(result["price"]) + " | R:R 1:" + str(result["rr"]) + "\n"
+        "Entry: " + str(result["entry"]) + "\n"
+        "SL: " + str(result["sl"]) + " (-" + str(result["sl_pct"]) + "%)\n"
+        "TP1: " + str(result["tp1"]) + " (+" + str(result["tp1_pct"]) + "%) | TP2: " + str(result.get("tp2","")) + "\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "D1: " + str(result.get("d1",{}).get("bias","")) + " | H4: " + str(result.get("h4",{}).get("bias","")) + "\n"
+        "Funding: " + funding_str + " | OI: " + oi_str + " | ATR: " + atr_str + "\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Checklist:\n" + check_lines
+    )
+    send_telegram(token, chat_id, msg)
+
+
+def dashboard_scan_cycle(cfg):
+    """Scan các symbol trong watchlist Dashboard."""
     for sym in cfg["symbols"]:
         try:
             result = fam_analyze(sym, cfg)
             with scan_lock:
                 scan_results[sym] = result
-
-            # Lưu history nếu có signal hợp lệ — filter theo confidence giống Telegram
-            sig_conf = result.get("confidence", "LOW")
-            sig_conf_ok = min_conf == "ALL" or conf_rank.get(sig_conf, 0) >= conf_rank.get(min_conf, 1)
-            if result.get("direction") in ("LONG", "SHORT") and result.get("rr", 0) >= min_rr and sig_conf_ok:
-                history = load_history()
-                history.append({
-                    "time":       result["timestamp"],
-                    "symbol":     result["symbol"],
-                    "direction":  result["direction"],
-                    "confidence": result["confidence"],
-                    "price":      result["price"],
-                    "entry":      result["entry"],
-                    "sl":         result["sl"],
-                    "sl_pct":     result["sl_pct"],
-                    "tp1":        result["tp1"],
-                    "tp1_pct":    result["tp1_pct"],
-                    "tp2":        result["tp2"],
-                    "rr":         result["rr"],
-                    "d1_bias":    result.get("d1", {}).get("bias", ""),
-                    "h4_bias":    result.get("h4", {}).get("bias", ""),
-                    "score":      result.get("score", 0),
-                })
-                save_history(history)
-
-                # Telegram alert
-                token   = cfg.get("telegram_token", "")
-                chat_id = cfg.get("telegram_chat", "")
-                conf    = result.get("confidence", "LOW")
-                rr      = result.get("rr", 0)
-                conf_ok = min_conf == "ALL" or conf_rank.get(conf, 0) >= conf_rank.get(min_conf, 1)
-                if token and chat_id and conf_ok and rr >= alert_rr:
-                    dir_emoji = "🟢" if result["direction"] == "LONG" else "🔴"
-                    msg = (
-                        f"{dir_emoji} *{result['symbol']}* — {result['direction']} ({conf})\n"
-                        f"Price: `{result['price']}` | R:R `1:{rr}`\n"
-                        f"Entry: `{result['entry']}` | SL: `{result['sl']}` (-{result['sl_pct']}%)\n"
-                        f"TP1: `{result['tp1']}` (+{result['tp1_pct']}%) | TP2: `{result['tp2']}`\n"
-                        f"D1: `{result.get('d1',{}).get('bias','')}` | H4: `{result.get('h4',{}).get('bias','')}`"
-                    )
-                    send_telegram(token, chat_id, msg)
-
         except Exception as e:
             with scan_lock:
                 scan_results[sym] = {"symbol": sym, "error": str(e)}
+
+
+def market_scan_cycle(cfg):
+    """Scan toàn bộ thị trường futures — chạy song song với dashboard scan.
+    Chỉ alert và lưu history với tín hiệu HIGH.
+    """
+    from scanner.scan_engine import run_full_scan, scan_state as msc_state
+    token   = cfg.get("telegram_token", "")
+    chat_id = cfg.get("telegram_chat", "")
+    min_rr  = float(cfg.get("rr_ratio", 1.0))
+
+    print("[MARKET SCAN] Bắt đầu quét toàn thị trường futures...")
+    run_full_scan(min_vol=5_000_000, max_workers=10)
+
+    # Đợi scan xong
+    import time as _time
+    timeout = 300
+    elapsed = 0
+    while msc_state["running"] and elapsed < timeout:
+        _time.sleep(2); elapsed += 2
+
+    results = msc_state.get("results", [])
+    high_signals = [r for r in results if r.get("confidence") == "HIGH"
+                    and r.get("direction") in ("LONG","SHORT")
+                    and r.get("rr", 0) >= min_rr]
+
+    print(f"[MARKET SCAN] Xong — {len(results)} signals, {len(high_signals)} HIGH")
+
+    for result in high_signals:
+        # Lưu history
+        _save_signal_to_history(result)
+        # Gửi Telegram
+        if token and chat_id:
+            try:
+                _send_high_alert(result, token, chat_id)
+            except Exception as e:
+                print(f"[TELEGRAM ERROR] {result.get('symbol')}: {e}")
 
 def dashboard_scanner_loop():
     global scanner_running, scanner_status
@@ -134,7 +197,16 @@ def dashboard_scanner_loop():
         interval_sec = cfg.get("interval_minutes", 30) * 60
         scanner_status["is_scanning"] = True
         scanner_status["last_scan"]   = datetime.now().isoformat()
+
+        # 1. Scan watchlist Dashboard (symbols cụ thể)
         dashboard_scan_cycle(cfg)
+
+        # 2. Scan toàn thị trường futures — alert + lưu history cho HIGH
+        try:
+            market_scan_cycle(cfg)
+        except Exception as e:
+            print(f"[MARKET SCAN ERROR] {e}")
+
         scanner_status["is_scanning"] = False
         scanner_status["scan_count"] += 1
         scanner_status["next_scan"]   = datetime.fromtimestamp(
@@ -435,4 +507,4 @@ if __name__ == "__main__":
     print(f"\n🚀 CryptoDesk running at http://127.0.0.1:{port}\n")
     print("   Tab 1: Dashboard — theo dõi mã cụ thể")
     print("   Tab 2: Market Scan — quét toàn thị trường\n")
-    app.run(debug=True, use_reloader=True, host="0.0.0.0", port=port)
+    app.run(debug=False, host="0.0.0.0", port=port)

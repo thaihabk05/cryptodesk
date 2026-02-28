@@ -979,6 +979,7 @@ function pollScan() {
     } else {
       document.getElementById('btnMarketScan').disabled = false;
       document.getElementById('btnMarketScan').innerHTML = '&#9654; Start Full Scan';
+      scanPollTimer = null;
       loadScanResults(st);
     }
   });

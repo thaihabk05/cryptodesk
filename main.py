@@ -70,22 +70,43 @@ scanner_running = False
 scanner_status  = {"is_scanning": False, "last_scan": None,
                    "next_scan": None, "scan_count": 0}
 
-def _save_signal_to_history(result: dict):
-    """Lưu signal HIGH vào history."""
-    history = load_history()
-    # Tránh duplicate: không lưu cùng symbol+direction trong 30 phút
-    cutoff = time.time() - 1800
-    for h in history[-50:]:
+def _is_duplicate_signal(result: dict, history: list, window_hours: int = 2) -> bool:
+    """
+    Kiểm tra signal có phải duplicate không.
+    Duplicate = cùng symbol + direction + entry price tương tự (±1%) trong window_hours.
+    """
+    cutoff = time.time() - window_hours * 3600
+    sym    = result.get("symbol", "")
+    dirr   = result.get("direction", "")
+    entry  = float(result.get("entry", 0) or 0)
+
+    for h in history[-100:]:
         try:
-            ts = datetime.fromisoformat(h.get("time","")).timestamp()
-            if h.get("symbol") == result.get("symbol") and                h.get("direction") == result.get("direction") and                ts > cutoff:
-                return  # duplicate, skip
-        except: pass
+            ts = datetime.fromisoformat(h.get("time", "")).timestamp()
+            if ts < cutoff:
+                continue
+            if h.get("symbol") != sym or h.get("direction") != dirr:
+                continue
+            # Entry price tương tự ±1%
+            prev_entry = float(h.get("entry", 0) or 0)
+            if prev_entry > 0 and abs(entry - prev_entry) / prev_entry <= 0.01:
+                return True  # duplicate
+        except:
+            continue
+    return False
+
+
+def _save_signal_to_history(result: dict):
+    """Lưu signal vào history — dedup chặt theo symbol+direction+entry±1% trong 2 giờ."""
+    history = load_history()
+    if _is_duplicate_signal(result, history, window_hours=2):
+        print(f"[DEDUP] Skip {result.get('symbol')} {result.get('direction')} — duplicate trong 2h")
+        return
     history.append({
         "time":       result.get("timestamp", datetime.now().isoformat()),
-        "symbol":     result.get("symbol",""),
-        "direction":  result.get("direction",""),
-        "confidence": result.get("confidence",""),
+        "symbol":     result.get("symbol", ""),
+        "direction":  result.get("direction", ""),
+        "confidence": result.get("confidence", ""),
         "price":      result.get("price", 0),
         "entry":      result.get("entry", 0),
         "sl":         result.get("sl", 0),
@@ -456,10 +477,13 @@ def dashboard_scanner_status():
 # ── API — Market Scanner ──────────────────────
 @app.route("/api/market-scan/start", methods=["POST"])
 def market_scan_start():
-    if scan_state["running"]:
-        return jsonify({"error": "Scan đang chạy"}), 400
+    # Luôn cho phép manual scan — cancel auto scan nếu đang chạy
     data    = request.json or {}
     min_vol = float(data.get("min_vol", 10_000_000))
+    # Reset state nếu đang chạy từ auto cycle
+    if scan_state["running"]:
+        scan_state["running"] = False
+        import time as _t; _t.sleep(0.5)
     threading.Thread(target=run_full_scan, args=(min_vol,), daemon=True).start()
     return jsonify({"ok": True})
 

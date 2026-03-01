@@ -12,6 +12,12 @@ from dashboard.swing_h1_engine import swing_h1_analyze
 from dashboard.scalp_engine import scalp_analyze
 from scanner.scan_engine import run_full_scan, scan_state
 
+def _local_isoformat() -> str:
+    """Trả về timestamp ISO có timezone +07:00 để frontend parse đúng."""
+    from datetime import timezone, timedelta
+    tz_vn = timezone(timedelta(hours=7))
+    return datetime.now(tz_vn).isoformat()
+
 # ── App ───────────────────────────────────────
 app = Flask(__name__, static_folder="static")
 app.json_provider_class = NumpyJSONProvider
@@ -251,27 +257,36 @@ def market_scan_cycle(cfg):
 def dashboard_scanner_loop():
     global scanner_running, scanner_status
     while scanner_running:
-        cfg = load_config()
-        interval_sec = cfg.get("interval_minutes", 30) * 60
-        scanner_status["is_scanning"] = True
-        scanner_status["last_scan"]   = datetime.now().isoformat()
-
-        # 1. Scan watchlist Dashboard (symbols cụ thể)
-        dashboard_scan_cycle(cfg)
-
-        # 2. Scan toàn thị trường futures — alert + lưu history cho HIGH
         try:
-            market_scan_cycle(cfg)
-        except Exception as e:
-            print(f"[MARKET SCAN ERROR] {e}")
+            cfg = load_config()
+            interval_sec = cfg.get("interval_minutes", 30) * 60
+            scanner_status["is_scanning"] = True
+            scanner_status["last_scan"]   = _local_isoformat()
 
-        scanner_status["is_scanning"] = False
-        scanner_status["scan_count"] += 1
-        scanner_status["next_scan"]   = datetime.fromtimestamp(
-            time.time() + interval_sec).isoformat()
-        elapsed = 0
-        while elapsed < interval_sec and scanner_running:
-            time.sleep(5); elapsed += 5
+            # 1. Scan watchlist Dashboard (symbols cụ thể)
+            try:
+                dashboard_scan_cycle(cfg)
+            except Exception as e:
+                print(f"[DASHBOARD SCAN ERROR] {e}")
+
+            # 2. Scan toàn thị trường futures — alert + lưu history cho HIGH
+            try:
+                market_scan_cycle(cfg)
+            except Exception as e:
+                print(f"[MARKET SCAN ERROR] {e}")
+
+            scanner_status["is_scanning"] = False
+            scanner_status["scan_count"] += 1
+            scanner_status["next_scan"]   = datetime.fromtimestamp(
+                time.time() + interval_sec).isoformat()
+            elapsed = 0
+            while elapsed < interval_sec and scanner_running:
+                time.sleep(5); elapsed += 5
+        except Exception as e:
+            # Catch-all: loop không bao giờ chết dù có lỗi bất ngờ
+            print(f"[SCANNER LOOP ERROR] {e} — tiếp tục sau 60s")
+            scanner_status["is_scanning"] = False
+            time.sleep(60)
 
 # ── API — Frontend (static) ───────────────────
 @app.route("/")
@@ -630,10 +645,7 @@ def market_scan_start():
     # Luôn cho phép manual scan — cancel auto scan nếu đang chạy
     data    = request.json or {}
     min_vol = float(data.get("min_vol", 10_000_000))
-    # Reset state nếu đang chạy từ auto cycle
-    if scan_state["running"]:
-        scan_state["running"] = False
-        import time as _t; _t.sleep(0.5)
+    # Không reset nếu đang scan — chỉ skip
     cfg      = load_config()
     strategy = cfg.get("strategy", "SWING_H4")
     threading.Thread(target=run_full_scan, kwargs={"min_vol": min_vol, "strategy": strategy}, daemon=True).start()

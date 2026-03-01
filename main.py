@@ -202,7 +202,8 @@ def market_scan_cycle(cfg):
     results = msc_state.get("results", [])
     high_signals = [r for r in results if r.get("confidence") == "HIGH"
                     and r.get("direction") in ("LONG","SHORT")
-                    and r.get("rr", 0) >= min_rr]
+                    and r.get("rr", 0) >= min_rr
+                    and r.get("entry_verdict") == "GO"]  # Chỉ gửi khi sẵn sàng vào lệnh
 
     print(f"[MARKET SCAN] Xong — {len(results)} signals, {len(high_signals)} HIGH")
 

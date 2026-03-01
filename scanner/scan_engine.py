@@ -1,5 +1,5 @@
 """scanner/scan_engine.py — Full Market Scanner.
-Dùng chung fam_analyze() với Dashboard để đảm bảo kết quả nhất quán.
+Dùng chung engine với Dashboard — theo strategy được chọn (SWING_H4 hoặc SWING_H1).
 """
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,10 +8,13 @@ from datetime import datetime
 from core.binance import fetch_all_futures_tickers
 from core.utils import sanitize
 from dashboard.fam_engine import fam_analyze
+from dashboard.swing_h1_engine import swing_h1_analyze
+from dashboard.scalp_engine import scalp_analyze
 
 scan_state = {
     "running": False, "progress": 0, "total": 0, "results": [],
     "started_at": None, "finished_at": None, "error": None,
+    "strategy": "SWING_H4",
 }
 _state_lock = threading.Lock()
 
@@ -20,7 +23,15 @@ SCAN_CFG = {
     "symbols": [], "interval_minutes": 30,
     "telegram_token": "", "telegram_chat": "",
     "alert_confidence": "HIGH", "alert_rr": 1.5, "rr_ratio": 1.0,
+    "strategy": "SWING_H4",
 }
+
+def _get_engine(cfg):
+    """Chọn engine phù hợp với strategy trong config."""
+    s = cfg.get("strategy", "SWING_H4")
+    if s == "SWING_H1": return swing_h1_analyze
+    if s == "SCALP":    return scalp_analyze
+    return fam_analyze
 
 
 def analyze_symbol(sym_info: dict):
@@ -29,8 +40,9 @@ def analyze_symbol(sym_info: dict):
     try:
         # Delay nhỏ để tránh 429 rate limit — 3 workers × 0.3s = ~1 req/100ms/worker
         _t.sleep(0.3)
-        cfg = {**SCAN_CFG, "force_futures": True}
-        result = fam_analyze(symbol, cfg)
+        cfg    = {**SCAN_CFG, "force_futures": True}
+        engine = _get_engine(cfg)
+        result = engine(symbol, cfg)
 
         # Bỏ qua WAIT
         if result.get("direction") not in ("LONG", "SHORT"):
@@ -61,8 +73,9 @@ def analyze_symbol(sym_info: dict):
             import time as _t2
             _t2.sleep(2)
             try:
-                cfg = {**SCAN_CFG, "force_futures": True}
-                result = fam_analyze(symbol, cfg)
+                cfg    = {**SCAN_CFG, "force_futures": True}
+                engine = _get_engine(cfg)
+                result = engine(symbol, cfg)
                 # (tiếp tục xử lý bình thường nếu retry OK)
             except:
                 pass
@@ -70,12 +83,13 @@ def analyze_symbol(sym_info: dict):
         return None
 
 
-def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3):
+def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: str = "SWING_H4"):
     global scan_state
     with _state_lock:
+        SCAN_CFG["strategy"] = strategy
         scan_state.update({"running": True, "progress": 0, "results": [],
                            "error": None, "started_at": datetime.now().isoformat(),
-                           "finished_at": None})
+                           "finished_at": None, "strategy": strategy})
     try:
         symbols = fetch_all_futures_tickers(min_vol)
         scan_state["total"] = len(symbols)

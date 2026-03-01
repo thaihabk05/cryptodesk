@@ -6,6 +6,18 @@ import pandas as pd
 def add_ma(df: pd.DataFrame) -> pd.DataFrame:
     for p in [34, 89, 200]:
         df[f"ma{p}"] = df["close"].rolling(p, min_periods=max(1, p // 2)).mean()
+    # EMA nhanh cho scalp
+    for p in [9, 21]:
+        df[f"ema{p}"] = df["close"].ewm(span=p, adjust=False).mean()
+    return df
+
+def add_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+    delta = df["close"].diff()
+    gain  = delta.clip(lower=0).rolling(period, min_periods=1).mean()
+    loss  = (-delta.clip(upper=0)).rolling(period, min_periods=1).mean()
+    rs    = gain / loss.replace(0, np.nan)
+    df["rsi"] = 100 - (100 / (1 + rs))
+    df["rsi"] = df["rsi"].fillna(50)
     return df
 
 def add_volume_sma(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
@@ -19,6 +31,7 @@ def add_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
 
 def prepare(df: pd.DataFrame) -> pd.DataFrame:
     df = add_ma(df)
+    df = add_rsi(df)
     df = add_volume_sma(df)
     df = add_atr(df)
     return df.dropna(subset=["ma34"])

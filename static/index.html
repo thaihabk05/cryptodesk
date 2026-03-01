@@ -425,6 +425,15 @@ tbody td{padding:11px 12px;vertical-align:middle}
     <span class="status-label" id="statusLabel">Scanner off</span>
     <button class="btn" id="btnToggle" onclick="toggleDashScanner()">&#9654; Start Scanner</button>
     <button class="btn primary" id="btnScanNow" onclick="scanNowHeader()">Scan Now</button>
+    <div style="display:flex;align-items:center;gap:5px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:3px 8px" title="Strategy hiện tại">
+      <span style="font-size:10px;color:var(--muted2);white-space:nowrap">Strategy</span>
+      <select id="strategySelect" onchange="onStrategyChange()"
+        style="background:transparent;border:none;color:var(--accent);font-family:var(--mono);font-size:11px;font-weight:700;outline:none;cursor:pointer">
+        <option value="SWING_H4">Swing H4/D1</option>
+        <option value="SWING_H1">Swing H1</option>
+        <option value="SCALP">Scalp M15</option>
+      </select>
+    </div>
     <button class="btn" onclick="openSettings()" title="Settings">&#9881;</button>
   </div>
 </header>
@@ -792,10 +801,31 @@ function switchTab(tab) {
 var config = {symbols:[], interval_minutes:30};
 var signalCache = {};
 
+
+function onStrategyChange() {
+  var sel = document.getElementById('strategySelect');
+  var strategy = sel ? sel.value : 'SWING_H4';
+  config.strategy = strategy;
+  // Cập nhật label logo
+  var sub = document.querySelector('.logo-sub');
+  if (sub) sub.textContent = strategy === 'SWING_H1' ? 'SWING H1 · EMA34/89 · MULTI-TF'
+    : strategy === 'SCALP' ? 'SCALP M15 · EMA9/21 · RSI'
+    : 'FAM · MA34/89/200 · MULTI-TF';
+  // Lưu config rồi re-scan tất cả
+  fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(config)
+  });
+  // Xóa cache cũ để lần scan tiếp theo dùng strategy mới
+  signalCache = {};
+}
+
 function loadConfig() {
   fetch('/api/config').then(function(r){return r.json();}).then(function(cfg){
     config = cfg;
     renderChips();
+    // Sync strategy dropdown
+    var sel = document.getElementById('strategySelect');
+    if (sel && cfg.strategy) sel.value = cfg.strategy;
   });
 }
 
@@ -1005,6 +1035,16 @@ function showDetail(sym) {
   var verdBorder= verd==='GO' ? 'rgba(0,230,118,.3)' : verd==='NO' ? 'rgba(255,61,90,.3)' : 'rgba(255,179,0,.3)';
 
   var html = '';
+  // Banner snapshot nếu mở từ history
+  if (d._from_history) {
+    var st = new Date(d._saved_at);
+    var stStr = st.toLocaleDateString('vi-VN')+' '+st.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    html += '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;'
+          + 'padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--wait)">'
+          + '<span style="font-size:14px">🕐</span>'
+          + '<div><b>Snapshot lúc '+stStr+'</b> — data đã lưu, không phải tín hiệu live hiện tại</div>'
+          + '</div>';
+  }
   html += '<div class="drawer-sym">'+d.symbol.replace('USDT','')+'<span style="color:var(--muted);font-size:14px">/USDT</span></div>';
   html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">';
   html += '<span class="badge '+dir+'" style="font-size:13px;padding:5px 14px">'+dir+'</span>';
@@ -1034,7 +1074,7 @@ function showDetail(sym) {
   var btcC = btc.sentiment==='RISK_ON'?'var(--long)':btc.sentiment==='RISK_OFF'||btc.sentiment==='DUMP'?'var(--short)':'var(--muted2)';
   html += '<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:12px">';
   html += '<span style="color:'+btcC+';font-weight:700">'+(btc.sentiment||'--')+'</span> &mdash; '+(btc.note||'--');
-  html += '<br><span style="color:var(--muted);font-size:10px">BTC D1:'+btc.d1_trend+' H4:'+btc.h4_trend+' &middot; 24h: '+(btc.chg_24h>0?'+':'')+btc.chg_24h+'%</span>';
+  html += '<br><span style="color:var(--muted);font-size:10px">BTC D1:'+(btc.d1_trend||'--')+' H4:'+(btc.h4_trend||'--')+' &middot; 24h: '+((btc.chg_24h!=null&&btc.chg_24h>0)?'+':'')+(btc.chg_24h!=null?btc.chg_24h:'--')+'%</span>';
   html += '</div>';
 
   if (d.conditions && d.conditions.length) {
@@ -1051,9 +1091,9 @@ function showDetail(sym) {
 
   html += '<div class="drawer-section">Multi-TF</div>';
   html += '<div style="font-size:12px;color:var(--muted2);line-height:2;background:var(--bg3);border-radius:8px;padding:10px 12px">';
-  if (d.d1) html += 'D1: <b style="color:'+( d.d1.bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.d1.bias+'</b> &middot; '+d.d1.structure+'<br>';
+  if (d.d1 && d.d1.bias) html += 'D1: <b style="color:'+( d.d1.bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.d1.bias+'</b>'+(d.d1.structure?' &middot; '+d.d1.structure:'')+'<br>';
   if (h4.bias) html += 'H4: <b style="color:'+(h4.bias==='LONG'?'var(--long)':'var(--short)')+'">'+h4.bias+'</b> &middot; MA34 '+slopeArrow(h4.slope_ma34)+' MA89 '+slopeArrow(h4.slope_ma89)+'<br>';
-  if (d.h1) html += 'Fib zone: <b>'+d.h1.fib_zone_price+'</b><br>';
+  if (d.h1 && d.h1.fib_zone_price) html += 'Fib zone: <b>'+d.h1.fib_zone_price+'</b><br>';
   html += '</div>';
 
   // Verdict block
@@ -1103,9 +1143,86 @@ function showDetail(sym) {
       '</div>';
   }
 
+  // ── Footer 2 nút cố định — luôn hiển thị ──
+  html += '<div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
+  // Nút Thử vào lệnh
+  html += '<button onclick="drawerTryEntry(\''+d.symbol+'\')" '
+        + 'style="flex:1;padding:12px;background:rgba(0,200,255,.12);border:1px solid var(--accent);'
+        + 'border-radius:8px;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer">'
+        + '🎯 Thử vào lệnh</button>';
+  // Nút Đưa vào Signal History
+  html += '<button id="btnAddHistory" onclick="drawerAddHistory(\''+d.symbol+'\')" '
+        + 'style="flex:1;padding:12px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.3);'
+        + 'border-radius:8px;color:var(--long);font-weight:700;font-size:13px;cursor:pointer">'
+        + '📋 Đưa vào History</button>';
+  html += '</div>';
+
   document.getElementById('drawerContent').innerHTML = html;
   document.getElementById('drawer').classList.add('open');
   document.getElementById('overlay').classList.add('show');
+}
+
+function drawerTryEntry(sym) {
+  var sig = signalCache[sym];
+  if (sig && !sig.error) {
+    psOpen(sig);
+  } else {
+    fetch('/api/symbol/' + sym)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        signalCache[sym] = d;
+        if (!d.error) psOpen(d);
+      });
+  }
+}
+
+function drawerAddHistory(sym) {
+  var sig = signalCache[sym];
+  if (!sig || sig.error) return;
+  var btn = document.getElementById('btnAddHistory');
+
+  // Chuẩn bị payload giống _save_signal_to_history backend
+  var payload = {
+    symbol:     sig.symbol,
+    time:       sig.timestamp || new Date().toISOString(),
+    price:      sig.price,
+    direction:  sig.direction,
+    confidence: sig.confidence,
+    entry:      sig.entry,
+    sl:         sig.sl,
+    tp1:        sig.tp1,
+    tp2:        sig.tp2,
+    sl_pct:     sig.sl_pct,
+    tp1_pct:    sig.tp1_pct,
+    rr:         sig.rr,
+    score:      sig.score,
+    entry_verdict: sig.entry_verdict,
+    d1_bias:    (sig.d1||{}).bias || sig.d1_bias,
+    h4_bias:    (sig.h4||{}).bias || sig.h4_bias,
+    conditions: sig.conditions || [],
+    strategy:   sig.strategy || 'SWING_H4',
+  };
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Đang lưu...'; }
+
+  fetch('/api/history/add', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(res) {
+    if (btn) {
+      if (res.ok) {
+        btn.textContent = '✅ Đã lưu vào History';
+        btn.style.background = 'rgba(0,230,118,.2)';
+        btn.style.borderColor = 'var(--long)';
+      } else {
+        btn.textContent = '❌ Lỗi: ' + (res.error || 'unknown');
+        btn.disabled = false;
+      }
+    }
+  }).catch(function() {
+    if (btn) { btn.textContent = '❌ Lỗi kết nối'; btn.disabled = false; }
+  });
 }
 
 // ── Dashboard Scanner ──
@@ -1365,8 +1482,14 @@ function showScanDrawer(idx) {
     entry_verdict:  d.entry_verdict || 'WAIT',
     h1_status:      d.h1_status || '',
     h1_status_note: d.h1_status_note || '',
+    timestamp:      d.timestamp || new Date().toISOString(),
+    strategy:       d.strategy  || 'SWING_H4',
+    d1_bias:        (d.d1||{}).bias || d.d1_bias || '',
+    h4_bias:        (d.h4||{}).bias || d.h4_bias || '',
     market: {
+      funding:     d.funding,
       funding_pct: d.funding_str || 'N/A',
+      oi_change:   d.oi_change,
       oi_str:      d.oi_str      || 'N/A',
       atr_ratio:   d.atr_ratio   || '--',
       atr_state:   d.atr_state   || '',
@@ -1381,6 +1504,8 @@ function showScanDrawer(idx) {
   };
 
   // Đưa vào signalCache để showDetail + btn-try hoạt động
+  sig._from_history = true;
+  sig._saved_at = d.time;
   signalCache[d.symbol] = sig;
   showDetail(d.symbol);
 }
@@ -1476,41 +1601,94 @@ function renderHistory() {
   updateHistSelectedBtn();
 
   var rows = data.map(function(d, i) {
-    var dc = d.direction==='LONG'?'var(--long)':'var(--short)';
-    var cc = d.confidence==='HIGH'?'var(--long)':d.confidence==='MEDIUM'?'var(--wait)':'var(--muted)';
-    var t  = new Date(d.time);
-    var ts = t.toLocaleDateString()+' '+t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    var uid = d.symbol + '|' + d.time;  // unique id cho signal
-    return '<tr id="hrow-'+i+'">' +
-      '<td style="padding:6px 8px">' +
+    var dc  = d.direction==='LONG'?'var(--long)':'var(--short)';
+    var cc  = d.confidence==='HIGH'?'var(--long)':d.confidence==='MEDIUM'?'var(--wait)':'var(--muted)';
+    var t   = new Date(d.time);
+    var ts  = t.toLocaleDateString()+' '+t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    var uid = d.symbol + '|' + d.time;
+    var vol = d.volume_24h ? (d.volume_24h >= 1e6 ? (d.volume_24h/1e6).toFixed(1)+'M' : (d.volume_24h/1e3).toFixed(0)+'K') : '--';
+    var strat = d.strategy === 'SCALP' ? '⚡' : d.strategy === 'SWING_H1' ? 'H1' : 'H4';
+    return '<tr id="hrow-'+i+'" style="cursor:pointer" onclick="showHistoryDetail('+i+')">' +
+      '<td style="padding:6px 8px" onclick="event.stopPropagation()">' +
         '<input type="checkbox" data-uid="'+uid+'" data-idx="'+i+'" onchange="onHistCheck(this)"' +
         ' style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent)"></td>' +
       '<td style="color:var(--text);opacity:.75;font-size:11px;white-space:nowrap">'+ts+'</td>' +
       '<td><b>'+d.symbol.replace('USDT','')+'</b><span style="color:var(--muted2)">/USDT</span></td>' +
       '<td><span class="badge '+d.direction+'">'+d.direction+'</span></td>' +
       '<td><span style="font-size:11px;font-weight:700;color:'+cc+'">'+d.confidence+'</span></td>' +
+      '<td style="font-size:10px;color:var(--muted2)">'+strat+'</td>' +
       '<td class="mono" style="color:var(--text)">'+fmt(d.price)+'</td>' +
       '<td class="mono" style="color:var(--accent)">'+fmt(d.entry)+'</td>' +
       '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted2)">-'+d.sl_pct+'%</span></td>' +
       '<td class="mono" style="color:var(--long)">'+fmt(d.tp1)+' <span style="font-size:10px;color:var(--muted2)">+'+d.tp1_pct+'%</span></td>' +
       '<td><span style="font-family:var(--mono);font-weight:800;color:'+rrColor(d.rr)+'">1:'+d.rr+'</span></td>' +
+      '<td style="font-size:11px;color:var(--muted2);font-family:var(--mono)">'+vol+'</td>' +
       '<td style="font-size:11px;color:'+(d.d1_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.d1_bias+'</td>' +
       '<td style="font-size:11px;color:'+(d.h4_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.h4_bias+'</td>' +
-      '<td><button onclick="backtestSingle('+i+')" style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);' +
+      '<td onclick="event.stopPropagation()"><button onclick="backtestSingle('+i+')" style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);' +
         'color:var(--accent);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;white-space:nowrap">' +
         '&#9654; BT</button></td>' +
     '</tr>';
   }).join('');
 
   document.getElementById('historyContent').innerHTML =
-    '<div style="font-size:11px;color:var(--muted2);margin-bottom:10px">'+data.length+' signals — chọn để backtest</div>' +
+    '<div style="font-size:11px;color:var(--muted2);margin-bottom:10px">'+data.length+' signals — click để xem chi tiết, chọn checkbox để backtest</div>' +
     '<div class="table-wrap"><table>' +
     '<thead><tr>' +
       '<th style="width:28px"><input type="checkbox" id="histCheckAll" onchange="onHistCheckAll(this)"' +
         ' style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent)"></th>' +
-      '<th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th>' +
-      '<th>Price</th><th>Entry</th><th>SL</th><th>TP1</th><th>R:R</th><th>D1</th><th>H4</th><th></th>' +
+      '<th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th><th>Strat</th>' +
+      '<th>Price</th><th>Entry</th><th>SL</th><th>TP1</th><th>R:R</th>' +
+      '<th>Vol 24h</th><th>D1</th><th>H4</th><th></th>' +
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+function showHistoryDetail(idx) {
+  var dir  = document.getElementById('histDir').value;
+  var data = historyData.filter(function(d){ return dir==='ALL'||d.direction===dir; });
+  var d    = data[idx]; if (!d) return;
+
+  // Map history record → signalCache format cho showDetail
+  var sig = {
+    symbol:          d.symbol,
+    price:           d.price,
+    direction:       d.direction,
+    confidence:      d.confidence,
+    score:           d.score || 0,
+    entry:           d.entry,
+    entry_now:       d.entry,
+    entry_opt:       null,
+    entry_opt_label: null,
+    entry_opt_rr:    null,
+    sl:              d.sl,
+    tp1:             d.tp1,
+    tp2:             d.tp2 || 0,
+    sl_pct:          d.sl_pct,
+    tp1_pct:         d.tp1_pct,
+    rr:              d.rr,
+    conditions:      d.conditions      || [],
+    warnings:        d.warnings        || [],
+    entry_checklist: d.entry_checklist || [],
+    entry_verdict:   d.entry_verdict   || d.verdict || 'WAIT',
+    h1_status:       '',
+    h1_status_note:  '',
+    timestamp:       d.time,
+    strategy:        d.strategy || 'SWING_H4',
+    d1_bias:         d.d1_bias || '',
+    h4_bias:         d.h4_bias || '',
+    market:          d.market || { funding_pct:'N/A', oi_str:'N/A', atr_ratio:'--' },
+    btc_context:     d.btc_context || {},
+    d1:              d.d1 || { bias: d.d1_bias || '' },
+    h4:              d.h4 || { bias: d.h4_bias || '' },
+    h1:              d.h1 || {},
+    fib_ret:         {},
+    fib_ext:         {},
+  };
+
+  sig._from_history = true;
+  sig._saved_at = d.time;
+  signalCache[d.symbol] = sig;
+  showDetail(d.symbol);
 }
 
 function onHistCheck(cb) {

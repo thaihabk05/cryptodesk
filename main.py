@@ -8,6 +8,8 @@ from flask import Flask, jsonify, request, send_from_directory, make_response
 
 from core.utils import NumpyJSONProvider
 from dashboard.fam_engine import fam_analyze
+from dashboard.swing_h1_engine import swing_h1_analyze
+from dashboard.scalp_engine import scalp_analyze
 from scanner.scan_engine import run_full_scan, scan_state
 
 # ── App ───────────────────────────────────────
@@ -36,6 +38,7 @@ DEFAULT_CONFIG = {
     "alert_confidence": "MEDIUM",   # MEDIUM | HIGH | ALL
     "alert_rr":         1.5,        # min R:R để gửi alert
     "rr_ratio":         1.5,        # min R:R để hiện signal trên Dashboard
+    "strategy":         "SWING_H4",  # SWING_H4 | SWING_H1 | SCALP
 }
 
 def load_config():
@@ -103,22 +106,33 @@ def _save_signal_to_history(result: dict):
         print(f"[DEDUP] Skip {result.get('symbol')} {result.get('direction')} — duplicate trong 2h")
         return
     history.append({
-        "time":       result.get("timestamp", datetime.now().isoformat()),
-        "symbol":     result.get("symbol", ""),
-        "direction":  result.get("direction", ""),
-        "confidence": result.get("confidence", ""),
-        "price":      result.get("price", 0),
-        "entry":      result.get("entry", 0),
-        "sl":         result.get("sl", 0),
-        "sl_pct":     result.get("sl_pct", 0),
-        "tp1":        result.get("tp1", 0),
-        "tp1_pct":    result.get("tp1_pct", 0),
-        "tp2":        result.get("tp2", 0),
-        "rr":         result.get("rr", 0),
-        "d1_bias":    result.get("d1", {}).get("bias", ""),
-        "h4_bias":    result.get("h4", {}).get("bias", ""),
-        "score":      result.get("score", 0),
-        "verdict":    result.get("entry_verdict", "WAIT"),
+        "time":            result.get("timestamp", datetime.now().isoformat()),
+        "symbol":          result.get("symbol", ""),
+        "direction":       result.get("direction", ""),
+        "confidence":      result.get("confidence", ""),
+        "price":           result.get("price", 0),
+        "entry":           result.get("entry", 0),
+        "sl":              result.get("sl", 0),
+        "sl_pct":          result.get("sl_pct", 0),
+        "tp1":             result.get("tp1", 0),
+        "tp1_pct":         result.get("tp1_pct", 0),
+        "tp2":             result.get("tp2", 0),
+        "rr":              result.get("rr", 0),
+        "d1_bias":         result.get("d1", {}).get("bias", "") or result.get("d1_bias", ""),
+        "h4_bias":         result.get("h4", {}).get("bias", "") or result.get("h4_bias", ""),
+        "score":           result.get("score", 0),
+        "verdict":         result.get("entry_verdict", "WAIT"),
+        "entry_verdict":   result.get("entry_verdict", "WAIT"),
+        "volume_24h":      result.get("volume_24h", 0),
+        "strategy":        result.get("strategy", "SWING_H4"),
+        "conditions":      result.get("conditions", []),
+        "warnings":        result.get("warnings", []),
+        "entry_checklist": result.get("entry_checklist", []),
+        "market":          result.get("market", {}),
+        "btc_context":     result.get("btc_context", {}),
+        "d1":              result.get("d1", {}),
+        "h4":              result.get("h4", {}),
+        "h1":              result.get("h1", {}),
     })
     save_history(history)
 
@@ -168,11 +182,19 @@ def _send_high_alert(result: dict, token: str, chat_id: str):
     send_telegram(token, chat_id, msg)
 
 
+
+def get_analyze_fn(cfg):
+    """Trả về engine function phù hợp với strategy được chọn."""
+    strategy = cfg.get("strategy", "SWING_H4")
+    if strategy == "SWING_H1":  return swing_h1_analyze
+    if strategy == "SCALP":     return scalp_analyze
+    return fam_analyze  # mặc định SWING_H4
+
 def dashboard_scan_cycle(cfg):
     """Scan các symbol trong watchlist Dashboard."""
     for sym in cfg["symbols"]:
         try:
-            result = fam_analyze(sym, cfg)
+            result = get_analyze_fn(cfg)(sym, cfg)
             with scan_lock:
                 scan_results[sym] = result
         except Exception as e:
@@ -190,7 +212,7 @@ def market_scan_cycle(cfg):
     min_rr  = float(cfg.get("rr_ratio", 1.0))
 
     print("[MARKET SCAN] Bắt đầu quét toàn thị trường futures...")
-    run_full_scan(min_vol=5_000_000, max_workers=3)
+    run_full_scan(min_vol=5_000_000, max_workers=3, strategy=cfg.get("strategy","SWING_H4"))
 
     # Đợi scan xong
     import time as _time
@@ -262,7 +284,7 @@ def scan_now():
     cfg = load_config(); out = []
     for sym in cfg["symbols"]:
         try:
-            r = fam_analyze(sym, cfg)
+            r = get_analyze_fn(cfg)(sym, cfg)
             with scan_lock: scan_results[sym] = r
             out.append(r)
         except Exception as e:
@@ -272,7 +294,7 @@ def scan_now():
 @app.route("/api/symbol/<symbol>")
 def symbol_detail(symbol):
     cfg = load_config()
-    try:    return jsonify(fam_analyze(symbol, cfg))
+    try:    return jsonify(get_analyze_fn(cfg)(symbol, cfg))
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/results")
@@ -282,6 +304,15 @@ def get_results():
 @app.route("/api/history")
 def get_history():
     return jsonify(load_history())
+
+@app.route("/api/history/add", methods=["POST"])
+def history_add():
+    """Thêm thủ công 1 signal vào history từ popup."""
+    sig = request.json or {}
+    if not sig.get("symbol"):
+        return jsonify({"ok": False, "error": "Thiếu symbol"})
+    _save_signal_to_history(sig)
+    return jsonify({"ok": True})
 
 @app.route("/api/history/clear", methods=["POST"])
 def clear_history():
@@ -594,7 +625,9 @@ def market_scan_start():
     if scan_state["running"]:
         scan_state["running"] = False
         import time as _t; _t.sleep(0.5)
-    threading.Thread(target=run_full_scan, args=(min_vol,), daemon=True).start()
+    cfg      = load_config()
+    strategy = cfg.get("strategy", "SWING_H4")
+    threading.Thread(target=run_full_scan, kwargs={"min_vol": min_vol, "strategy": strategy}, daemon=True).start()
     return jsonify({"ok": True})
 
 @app.route("/api/market-scan/status")

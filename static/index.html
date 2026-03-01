@@ -735,8 +735,18 @@ function buildCard(d) {
   return '<div class="card '+dir+'" onclick="showDetail(\''+d.symbol+'\')">' +
     '<div class="card-header">' +
       '<span class="card-sym">'+d.symbol.replace('USDT','')+'<span>/USDT</span></span>' +
-      '<div class="badges"><span class="badge '+conf+'">'+conf+'</span>' +
-        '<span class="badge '+dir+'">'+dir+'</span>'+ntBadge+'</div>' +
+      '<div style="display:flex;align-items:center;gap:6px">' +
+        '<div class="badges"><span class="badge '+conf+'">'+conf+'</span>' +
+          '<span class="badge '+dir+'">'+dir+'</span>'+ntBadge+'</div>' +
+        '<button onclick="event.stopPropagation();refreshSingle(this,\''+d.symbol+'\')" '+
+          'title="Refresh mã này" '+
+          'style="background:rgba(255,255,255,.07);border:1px solid var(--border);border-radius:6px;'+
+          'color:var(--muted);cursor:pointer;font-size:13px;padding:2px 7px;line-height:1.6;'+
+          'transition:all .2s" '+
+          'onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">'+
+          '&#8635;'+
+        '</button>' +
+      '</div>' +
     '</div>' +
     '<div class="card-price">'+fmt(d.price)+'</div>' +
     '<div class="tf-tags">'+tfTags+'</div>' +
@@ -792,6 +802,21 @@ function scanSingle(sym) {
     signalCache[sym] = d;
     renderCards();
   });
+}
+
+function refreshSingle(btn, sym) {
+  btn.innerHTML = '<span class="spinner" style="width:10px;height:10px;border-width:2px"></span>';
+  btn.disabled = true;
+  fetch('/api/symbol/'+sym)
+    .then(function(r){return r.json();})
+    .then(function(d){
+      signalCache[sym] = d;
+      renderCards();
+    })
+    .catch(function(){
+      btn.innerHTML = '!';
+      btn.disabled = false;
+    });
 }
 
 function showDetail(sym) {
@@ -877,11 +902,40 @@ function showDetail(sym) {
     } else if (verd === 'NO') {
       html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Còn 2+ điều kiện thất bại — chờ setup rõ hơn</div>';
     } else {
-      html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Một số điều kiện chưa xác nhận — theo dõi thêm</div>';
+      // WAIT — liệt kê cụ thể điều kiện nào chưa pass
+      var waitItems = (d.entry_checklist||[]).filter(function(c){ return c.ok !== true; });
+      if (waitItems.length) {
+        var waitLines = waitItems.map(function(c){
+          var icon = c.ok === false ? '❌' : '⏳';
+          return icon + ' ' + c.text;
+        }).join('<br>');
+        html += '<div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:left;line-height:1.8">Cần chờ:<br>' + waitLines + '</div>';
+      } else {
+        html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Một số điều kiện chưa xác nhận — theo dõi thêm</div>';
+      }
     }
     html += '</div>';
   }
-  html += '<div class="checklist"><b>Checklist trước khi vào lệnh</b>&#9744; H4 đóng nến xác nhận hướng<br>&#9744; Không đang trong no-trade zone<br>&#9744; Funding không bất lợi<br>&#9744; Volume tăng khi vào vùng entry<br>&#9744; BTC không đang dump mạnh</div>';
+
+  // Checklist động từ entry_checklist backend — có số thực tế
+  var cl = d.entry_checklist || [];
+  if (cl.length) {
+    html += '<div class="checklist"><b>Checklist trước khi vào lệnh</b>';
+    cl.forEach(function(c) {
+      var icon = c.ok === true ? '✅' : c.ok === false ? '❌' : '⬜';
+      var clr  = c.ok === true ? 'var(--long)' : c.ok === false ? 'var(--short)' : 'var(--muted2)';
+      html += '<div style="display:flex;align-items:flex-start;gap:7px;margin-top:6px">' +
+        '<span style="font-size:13px;flex-shrink:0">'+icon+'</span>' +
+        '<span style="font-size:12px;color:'+clr+';line-height:1.5">'+c.text+'</span>' +
+        '</div>';
+    });
+    html += '</div>';
+  } else {
+    // Fallback nếu không có entry_checklist
+    html += '<div class="checklist"><b>Checklist trước khi vào lệnh</b>' +
+      '<div style="font-size:12px;color:var(--muted);margin-top:6px">Refresh mã để tải checklist</div>' +
+      '</div>';
+  }
 
   document.getElementById('drawerContent').innerHTML = html;
   document.getElementById('drawer').classList.add('open');

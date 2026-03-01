@@ -161,72 +161,89 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     # Entry checklist tự động
     def build_entry_checklist(direction, h1_status, rr, funding, oi_change, btc_ctx, no_trade, confidence="LOW"):
         checks = []
-        # 1. H1 confirmation
+        dir_vn = "LONG" if direction == "LONG" else "SHORT"
+
+        # 1. Confidence
+        if confidence == "HIGH":
+            checks.append({"ok": True,  "text": "Confidence HIGH — tín hiệu đa khung đủ mạnh"})
+        elif confidence == "MEDIUM":
+            checks.append({"ok": False, "text": "Confidence MEDIUM — chờ thêm 1-2 nến H4 xác nhận rõ hướng"})
+        else:
+            checks.append({"ok": False, "text": "Confidence LOW — tín hiệu yếu, không vào lệnh"})
+
+        # 2. H1 confirmation
         if h1_status == "CONFIRMED":
-            checks.append({"ok": True,  "text": "H1 momentum xác nhận hướng"})
+            checks.append({"ok": True,  "text": "H1 đang chạy đúng hướng " + dir_vn + " — momentum tốt"})
         elif h1_status == "PULLBACK":
-            checks.append({"ok": False, "text": "H1 đang pullback — chờ nến đóng cửa xác nhận"})
+            checks.append({"ok": None,  "text": "H1 đang pullback — chờ nến H1 tiếp theo đóng cửa theo hướng " + dir_vn})
         elif h1_status == "COUNTER":
-            checks.append({"ok": False, "text": "H1 counter-trend mạnh — không vào lúc này"})
+            checks.append({"ok": False, "text": "H1 đang ngược chiều " + dir_vn + " — không vào, chờ H1 đổi hướng"})
         else:
-            checks.append({"ok": None,  "text": "H1 chưa rõ — theo dõi thêm"})
+            checks.append({"ok": None,  "text": "H1 chưa xác nhận — chờ nến H1 đóng cửa rõ hướng " + dir_vn})
 
-        # 2. No-trade zone
-        checks.append({"ok": not no_trade,
-                        "text": "Không trong vùng lưng chừng MA34/89" if not no_trade
-                                else "Đang trong no-trade zone — chờ thoát rõ hướng"})
+        # 3. No-trade zone
+        if not no_trade:
+            checks.append({"ok": True,  "text": "Giá nằm ngoài vùng MA34/89 — tín hiệu rõ hướng"})
+        else:
+            checks.append({"ok": None,  "text": "Giá kẹt giữa MA34-MA89 — chờ giá thoát hẳn ra ngoài vùng này"})
 
-        # 3. R:R
+        # 4. R:R
         if rr >= 2.0:
-            checks.append({"ok": True,  "text": f"R:R {rr} ≥ 2.0 — xuất sắc"})
+            checks.append({"ok": True,  "text": f"R:R 1:{rr} — rủi ro/lợi nhuận tốt (≥ 1:2)"})
         elif rr >= 1.5:
-            checks.append({"ok": True,  "text": f"R:R {rr} ≥ 1.5 — chấp nhận được"})
+            checks.append({"ok": True,  "text": f"R:R 1:{rr} — chấp nhận được (≥ 1:1.5)"})
+        elif rr >= 1.0:
+            checks.append({"ok": None,  "text": f"R:R 1:{rr} — thấp, cân nhắc chờ giá về gần entry hơn"})
         else:
-            checks.append({"ok": False, "text": f"R:R {rr} < 1.5 — cân nhắc kỹ hoặc chờ"})
+            checks.append({"ok": False, "text": f"R:R 1:{rr} < 1:1 — không vào, rủi ro cao hơn lợi nhuận"})
 
-        # 4. Funding
+        # 5. Funding
         if funding is not None:
             if direction == "LONG":
-                if funding < 0:
-                    checks.append({"ok": True,  "text": f"Funding {funding:+.4f}% âm — có lợi cho LONG"})
+                if funding < -0.01:
+                    checks.append({"ok": True,  "text": f"Funding {funding:+.4f}% âm — thị trường nghiêng SHORT, tốt cho LONG entry"})
                 elif funding > 0.05:
-                    checks.append({"ok": False, "text": f"Funding {funding:+.4f}% cao — Long overcrowded"})
+                    checks.append({"ok": False, "text": f"Funding {funding:+.4f}% quá cao — Long overcrowded, chờ funding về dưới 0.03%"})
                 else:
-                    checks.append({"ok": None,  "text": f"Funding {funding:+.4f}% neutral"})
-            else:
-                if funding > 0:
-                    checks.append({"ok": True,  "text": f"Funding {funding:+.4f}% dương — có lợi cho SHORT"})
+                    checks.append({"ok": None,  "text": f"Funding {funding:+.4f}% trung tính — không ảnh hưởng đáng kể, có thể vào"})
+            else:  # SHORT
+                if funding > 0.01:
+                    checks.append({"ok": True,  "text": f"Funding {funding:+.4f}% dương — bạn được nhận phí khi giữ SHORT"})
                 elif funding < -0.05:
-                    checks.append({"ok": False, "text": f"Funding {funding:+.4f}% thấp — Short overcrowded"})
+                    checks.append({"ok": False, "text": f"Funding {funding:+.4f}% âm sâu — Short overcrowded, chờ funding về trên -0.03%"})
                 else:
-                    checks.append({"ok": None,  "text": f"Funding {funding:+.4f}% neutral"})
+                    checks.append({"ok": None,  "text": f"Funding {funding:+.4f}% trung tính — không ảnh hưởng đáng kể, có thể vào"})
 
-        # 5. BTC context
-        if btc_ctx.get("sentiment") in ("RISK_ON",) and direction == "LONG":
-            checks.append({"ok": True,  "text": "BTC trend BULL — thị trường thuận cho LONG"})
-        elif btc_ctx.get("sentiment") in ("RISK_OFF", "DUMP") and direction == "LONG":
-            checks.append({"ok": False, "text": f"BTC {btc_ctx.get('sentiment')} — thận trọng LONG altcoin"})
-        elif btc_ctx.get("sentiment") in ("RISK_OFF", "DUMP") and direction == "SHORT":
-            checks.append({"ok": True,  "text": "BTC downtrend — thuận cho SHORT"})
+        # 6. BTC context
+        sentiment = btc_ctx.get("sentiment", "NEUTRAL")
+        btc_chg   = btc_ctx.get("chg_24h", 0) or 0
+        if sentiment == "RISK_ON" and direction == "LONG":
+            checks.append({"ok": True,  "text": f"BTC đang BULL D1+H4 — thị trường thuận, LONG altcoin có lợi"})
+        elif sentiment in ("RISK_OFF", "DUMP") and direction == "SHORT":
+            checks.append({"ok": True,  "text": f"BTC đang giảm ({btc_chg:+.1f}% 24h) — SHORT altcoin theo xu hướng thị trường"})
+        elif sentiment in ("RISK_OFF", "DUMP") and direction == "LONG":
+            checks.append({"ok": False, "text": f"BTC đang BEAR/DUMP ({btc_chg:+.1f}% 24h) — không LONG altcoin khi BTC giảm mạnh"})
+        elif sentiment == "RISK_ON" and direction == "SHORT":
+            checks.append({"ok": None,  "text": f"BTC đang BULL — SHORT ngược chiều thị trường, cần tín hiệu mã rất rõ"})
         else:
-            checks.append({"ok": None,  "text": f"BTC {btc_ctx.get('sentiment','?')} — neutral"})
+            checks.append({"ok": None,  "text": f"BTC sideways ({btc_chg:+.1f}% 24h) — không hỗ trợ cũng không cản, xét tín hiệu mã riêng"})
 
-        # 6. OI
+        # 7. OI
         if oi_change is not None:
             if direction == "LONG":
                 if oi_change > 5:
-                    checks.append({"ok": True,  "text": f"OI +{oi_change}% — tiền đang vào, Long có lợi"})
+                    checks.append({"ok": True,  "text": f"OI tăng +{oi_change}% — tiền đang đổ vào thị trường, hỗ trợ LONG"})
                 elif oi_change < -5:
-                    checks.append({"ok": False, "text": f"OI {oi_change}% giảm mạnh — tiền rút ra"})
+                    checks.append({"ok": False, "text": f"OI giảm {oi_change}% — vị thế đang đóng, chờ OI ổn định hoặc tăng lại"})
                 else:
-                    checks.append({"ok": None,  "text": f"OI {oi_change:+.2f}% neutral"})
+                    checks.append({"ok": None,  "text": f"OI {oi_change:+.1f}% — chưa có dòng tiền rõ, theo dõi thêm"})
             else:  # SHORT
                 if oi_change < -5:
-                    checks.append({"ok": True,  "text": f"OI {oi_change}% — Long đang đóng, SHORT có lợi"})
+                    checks.append({"ok": True,  "text": f"OI giảm {oi_change}% — Long đang đóng vị thế, hỗ trợ SHORT"})
                 elif oi_change > 5:
-                    checks.append({"ok": False, "text": f"OI +{oi_change}% tăng mạnh — Long đang vào, rủi ro squeeze SHORT"})
+                    checks.append({"ok": False, "text": f"OI tăng +{oi_change}% — Long đang vào mạnh, rủi ro SHORT bị squeeze, chờ OI chững lại"})
                 else:
-                    checks.append({"ok": None,  "text": f"OI {oi_change:+.2f}% neutral"})
+                    checks.append({"ok": None,  "text": f"OI {oi_change:+.1f}% — chưa có tín hiệu dòng tiền rõ, theo dõi thêm"})
 
         # Verdict
         ok_count   = sum(1 for c in checks if c["ok"] is True)

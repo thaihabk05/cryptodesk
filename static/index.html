@@ -561,7 +561,10 @@ tbody td{padding:11px 12px;vertical-align:middle}
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <!-- Time range -->
       <select id="btTimeRange" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
-        <option value="8">8 giờ qua</option>
+        <option value="1">1 giờ qua</option>
+        <option value="2">2 giờ qua</option>
+        <option value="4">4 giờ qua</option>
+        <option value="8" selected>8 giờ qua</option>
         <option value="24">24 giờ qua</option>
         <option value="48">48 giờ qua</option>
         <option value="72">3 ngày qua</option>
@@ -636,6 +639,11 @@ tbody td{padding:11px 12px;vertical-align:middle}
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Equity Curve (R)</div>
       <canvas id="btChart" height="80"></canvas>
     </div>
+  </div>
+
+  <!-- Compact result summary — ngay trên bảng -->
+  <div id="btResultSummary" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 20px;margin-bottom:14px">
+    <div id="btResultSummaryContent"></div>
   </div>
 
   <!-- Detail table -->
@@ -1525,6 +1533,7 @@ function runBacktest() {
       return;
     }
     renderBtSummary(data.summary, data.results, capital, leverage);
+    renderBtResultSummary(data.results, data.summary, capital, leverage);
     renderBtTable(data.results, capital, leverage);
   }).catch(function(e) {
     document.getElementById('btResults').innerHTML =
@@ -1533,6 +1542,67 @@ function runBacktest() {
     btn.disabled = false;
     btn.innerHTML = '&#9654; Run Backtest';
   });
+}
+
+function renderBtResultSummary(results, s, capital, leverage) {
+  var bar = document.getElementById('btResultSummary');
+  var box = document.getElementById('btResultSummaryContent');
+  if (!bar || !box || !s || !results || !results.length) return;
+
+  capital  = capital  || 1000;
+  leverage = leverage || 5;
+
+  var wins    = results.filter(function(r){ return r.bt_result === 'WIN'; });
+  var losses  = results.filter(function(r){ return r.bt_result === 'LOSS'; });
+  var opens   = results.filter(function(r){ return r.bt_result === 'OPEN'; });
+  var pendings= results.filter(function(r){ return r.bt_result === 'PENDING'; });
+
+  // Tổng tiền thực tế từ từng lệnh
+  var totalWinUsd  = Math.round(wins.reduce(function(a,r){
+    return a + (r.tp1_pct||0)/100*capital*leverage; }, 0));
+  var totalLossUsd = Math.round(losses.reduce(function(a,r){
+    return a + (r.sl_pct||0)/100*capital*leverage; }, 0));
+  var netUsd  = totalWinUsd - totalLossUsd;
+  var netSign = netUsd >= 0 ? '+' : '';
+  var netColor= netUsd >= 0 ? 'var(--long)' : 'var(--short)';
+
+  // Unrealized của OPEN (tổng)
+  var totalUnrealUsd = Math.round(opens.reduce(function(a,r){
+    var pct = r.bt_unrealized_pct || 0;
+    return a + pct/100*capital*leverage;
+  }, 0));
+  var unrealSign  = totalUnrealUsd >= 0 ? '+' : '';
+  var unrealColor = totalUnrealUsd >= 0 ? 'var(--long)' : 'var(--short)';
+
+  var hasClosed = wins.length + losses.length > 0;
+  var wrColor   = !hasClosed ? 'var(--muted)'
+                : s.win_rate >= 60 ? 'var(--long)'
+                : s.win_rate >= 45 ? 'var(--wait)' : 'var(--short)';
+  var wrVal     = hasClosed ? s.win_rate + '%' : '--';
+
+  var items = [
+    { lbl: 'Tổng lệnh',  val: results.length + ' signals',              color: 'var(--text)' },
+    { lbl: 'Win Rate',   val: wrVal,                                     color: wrColor },
+    { lbl: 'Thắng',      val: wins.length  + 'W  ' + (wins.length  ? '+'+totalWinUsd+'$'  : ''), color: 'var(--long)' },
+    { lbl: 'Thua',       val: losses.length+ 'L  ' + (losses.length ? '−'+totalLossUsd+'$': ''), color: losses.length ? 'var(--short)' : 'var(--muted)' },
+    { lbl: 'Net P&L',    val: hasClosed ? netSign+netUsd+'$ ('+s.total_r+'R)' : '--',             color: hasClosed ? netColor : 'var(--muted)' },
+  ];
+  if (opens.length)    items.push({ lbl: 'OPEN unrealized', val: unrealSign+totalUnrealUsd+'$ ('+opens.length+' lệnh)', color: unrealColor });
+  if (pendings.length) items.push({ lbl: 'Chưa khớp',       val: pendings.length + ' lệnh',        color: 'var(--wait)' });
+  if (hasClosed)       items.push({ lbl: 'Expectancy',       val: (s.expectancy>0?'+':'')+s.expectancy+'R/lệnh', color: netColor });
+
+  box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:0;border-radius:8px;overflow:hidden;border:1px solid var(--border)">'
+    + items.map(function(it, i) {
+        return '<div style="flex:1;min-width:110px;padding:10px 14px;'
+          + (i < items.length-1 ? 'border-right:1px solid var(--border);' : '')
+          + 'text-align:center">'
+          + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:4px">'+ it.lbl +'</div>'
+          + '<div style="font-size:14px;font-weight:800;font-family:var(--mono);color:'+it.color+'">'+ it.val +'</div>'
+          + '</div>';
+      }).join('')
+    + '</div>';
+
+  bar.style.display = 'block';
 }
 
 function renderBtSummary(s, results, capital, leverage) {

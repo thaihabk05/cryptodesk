@@ -459,12 +459,15 @@ def run_backtest():
 
     # Filter theo thời gian (hours_ago = 0 → không giới hạn)
     if hours_ago > 0:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+        # History timestamps không có timezone (local server time)
+        # Dùng datetime.now() naive để so sánh — tránh lệch timezone UTC vs local
+        cutoff = datetime.now() - timedelta(hours=hours_ago)
         def sig_after_cutoff(h):
             try:
-                t = pd.Timestamp(h.get("time", "")).tz_localize("UTC") \
-                    if pd.Timestamp(h.get("time", "")).tzinfo is None \
-                    else pd.Timestamp(h.get("time", ""))
+                raw = h.get("time", "")
+                if not raw:
+                    return False
+                t = pd.Timestamp(raw).replace(tzinfo=None)
                 return t >= cutoff
             except Exception:
                 return False

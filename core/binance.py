@@ -9,10 +9,19 @@ FUTURES_BASE = "https://fapi.binance.com"
 
 def fetch_klines(symbol: str, interval: str, limit: int = 300,
                  force_futures: bool = False) -> pd.DataFrame:
-    # Luôn dùng fapi — không dùng Spot API nữa
+    import time as _t
     url = FUTURES_BASE + "/fapi/v1/klines"
-    r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-    r.raise_for_status()
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    for attempt in range(3):
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 429:
+            wait = 2 ** attempt  # 1s, 2s, 4s
+            _t.sleep(wait)
+            continue
+        r.raise_for_status()
+        break
+    else:
+        r.raise_for_status()
 
     df = pd.DataFrame(r.json(), columns=[
         "open_time","open","high","low","close","volume",

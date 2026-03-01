@@ -190,7 +190,7 @@ def market_scan_cycle(cfg):
     min_rr  = float(cfg.get("rr_ratio", 1.0))
 
     print("[MARKET SCAN] Bắt đầu quét toàn thị trường futures...")
-    run_full_scan(min_vol=5_000_000, max_workers=10)
+    run_full_scan(min_vol=5_000_000, max_workers=3)
 
     # Đợi scan xong
     import time as _time
@@ -528,6 +528,21 @@ def telegram_test():
     ok = send_telegram(token, chat_id, msg)
     if ok: return jsonify({"ok": True})
     return jsonify({"ok": False, "error": "Gửi thất bại — kiểm tra Token và Chat ID"}), 400
+
+
+# ── Auto-start scanner khi app khởi động ──────
+def auto_start_scanner():
+    """Tự động start scanner sau khi app ready — không cần user bấm tay."""
+    global scanner_running
+    cfg = load_config()
+    # Chỉ auto-start nếu config có symbols hoặc đây là production (Railway)
+    if not scanner_running:
+        scanner_running = True
+        threading.Thread(target=dashboard_scanner_loop, daemon=True).start()
+        print("[AUTO-START] Dashboard scanner started automatically")
+
+# Chạy auto-start trong thread riêng để không block gunicorn worker
+threading.Thread(target=auto_start_scanner, daemon=True).start()
 
 
 # ── Run ───────────────────────────────────────

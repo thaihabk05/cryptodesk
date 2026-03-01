@@ -24,9 +24,11 @@ SCAN_CFG = {
 
 
 def analyze_symbol(sym_info: dict):
+    import time as _t
     symbol = sym_info["symbol"]
     try:
-        # Symbol từ fetch_all_futures_tickers luôn là futures — ghi vào config
+        # Delay nhỏ để tránh 429 rate limit — 3 workers × 0.3s = ~1 req/100ms/worker
+        _t.sleep(0.3)
         cfg = {**SCAN_CFG, "force_futures": True}
         result = fam_analyze(symbol, cfg)
 
@@ -53,12 +55,22 @@ def analyze_symbol(sym_info: dict):
 
         return sanitize(result)
     except Exception as e:
-        import traceback
+        err_str = str(e)
+        if "429" in err_str:
+            # Rate limited — đợi và retry 1 lần
+            import time as _t2
+            _t2.sleep(2)
+            try:
+                cfg = {**SCAN_CFG, "force_futures": True}
+                result = fam_analyze(symbol, cfg)
+                # (tiếp tục xử lý bình thường nếu retry OK)
+            except:
+                pass
         print(f"[SCAN ERROR] {symbol}: {e}")
         return None
 
 
-def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 10):
+def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3):
     global scan_state
     with _state_lock:
         scan_state.update({"running": True, "progress": 0, "results": [],
@@ -78,6 +90,9 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 10):
                     r = fut.result()
                     if r: results.append(r)
                 except: pass
+                # Throttle nhẹ tránh 429
+                if done % 10 == 0:
+                    import time as _t; _t.sleep(0.5)
 
         # Sort: HIGH → MEDIUM → LOW, trong mỗi tier sort score rồi R:R
         conf_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}

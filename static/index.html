@@ -927,7 +927,9 @@ function startDashPolling() {
         document.getElementById('statusDot').className = 'status-dot on';
         if (st.next_scan) {
           var diff = Math.round((new Date(st.next_scan) - new Date()) / 1000);
-          document.getElementById('statusLabel').textContent = 'Next: '+(diff>60?Math.round(diff/60)+'m':diff+'s');
+          var diffAbs = Math.abs(diff);
+          var diffLabel = diffAbs >= 60 ? Math.round(diffAbs/60)+'m' : diffAbs+'s';
+          document.getElementById('statusLabel').textContent = diff < 0 ? 'Scanning soon...' : 'Next: '+diffLabel;
         }
         if (st.last_scan && st.last_scan !== lastScanTS) {
           lastScanTS = st.last_scan;

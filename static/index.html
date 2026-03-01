@@ -13,7 +13,7 @@
   --long:#00e676;--long2:#00a854;
   --short:#ff3d5a;--short2:#cc2040;
   --wait:#ffb300;--warn:#ff6d00;
-  --text:#dce8ff;--muted:#4a6080;--muted2:#6a80a0;
+  --text:#dce8ff;--muted:#7a96b8;--muted2:#9ab0cc;
   --mono:'JetBrains Mono',monospace;
   --font:'Space Grotesk',sans-serif;
   --card-radius:12px;
@@ -531,13 +531,17 @@ tbody td{padding:11px 12px;vertical-align:middle}
       <div style="font-size:18px;font-weight:800">Signal History</div>
       <div style="font-size:12px;color:var(--muted);margin-top:2px">Lịch sử tín hiệu được lưu khi auto-scanner chạy</div>
     </div>
-    <div style="display:flex;gap:8px">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="histDir" onchange="renderHistory()" style="background:var(--bg3);border:1px solid var(--border);
         border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font);font-size:12px">
         <option value="ALL">All</option>
         <option value="LONG">LONG</option>
         <option value="SHORT">SHORT</option>
       </select>
+      <button class="btn" id="btnBtSelected" onclick="backtestSelected()"
+        style="display:none;background:rgba(0,200,255,.12);border-color:var(--accent);color:var(--accent)">
+        &#9654; Backtest đã chọn (<span id="selectedCount">0</span>)
+      </button>
       <button class="btn danger" onclick="clearHistory()">&#128465; Clear</button>
       <button class="btn" onclick="loadHistory()">&#8635; Refresh</button>
     </div>
@@ -1452,6 +1456,8 @@ function loadHistory() {
   });
 }
 
+var histSelectedIds = new Set();
+
 function renderHistory() {
   var dir = document.getElementById('histDir').value;
   var data = historyData.filter(function(d) {
@@ -1466,32 +1472,149 @@ function renderHistory() {
     return;
   }
 
-  var rows = data.map(function(d) {
+  histSelectedIds.clear();
+  updateHistSelectedBtn();
+
+  var rows = data.map(function(d, i) {
     var dc = d.direction==='LONG'?'var(--long)':'var(--short)';
     var cc = d.confidence==='HIGH'?'var(--long)':d.confidence==='MEDIUM'?'var(--wait)':'var(--muted)';
     var t  = new Date(d.time);
     var ts = t.toLocaleDateString()+' '+t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    return '<tr>' +
-      '<td style="color:var(--muted);font-size:11px;white-space:nowrap">'+ts+'</td>' +
-      '<td><b>'+d.symbol.replace('USDT','')+'</b><span style="color:var(--muted)">/USDT</span></td>' +
+    var uid = d.symbol + '|' + d.time;  // unique id cho signal
+    return '<tr id="hrow-'+i+'">' +
+      '<td style="padding:6px 8px">' +
+        '<input type="checkbox" data-uid="'+uid+'" data-idx="'+i+'" onchange="onHistCheck(this)"' +
+        ' style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent)"></td>' +
+      '<td style="color:var(--text);opacity:.75;font-size:11px;white-space:nowrap">'+ts+'</td>' +
+      '<td><b>'+d.symbol.replace('USDT','')+'</b><span style="color:var(--muted2)">/USDT</span></td>' +
       '<td><span class="badge '+d.direction+'">'+d.direction+'</span></td>' +
       '<td><span style="font-size:11px;font-weight:700;color:'+cc+'">'+d.confidence+'</span></td>' +
-      '<td class="mono">'+fmt(d.price)+'</td>' +
+      '<td class="mono" style="color:var(--text)">'+fmt(d.price)+'</td>' +
       '<td class="mono" style="color:var(--accent)">'+fmt(d.entry)+'</td>' +
-      '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted)">-'+d.sl_pct+'%</span></td>' +
-      '<td class="mono" style="color:var(--long)">'+fmt(d.tp1)+' <span style="font-size:10px;color:var(--muted)">+'+d.tp1_pct+'%</span></td>' +
+      '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted2)">-'+d.sl_pct+'%</span></td>' +
+      '<td class="mono" style="color:var(--long)">'+fmt(d.tp1)+' <span style="font-size:10px;color:var(--muted2)">+'+d.tp1_pct+'%</span></td>' +
       '<td><span style="font-family:var(--mono);font-weight:800;color:'+rrColor(d.rr)+'">1:'+d.rr+'</span></td>' +
       '<td style="font-size:11px;color:'+(d.d1_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.d1_bias+'</td>' +
       '<td style="font-size:11px;color:'+(d.h4_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.h4_bias+'</td>' +
+      '<td><button onclick="backtestSingle('+i+')" style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);' +
+        'color:var(--accent);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;white-space:nowrap">' +
+        '&#9654; BT</button></td>' +
     '</tr>';
   }).join('');
 
   document.getElementById('historyContent').innerHTML =
-    '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'+data.length+' signals</div>' +
+    '<div style="font-size:11px;color:var(--muted2);margin-bottom:10px">'+data.length+' signals — chọn để backtest</div>' +
     '<div class="table-wrap"><table>' +
-    '<thead><tr><th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th>' +
-    '<th>Price</th><th>Entry</th><th>SL</th><th>TP1</th><th>R:R</th><th>D1</th><th>H4</th>' +
+    '<thead><tr>' +
+      '<th style="width:28px"><input type="checkbox" id="histCheckAll" onchange="onHistCheckAll(this)"' +
+        ' style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent)"></th>' +
+      '<th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th>' +
+      '<th>Price</th><th>Entry</th><th>SL</th><th>TP1</th><th>R:R</th><th>D1</th><th>H4</th><th></th>' +
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+function onHistCheck(cb) {
+  var uid = cb.dataset.uid;
+  var idx = parseInt(cb.dataset.idx);
+  if (cb.checked) {
+    histSelectedIds.add(uid);
+    document.getElementById('hrow-'+idx).style.background = 'rgba(0,200,255,.05)';
+  } else {
+    histSelectedIds.delete(uid);
+    document.getElementById('hrow-'+idx).style.background = '';
+  }
+  // Sync check-all
+  var allCbs = document.querySelectorAll('[data-uid]');
+  var allChk = document.getElementById('histCheckAll');
+  if (allChk) allChk.checked = histSelectedIds.size === allCbs.length;
+  updateHistSelectedBtn();
+}
+
+function onHistCheckAll(cb) {
+  var allCbs = document.querySelectorAll('[data-uid]');
+  allCbs.forEach(function(c) {
+    c.checked = cb.checked;
+    var uid = c.dataset.uid;
+    var idx = parseInt(c.dataset.idx);
+    if (cb.checked) {
+      histSelectedIds.add(uid);
+      document.getElementById('hrow-'+idx).style.background = 'rgba(0,200,255,.05)';
+    } else {
+      histSelectedIds.delete(uid);
+      document.getElementById('hrow-'+idx).style.background = '';
+    }
+  });
+  updateHistSelectedBtn();
+}
+
+function updateHistSelectedBtn() {
+  var btn = document.getElementById('btnBtSelected');
+  var cnt = document.getElementById('selectedCount');
+  if (!btn) return;
+  if (histSelectedIds.size > 0) {
+    btn.style.display = 'inline-block';
+    if (cnt) cnt.textContent = histSelectedIds.size;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function backtestSingle(idx) {
+  var dir  = document.getElementById('histDir').value;
+  var data = historyData.filter(function(d){ return dir==='ALL'||d.direction===dir; });
+  var sig  = data[idx];
+  if (!sig) return;
+  runBacktestWithSignals([sig], sig.symbol + ' ' + sig.direction + ' ' + sig.time.slice(0,16));
+}
+
+function backtestSelected() {
+  var dir  = document.getElementById('histDir').value;
+  var data = historyData.filter(function(d){ return dir==='ALL'||d.direction===dir; });
+  // Lấy signals theo uid đã chọn
+  var sigs = data.filter(function(d) {
+    var uid = d.symbol + '|' + d.time;
+    return histSelectedIds.has(uid);
+  });
+  if (!sigs.length) return;
+  runBacktestWithSignals(sigs, sigs.length + ' lệnh đã chọn');
+}
+
+function runBacktestWithSignals(signals, label) {
+  // Switch sang tab backtest và chạy với signals cụ thể
+  switchTab('backtest');
+  var btn = document.getElementById('btnBacktest');
+  var capital  = parseFloat(document.getElementById('btCapital').value)  || 1000;
+  var leverage = parseFloat(document.getElementById('btLeverage').value) || 5;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Running...';
+  document.getElementById('btResults').innerHTML =
+    '<div class="empty-state"><span class="spinner"></span>' +
+    '<div style="margin-top:12px;color:var(--muted)">Backtest: '+label+'...</div></div>';
+  document.getElementById('btSummary').style.display = 'none';
+  document.getElementById('btResultSummary').style.display = 'none';
+
+  fetch('/api/backtest/signals', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({signals: signals})
+  }).then(function(r){ return r.json(); }).then(function(data) {
+    if (data.error) {
+      document.getElementById('btResults').innerHTML =
+        '<div class="empty-state"><div class="empty-icon">&#128203;</div>' +
+        '<div class="empty-title">'+data.error+'</div></div>';
+      return;
+    }
+    renderBtSummary(data.summary, data.results, capital, leverage);
+    renderBtResultSummary(data.results, data.summary, capital, leverage);
+    renderBtTable(data.results, capital, leverage);
+  }).catch(function(e) {
+    document.getElementById('btResults').innerHTML =
+      '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
+  }).finally(function() {
+    btn.disabled = false;
+    btn.innerHTML = '&#9654; Run Backtest';
+  });
 }
 
 function clearHistory() {
@@ -1722,30 +1845,30 @@ function renderBtTable(results, capital, leverage) {
     var ts = t.toLocaleDateString()+' '+t.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
 
     return '<tr>' +
-      '<td style="color:var(--muted);font-size:11px">'+(i+1)+'</td>' +
-      '<td style="font-size:11px;color:var(--muted);white-space:nowrap">'+ts+'</td>' +
-      '<td><b>'+r.symbol.replace('USDT','')+'</b><span style="color:var(--muted)">/USDT</span></td>' +
+      '<td style="color:var(--muted2);font-size:11px">'+(i+1)+'</td>' +
+      '<td style="font-size:11px;color:var(--text);opacity:.75;white-space:nowrap">'+ts+'</td>' +
+      '<td><b>'+r.symbol.replace('USDT','')+'</b><span style="color:var(--muted2)">/USDT</span></td>' +
       '<td><span class="badge '+r.direction+'">'+r.direction+'</span></td>' +
       '<td><span class="badge '+(r.confidence||'')+'">'+r.confidence+'</span></td>' +
-      '<td class="mono">'+fmt(r.entry)+'</td>' +
-      '<td class="mono" style="color:var(--short)">'+fmt(r.sl)+' <span style="font-size:10px;color:var(--muted)">-'+r.sl_pct+'%</span></td>' +
-      '<td class="mono" style="color:var(--long)">'+fmt(r.tp1)+' <span style="font-size:10px;color:var(--muted)">+'+r.tp1_pct+'%</span></td>' +
+      '<td class="mono" style="color:var(--text)">'+fmt(r.entry)+'</td>' +
+      '<td class="mono" style="color:var(--short)">'+fmt(r.sl)+' <span style="font-size:10px;color:var(--muted2)">-'+r.sl_pct+'%</span></td>' +
+      '<td class="mono" style="color:var(--long)">'+fmt(r.tp1)+' <span style="font-size:10px;color:var(--muted2)">+'+r.tp1_pct+'%</span></td>' +
       '<td><span style="font-family:var(--mono);font-weight:700;color:'+rrColor(r.rr)+'">1:'+r.rr+'</span></td>' +
       '<td><span style="font-size:16px">'+icon+'</span> <span style="color:'+rc+';font-weight:700;font-size:12px">'+r.bt_result+'</span></td>' +
       '<td>'+pnl+'</td>' +
       '<td>' + (function() {
-        if (r.bt_result !== 'OPEN' && r.bt_result !== 'PENDING') return '<span style="color:var(--muted)">--</span>';
+        if (r.bt_result !== 'OPEN' && r.bt_result !== 'PENDING') return '<span style="color:var(--muted2)">--</span>';
         var pct = r.bt_unrealized_pct;
         var rr  = r.bt_unrealized_r;
-        if (pct === null || pct === undefined) return '<span style="color:var(--muted)">--</span>';
+        if (pct === null || pct === undefined) return '<span style="color:var(--muted2)">--</span>';
         var c = pct >= 0 ? 'var(--long)' : 'var(--short)';
         var usd = (pct / 100 * capital * leverage).toFixed(2);
-        var usdStr = '<span style="font-size:11px;font-weight:800;color:'+c+'">'+(pct>0?'+':'')+usd+'$</span>';
+        var usdStr = '<span style="font-size:12px;font-weight:800;color:'+c+'">'+(pct>0?'+':'')+usd+'$</span>';
         var rStr = rr !== null && rr !== undefined ? ' <span style="font-size:10px;color:'+c+'">('+( rr>0?'+':'')+rr+'R)</span>' : '';
-        return usdStr+' <span style="color:var(--muted);font-size:10px">'+(pct>0?'+':'')+pct+'%</span>'+rStr;
+        return usdStr+' <span style="color:var(--muted2);font-size:10px">'+(pct>0?'+':'')+pct+'%</span>'+rStr;
       })() + '</td>' +
-      '<td class="mono" style="color:var(--muted);font-size:11px">'+(r.bt_exit_price?fmt(r.bt_exit_price):'--')+'</td>' +
-      '<td style="font-size:10px;color:var(--muted2);max-width:180px">'+(r.bt_note||'')+'</td>' +
+      '<td class="mono" style="color:var(--text);opacity:.8;font-size:11px">'+(r.bt_exit_price?fmt(r.bt_exit_price):'--')+'</td>' +
+      '<td style="font-size:11px;color:var(--text);opacity:.7;max-width:200px">'+(r.bt_note||'')+'</td>' +
     '</tr>';
   }).join('');
 

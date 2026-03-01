@@ -524,6 +524,48 @@ def run_backtest():
 
     return jsonify({"results": results, "summary": summary})
 
+
+@app.route("/api/backtest/signals", methods=["POST"])
+def run_backtest_signals():
+    """Backtest danh sách signals cụ thể truyền thẳng từ frontend (history selection)."""
+    data    = request.json or {}
+    signals = data.get("signals", [])
+    if not signals:
+        return jsonify({"results": [], "summary": {}, "error": "Không có signal"})
+
+    results = []
+    for sig in signals:
+        r = backtest_signal(sig)
+        results.append(r)
+
+    wins     = [r for r in results if r["bt_result"] == "WIN"]
+    losses   = [r for r in results if r["bt_result"] == "LOSS"]
+    opens    = [r for r in results if r["bt_result"] == "OPEN"]
+    pendings = [r for r in results if r["bt_result"] == "PENDING"]
+    errors   = [r for r in results if r["bt_result"] == "ERROR"]
+    closed   = wins + losses
+    win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
+
+    pnl_rs   = [r["bt_pnl_r"] for r in closed if r["bt_pnl_r"] is not None]
+    total_r  = round(sum(pnl_rs), 2)
+    avg_r    = round(sum(pnl_rs) / len(pnl_rs), 2) if pnl_rs else 0
+    avg_win_r  = round(sum(r["bt_pnl_r"] for r in wins   if r["bt_pnl_r"]) / len(wins),   2) if wins   else 0
+    avg_loss_r = round(sum(r["bt_pnl_r"] for r in losses if r["bt_pnl_r"]) / len(losses), 2) if losses else 0
+    expectancy = round((len(wins)/len(closed)) * avg_win_r + (len(losses)/len(closed)) * avg_loss_r, 2) if closed else 0
+    avg_candles_win  = round(sum(r["bt_candles"] for r in wins   if r["bt_candles"]) / len(wins),   1) if wins   else None
+    avg_candles_loss = round(sum(r["bt_candles"] for r in losses if r["bt_candles"]) / len(losses), 1) if losses else None
+
+    summary = {
+        "total": len(signals), "closed": len(closed),
+        "wins": len(wins), "losses": len(losses),
+        "opens": len(opens), "pending": len(pendings), "errors": len(errors),
+        "win_rate": win_rate, "total_r": total_r, "avg_r": avg_r,
+        "avg_win_r": avg_win_r, "avg_loss_r": avg_loss_r,
+        "expectancy": expectancy,
+        "avg_candles_win": avg_candles_win, "avg_candles_loss": avg_candles_loss,
+    }
+    return jsonify({"results": results, "summary": summary})
+
 @app.route("/api/scanner/start", methods=["POST"])
 def start_dashboard_scanner():
     global scanner_running

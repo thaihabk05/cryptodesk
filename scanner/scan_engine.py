@@ -86,12 +86,17 @@ def analyze_symbol(sym_info: dict):
 def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: str = "SWING_H4"):
     global scan_state
     with _state_lock:
+        if scan_state["running"]:
+            print("[SCAN] Đang chạy, bỏ qua lần này")
+            return
         SCAN_CFG["strategy"] = strategy
         scan_state.update({"running": True, "progress": 0, "results": [],
                            "error": None, "started_at": datetime.now().isoformat(),
                            "finished_at": None, "strategy": strategy})
     try:
+        print(f"[SCAN] Bắt đầu fetch tickers min_vol={min_vol:,.0f}...")
         symbols = fetch_all_futures_tickers(min_vol)
+        print(f"[SCAN] Lấy được {len(symbols)} symbols")
         scan_state["total"] = len(symbols)
         results, done = [], 0
 
@@ -103,7 +108,8 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
                 try:
                     r = fut.result()
                     if r: results.append(r)
-                except: pass
+                except Exception as fe:
+                    print(f"[SCAN SYM ERROR] {fe}")
                 # Throttle nhẹ tránh 429
                 if done % 10 == 0:
                     import time as _t; _t.sleep(0.5)

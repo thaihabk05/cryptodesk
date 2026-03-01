@@ -642,12 +642,13 @@ def dashboard_scanner_status():
 # ── API — Market Scanner ──────────────────────
 @app.route("/api/market-scan/start", methods=["POST"])
 def market_scan_start():
-    # Luôn cho phép manual scan — cancel auto scan nếu đang chạy
     data    = request.json or {}
     min_vol = float(data.get("min_vol", 10_000_000))
-    # Không reset nếu đang scan — chỉ skip
     cfg      = load_config()
     strategy = cfg.get("strategy", "SWING_H4")
+    print(f"[MARKET SCAN START] min_vol={min_vol:,.0f} strategy={strategy} running={scan_state['running']}")
+    if scan_state["running"]:
+        return jsonify({"ok": False, "msg": "Đang scan, vui lòng đợi"})
     threading.Thread(target=run_full_scan, kwargs={"min_vol": min_vol, "strategy": strategy}, daemon=True).start()
     return jsonify({"ok": True})
 

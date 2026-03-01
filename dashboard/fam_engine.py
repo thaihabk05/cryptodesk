@@ -346,42 +346,183 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "MEDIUM"
 
     # ────────────────────────────────────────
-    # SL / TP
+    # SL / TP  (v3 — swing recent + Fib ext + entry optimal)
     # ────────────────────────────────────────
     recent_h1_high = float(df_h1["high"].iloc[-20:].max())
     recent_h1_low  = float(df_h1["low"].iloc[-20:].min())
 
+    ma34_h4  = float(row_h4["ma34"])
+    ma89_h4  = float(row_h4["ma89"])
+    ma200_h4 = float(row_h4["ma200"])
+    ma34_h1  = float(df_h1["ma34"].iloc[-1])
+
+    # Swing H4 — chỉ lấy 30 nến gần đây (120h = 5 ngày) để tránh swing xa vô nghĩa
+    df_h4_recent = df_h4.iloc[-30:]
+    highs_h4_recent, lows_h4_recent = find_swing_points(df_h4_recent, lookback=3)
+    swing_highs_recent = sorted([v for _, v in highs_h4_recent], reverse=True)
+    swing_lows_recent  = sorted([v for _, v in lows_h4_recent])
+
+    # H4 swing high/low cho Fib extension (60 nến ~ 10 ngày)
+    recent_h4_high = float(df_h4["high"].iloc[-60:].max())
+    recent_h4_low  = float(df_h4["low"].iloc[-60:].min())
+
+    # Fib H4 retracement — vùng hỗ trợ/kháng cự lý tưởng để chờ entry
+    fib_h4_ret = fib_retracement(recent_h4_high, recent_h4_low)
+
+    def _pick_tp1_long(entry, swing_highs, ma34, ma89, ma200, atr):
+        """
+        TP1 = kháng cự gần nhất phía trên, theo thứ tự ưu tiên:
+        1. Swing high H4 gần đây (30 nến) — level trader thực đang dùng
+        2. MA34 H4 nếu nằm trên entry (MA là kháng cự động)
+        3. MA89, MA200 H4
+        4. ATR×3 fallback
+        Yêu cầu: cách entry ít nhất 2% VÀ không xa quá 15%
+        """
+        min_dist = entry * 1.02   # ≥ 2% để R:R có ý nghĩa
+        max_dist = entry * 1.15   # ≤ 15% để thực tế
+
+        # 1. Swing high H4 gần nhất (trong vùng hợp lý)
+        candidates = [h for h in swing_highs if min_dist < h < max_dist]
+        if candidates:
+            return smart_round(min(candidates))
+
+        # 2-4. MA theo thứ tự gần → xa
+        for ma in [ma34, ma89, ma200]:
+            if min_dist < ma < max_dist:
+                return smart_round(ma)
+
+        # 5. Fallback ATR — đảm bảo ≥ 2% dù không có level nào
+        return smart_round(max(entry * 1.02, entry + atr * 3))
+
+    def _pick_tp1_short(entry, swing_lows, ma34, ma89, ma200, atr):
+        """TP1 SHORT = hỗ trợ gần nhất phía dưới"""
+        max_dist = entry * 0.98
+        min_dist = entry * 0.85
+
+        candidates = [l for l in swing_lows if min_dist < l < max_dist]
+        if candidates:
+            return smart_round(max(candidates))
+
+        for ma in [ma34, ma89, ma200]:
+            if min_dist < ma < max_dist:
+                return smart_round(ma)
+
+        return smart_round(min(entry * 0.98, entry - atr * 3))
+
+    def _pick_tp2_long(entry, tp1, fib_ext_data, atr):
+        """TP2 = Fib Extension 1.272 hoặc 1.618 của sóng H4"""
+        fib_127 = fib_ext_data.get("1.272", 0)
+        fib_162 = fib_ext_data.get("1.618", 0)
+        # Hợp lý: nằm trên TP1 và không quá 40% từ entry
+        if fib_127 > tp1 * 1.005 and fib_127 < entry * 1.40:
+            return smart_round(fib_127)
+        if fib_162 > tp1 * 1.005 and fib_162 < entry * 1.50:
+            return smart_round(fib_162)
+        # Fallback: TP2 = TP1 + 1× khoảng TP1–entry
+        return smart_round(tp1 + (tp1 - entry))
+
+    def _pick_tp2_short(entry, tp1, fib_ext_data, atr):
+        fib_127 = fib_ext_data.get("1.272", 0)
+        fib_162 = fib_ext_data.get("1.618", 0)
+        if 0 < fib_127 < tp1 * 0.995 and fib_127 > entry * 0.60:
+            return smart_round(fib_127)
+        if 0 < fib_162 < tp1 * 0.995 and fib_162 > entry * 0.50:
+            return smart_round(fib_162)
+        return smart_round(tp1 - (entry - tp1))
+
+    def _calc_entry_optimal_long(price, fib_h4, ma34_h1, ma34_h4, atr):
+        """
+        Entry tốt hơn cho LONG = điểm pullback về vùng hỗ trợ:
+        Ưu tiên: Fib 0.5 H4 → Fib 0.618 H4 → MA34 H1 → MA34 H4
+        Chỉ đề xuất nếu thấp hơn giá hiện tại ít nhất 0.5%
+        """
+        candidates = []
+        for key in ["0.500", "0.618", "0.382"]:
+            v = fib_h4.get(key, 0)
+            if 0 < v < price * 0.995:
+                candidates.append((abs(v - price), key, v))
+        # MA34 H1 — support động gần nhất
+        if ma34_h1 < price * 0.995:
+            candidates.append((abs(ma34_h1 - price), "MA34 H1", ma34_h1))
+        # MA34 H4
+        if ma34_h4 < price * 0.995:
+            candidates.append((abs(ma34_h4 - price), "MA34 H4", ma34_h4))
+
+        if not candidates:
+            return None, None
+        # Lấy level gần nhất với giá hiện tại
+        candidates.sort(key=lambda x: x[0])
+        _, label, val = candidates[0]
+        return smart_round(val), label
+
+    def _calc_entry_optimal_short(price, fib_h4, ma34_h1, ma34_h4, atr):
+        """Entry tốt hơn cho SHORT = điểm bounce lên để sell"""
+        candidates = []
+        for key in ["0.500", "0.618", "0.382"]:
+            v = fib_h4.get(key, 0)
+            if v > price * 1.005:
+                candidates.append((abs(v - price), key, v))
+        if ma34_h1 > price * 1.005:
+            candidates.append((abs(ma34_h1 - price), "MA34 H1", ma34_h1))
+        if ma34_h4 > price * 1.005:
+            candidates.append((abs(ma34_h4 - price), "MA34 H4", ma34_h4))
+
+        if not candidates:
+            return None, None
+        candidates.sort(key=lambda x: x[0])
+        _, label, val = candidates[0]
+        return smart_round(val), label
+
+    # Fib extension H4 (dùng price vì entry chưa được gán)
+    fib_ext_h4_long  = fib_extension(recent_h4_low,  recent_h4_high, price)
+    fib_ext_h4_short = fib_extension(recent_h4_high, recent_h4_low,  price)
+
     if direction == "LONG" or (direction == "WAIT" and h4_bias == "LONG"):
-        entry    = price
+        entry     = price
         sl_struct = recent_h1_low - atr_h1 * 0.5
         sl_price  = smart_round(min(entry * 0.99, max(sl_struct, entry * 0.96)))
 
-        tp1 = None
-        for ma in [float(row_h4["ma34"]), float(row_h4["ma89"]), float(row_h4["ma200"])]:
-            if ma > entry * 1.005:
-                tp1 = smart_round(ma); break
-        if tp1 is None: tp1 = smart_round(entry + atr_h1 * 3)
-        tp2 = smart_round(entry + atr_h1 * 5)
+        tp1 = _pick_tp1_long(entry, swing_highs_recent, ma34_h4, ma89_h4, ma200_h4, atr_h1)
+        tp2 = _pick_tp2_long(entry, tp1, fib_ext_h4_long, atr_h1)
+
+        entry_opt, entry_opt_label = _calc_entry_optimal_long(
+            price, fib_h4_ret, ma34_h1, ma34_h4, atr_h1)
 
     elif direction == "SHORT" or (direction == "WAIT" and h4_bias == "SHORT"):
-        entry    = price
+        entry     = price
         sl_struct = recent_h1_high + atr_h1 * 0.5
         sl_price  = smart_round(max(entry * 1.01, min(sl_struct, entry * 1.04)))
 
-        tp1 = None
-        for ma in [float(row_h4["ma34"]), float(row_h4["ma89"]), float(row_h4["ma200"])]:
-            if ma < entry * 0.995:
-                tp1 = smart_round(ma); break
-        if tp1 is None: tp1 = smart_round(entry - atr_h1 * 3)
-        tp2 = smart_round(entry - atr_h1 * 5)
-        if tp2 >= entry: tp2 = smart_round(entry - atr_h1 * 5)
+        tp1 = _pick_tp1_short(entry, swing_lows_recent, ma34_h4, ma89_h4, ma200_h4, atr_h1)
+        tp2 = _pick_tp2_short(entry, tp1, fib_ext_h4_short, atr_h1)
+
+        entry_opt, entry_opt_label = _calc_entry_optimal_short(
+            price, fib_h4_ret, ma34_h1, ma34_h4, atr_h1)
 
     else:
         entry = sl_price = tp1 = tp2 = price
+        entry_opt, entry_opt_label = None, None
+
+    # Đảm bảo TP2 không nằm sai phía
+    if direction == "LONG" and tp2 <= tp1:
+        tp2 = smart_round(tp1 + (tp1 - entry))
+    if direction == "SHORT" and tp2 >= tp1:
+        tp2 = smart_round(tp1 - (entry - tp1))
 
     sl_pct  = round(abs(entry - sl_price) / entry * 100, 2) if entry != sl_price else 0
     tp1_pct = round(abs(tp1 - entry) / entry * 100, 2)      if entry != tp1 else 0
     rr      = round(tp1_pct / sl_pct, 2)                    if sl_pct > 0 else 0
+
+    # R:R với entry optimal (nếu có) — SL tính lại từ entry_opt
+    entry_opt_rr = None
+    if entry_opt and direction == "LONG" and entry_opt < entry:
+        opt_sl_pct  = abs(entry_opt - sl_price) / entry_opt * 100
+        opt_tp1_pct = abs(tp1 - entry_opt) / entry_opt * 100
+        entry_opt_rr = round(opt_tp1_pct / opt_sl_pct, 2) if opt_sl_pct > 0 else None
+    elif entry_opt and direction == "SHORT" and entry_opt > entry:
+        opt_sl_pct  = abs(entry_opt - sl_price) / entry_opt * 100
+        opt_tp1_pct = abs(tp1 - entry_opt) / entry_opt * 100
+        entry_opt_rr = round(opt_tp1_pct / opt_sl_pct, 2) if opt_sl_pct > 0 else None
 
     # Update checklist với rr thực
     entry_checklist, entry_verdict = build_entry_checklist(
@@ -459,5 +600,9 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         "h1_status_note":   h1_status_note,
         "entry_checklist":  entry_checklist,
         "entry_verdict":    entry_verdict,
+        "entry_now":        smart_round(entry),
+        "entry_opt":        entry_opt,
+        "entry_opt_label":  entry_opt_label,
+        "entry_opt_rr":     entry_opt_rr,
     }
     return sanitize(result)

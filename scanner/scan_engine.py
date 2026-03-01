@@ -1,20 +1,53 @@
 """scanner/scan_engine.py — Full Market Scanner.
 Dùng chung engine với Dashboard — theo strategy được chọn (SWING_H4 hoặc SWING_H1).
 """
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 
 from core.binance import fetch_all_futures_tickers
 from core.utils import sanitize
+
+SCAN_CACHE_FILE = Path("data/last_scan.json")
+
+def _persist_scan_state(state: dict):
+    """Lưu kết quả scan vào file để survive restart."""
+    try:
+        SCAN_CACHE_FILE.parent.mkdir(exist_ok=True)
+        SCAN_CACHE_FILE.write_text(json.dumps({
+            "results":     state.get("results", []),
+            "finished_at": state.get("finished_at"),
+            "total":       state.get("total", 0),
+            "strategy":    state.get("strategy", "SWING_H4"),
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"[SCAN PERSIST ERROR] {e}")
+
+def _load_persisted_scan() -> dict:
+    """Load kết quả scan từ file nếu có."""
+    try:
+        if SCAN_CACHE_FILE.exists():
+            data = json.loads(SCAN_CACHE_FILE.read_text())
+            return data
+    except Exception:
+        pass
+    return {}
 from dashboard.fam_engine import fam_analyze
 from dashboard.swing_h1_engine import swing_h1_analyze
 from dashboard.scalp_engine import scalp_analyze
 
+_persisted = _load_persisted_scan()
 scan_state = {
-    "running": False, "progress": 0, "total": 0, "results": [],
-    "started_at": None, "finished_at": None, "error": None,
-    "strategy": "SWING_H4",
+    "running":     False,
+    "progress":    0,
+    "total":       _persisted.get("total", 0),
+    "results":     _persisted.get("results", []),
+    "started_at":  None,
+    "finished_at": _persisted.get("finished_at"),
+    "error":       None,
+    "strategy":    _persisted.get("strategy", "SWING_H4"),
 }
 _state_lock = threading.Lock()
 
@@ -123,6 +156,8 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
         ))
         scan_state["results"]     = results
         scan_state["finished_at"] = datetime.now().isoformat()
+        _persist_scan_state(scan_state)
+        print(f"[SCAN] Lưu {len(results)} kết quả vào {SCAN_CACHE_FILE}")
     except Exception as e:
         import traceback
         scan_state["error"] = str(e)

@@ -1,0 +1,1644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoDesk — FAM Trading</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#05080f;--bg2:#0a0f1a;--bg3:#0f1623;--bg4:#141d2e;
+  --border:#1a2744;--border2:#243050;
+  --accent:#00c8ff;--accent2:#0088cc;
+  --long:#00e676;--long2:#00a854;
+  --short:#ff3d5a;--short2:#cc2040;
+  --wait:#ffb300;--warn:#ff6d00;
+  --text:#dce8ff;--muted:#4a6080;--muted2:#6a80a0;
+  --mono:'JetBrains Mono',monospace;
+  --font:'Space Grotesk',sans-serif;
+  --card-radius:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh;overflow-x:hidden}
+
+/* ── HEADER ── */
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 24px;border-bottom:1px solid var(--border);
+  background:rgba(5,8,15,.95);backdrop-filter:blur(12px);
+  position:sticky;top:0;z-index:100;
+}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-icon{width:28px;height:28px;border-radius:6px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#000}
+.logo-text{font-size:16px;font-weight:800;letter-spacing:-.3px}
+.logo-text span{color:var(--accent)}
+.logo-sub{font-size:10px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:4px;background:var(--bg3);border-radius:8px;padding:4px}
+.tab{padding:7px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;
+     border:none;background:none;color:var(--muted);transition:all .2s;font-family:var(--font)}
+.tab.active{background:var(--bg4);color:var(--text);border:1px solid var(--border)}
+.tab:hover:not(.active){color:var(--text)}
+
+.header-right{display:flex;align-items:center;gap:10px}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.status-dot.on{background:var(--long);box-shadow:0 0 8px var(--long)}
+.status-dot.scanning{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.status-label{font-size:11px;color:var(--muted)}
+
+/* ── BUTTONS ── */
+.btn{padding:8px 16px;border-radius:7px;border:1px solid var(--border);
+     background:var(--bg3);color:var(--text);font-family:var(--font);
+     font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.danger{background:rgba(255,61,90,.15);color:var(--short);border-color:var(--short)}
+.btn.danger:hover{background:rgba(255,61,90,.25)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── LAYOUT ── */
+.page{display:none;padding:20px 24px}
+.page.active{display:block}
+
+/* ── DASHBOARD PAGE ── */
+.dash-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+.symbol-input-wrap{display:flex;gap:6px;align-items:center}
+.symbol-input{background:var(--bg3);border:1px solid var(--border);border-radius:7px;
+  padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:12px;width:120px;
+  text-transform:uppercase}
+.symbol-input:focus{outline:none;border-color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;
+  border-radius:20px;background:var(--bg3);border:1px solid var(--border);
+  font-size:12px;font-weight:600;cursor:default}
+.chip-rm{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;
+  padding:0 2px;line-height:1}
+.chip-rm:hover{color:var(--short)}
+
+/* ── SIGNAL CARDS ── */
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-radius);
+  padding:18px;cursor:pointer;transition:border-color .2s;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--muted)}
+.card.LONG::before{background:linear-gradient(90deg,var(--long),var(--long2))}
+.card.SHORT::before{background:linear-gradient(90deg,var(--short),var(--short2))}
+.card.WAIT::before{background:var(--wait)}
+.card:hover{border-color:var(--border2)}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.card-sym{font-size:18px;font-weight:800}
+.card-sym span{font-size:12px;color:var(--muted);font-weight:500}
+.badges{display:flex;gap:5px;align-items:center}
+.badge{padding:3px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:.3px}
+.badge.LONG{background:rgba(0,230,118,.12);color:var(--long);border:1px solid rgba(0,230,118,.2)}
+.badge.SHORT{background:rgba(255,61,90,.12);color:var(--short);border:1px solid rgba(255,61,90,.2)}
+.badge.WAIT{background:rgba(255,179,0,.12);color:var(--wait);border:1px solid rgba(255,179,0,.2)}
+.badge.HIGH{background:rgba(0,230,118,.1);color:var(--long)}
+.badge.MEDIUM{background:rgba(255,179,0,.1);color:var(--wait)}
+.badge.WATCH{background:rgba(0,200,255,.08);color:var(--accent);border:1px solid rgba(0,200,255,.15)}
+.badge.LOW{background:rgba(100,120,140,.1);color:var(--muted2)}
+.badge.notrade{background:rgba(255,109,0,.12);color:var(--warn);border:1px solid rgba(255,109,0,.2)}
+.card-price{font-family:var(--mono);font-size:22px;font-weight:700;margin-bottom:10px}
+.tf-tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}
+.tf-tag{font-size:10px;padding:3px 7px;border-radius:5px;font-weight:600;font-family:var(--mono);
+  background:var(--bg4);border:1px solid var(--border)}
+.tf-tag.bull{border-color:rgba(0,230,118,.3);color:var(--long)}
+.tf-tag.bear{border-color:rgba(255,61,90,.3);color:var(--short)}
+.rr-row{font-family:var(--mono);font-size:20px;font-weight:800;margin-bottom:10px}
+.rr-label{font-size:11px;color:var(--muted);font-family:var(--font);font-weight:400;margin-left:6px}
+.levels-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:12px}
+.level{background:var(--bg3);border-radius:7px;padding:7px 8px;text-align:center}
+.level-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.level-val{font-family:var(--mono);font-size:11px;font-weight:700}
+.mkt-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;
+  background:var(--bg3);border-radius:8px;padding:8px}
+.mkt-item{text-align:center}
+.mkt-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
+.mkt-val{font-family:var(--mono);font-size:12px;font-weight:700}
+.warn-box{background:rgba(255,109,0,.08);border:1px solid rgba(255,109,0,.2);
+  border-radius:7px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5;color:#ffb080}
+.cond-list{display:flex;flex-wrap:wrap;gap:4px}
+.cond-tag{font-size:10px;padding:2px 7px;border-radius:10px;
+  background:rgba(0,200,255,.06);color:var(--accent);border:1px solid rgba(0,200,255,.12)}
+.card-loading{color:var(--muted);font-size:13px;padding:20px 0;text-align:center}
+.card-error{color:var(--short);font-size:12px}
+
+/* ── SCANNER PAGE ── */
+.scan-settings{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-radius);
+  padding:18px 20px;margin-bottom:20px}
+.scan-settings-title{font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+.scan-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.ctrl-group{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.ctrl-group select{background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+  padding:6px 10px;color:var(--text);font-family:var(--font);font-size:12px;cursor:pointer}
+.ctrl-group select:focus{outline:none;border-color:var(--accent)}
+.progress-wrap{margin-top:12px}
+.prog-bar-bg{background:var(--bg3);border-radius:20px;height:5px;overflow:hidden;margin-bottom:8px}
+.prog-bar-fill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--accent),var(--long));transition:width .4s}
+.prog-text{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.prog-found{color:var(--long);font-weight:700}
+
+/* ── SCAN STATS ── */
+.scan-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+  padding:12px 16px;flex:1;min-width:100px}
+.stat-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+.stat-val{font-size:24px;font-weight:800;font-family:var(--mono)}
+
+/* ── SCAN RESULTS TABLE ── */
+.table-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.sort-btn{padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600}
+.count-badge{font-size:11px;color:var(--muted);margin-left:auto}
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-radius);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{padding:10px 12px;text-align:left;color:var(--muted);font-size:10px;
+  letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border);
+  background:var(--bg3);white-space:nowrap}
+tbody tr{border-bottom:1px solid rgba(26,39,68,.4);cursor:pointer;transition:background .12s}
+tbody tr:hover{background:var(--bg3)}
+tbody td{padding:11px 12px;vertical-align:middle}
+.sym-name{font-weight:800;font-size:13px}
+.sym-sub{font-size:10px;color:var(--muted)}
+.mono{font-family:var(--mono)}
+.rr-val{font-family:var(--mono);font-weight:800;font-size:14px}
+
+/* ── DRAWER ── */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;backdrop-filter:blur(2px)}
+.overlay.show{display:block}
+.drawer{position:fixed;right:-520px;top:0;bottom:0;width:500px;
+  background:var(--bg2);border-left:1px solid var(--border);z-index:201;
+  overflow-y:auto;padding:24px;transition:right .3s cubic-bezier(.4,0,.2,1)}
+.drawer.open{right:0}
+.drawer-close{position:absolute;top:16px;right:16px;background:none;border:none;
+  color:var(--muted);font-size:22px;cursor:pointer;padding:4px;line-height:1}
+.drawer-close:hover{color:var(--text)}
+.drawer-sym{font-size:26px;font-weight:800;margin-bottom:4px}
+.drawer-price{font-family:var(--mono);font-size:22px;color:var(--accent);margin-bottom:14px}
+.drawer-section{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin:16px 0 8px}
+.drawer-levels{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px}
+.dlevel{background:var(--bg3);border-radius:8px;padding:10px 12px}
+.dlevel-lbl{font-size:10px;color:var(--muted);margin-bottom:2px}
+.dlevel-val{font-family:var(--mono);font-weight:700;font-size:15px}
+.drawer-mkt{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.dmkt{background:var(--bg3);border-radius:8px;padding:10px;text-align:center}
+.dmkt-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.dmkt-val{font-family:var(--mono);font-weight:700;font-size:14px}
+.checklist{background:var(--bg3);border-radius:8px;padding:12px 14px;
+  font-size:11px;color:var(--muted2);line-height:2;margin-top:16px}
+.checklist b{color:var(--text);display:block;margin-bottom:4px}
+
+/* ── EMPTY STATE ── */
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty-icon{font-size:48px;margin-bottom:12px}
+.empty-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px}
+
+/* ── H1 STATUS ── */
+.h1-status{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+  margin-bottom:10px;font-size:11px;font-weight:600;border:1px solid}
+.h1-status.CONFIRMED{background:rgba(0,230,118,.08);color:var(--long);border-color:rgba(0,230,118,.2)}
+.h1-status.PULLBACK{background:rgba(255,179,0,.08);color:var(--wait);border-color:rgba(255,179,0,.2)}
+.h1-status.COUNTER{background:rgba(255,61,90,.08);color:var(--short);border-color:rgba(255,61,90,.2)}
+.h1-status.FORMING{background:rgba(100,120,160,.08);color:var(--muted2);border-color:rgba(100,120,160,.2)}
+.h1-status.NEUTRAL{background:rgba(100,120,160,.08);color:var(--muted2);border-color:rgba(100,120,160,.2)}
+
+/* ── ENTRY VERDICT ── */
+.verdict{text-align:center;padding:14px;border-radius:10px;margin-bottom:16px;border:1px solid}
+.verdict.GO{background:rgba(0,230,118,.1);border-color:rgba(0,230,118,.3)}
+.verdict.WAIT{background:rgba(255,179,0,.1);border-color:rgba(255,179,0,.3)}
+.verdict.NO{background:rgba(255,61,90,.1);border-color:rgba(255,61,90,.3)}
+.verdict-label{font-size:22px;font-weight:900;margin-bottom:4px}
+.verdict-label.GO{color:var(--long)}
+.verdict-label.WAIT{color:var(--wait)}
+.verdict-label.NO{color:var(--short)}
+.verdict-sub{font-size:11px;color:var(--muted2)}
+
+/* ── CHECKLIST ── */
+.check-item{display:flex;align-items:flex-start;gap:8px;padding:8px 0;
+  border-bottom:1px solid rgba(26,39,68,.4);font-size:12px;line-height:1.4}
+.check-item:last-child{border-bottom:none}
+.check-icon{flex-shrink:0;font-size:14px;margin-top:1px}
+
+/* ── SPINNER ── */
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(0,200,255,.3);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── SETTINGS PANEL ── */
+.settings-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;backdrop-filter:blur(3px)}
+.settings-overlay.show{display:block}
+.settings-panel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:480px;max-width:95vw;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:16px;z-index:301;padding:28px;max-height:90vh;overflow-y:auto}
+.settings-title{font-size:16px;font-weight:800;margin-bottom:20px;display:flex;
+  align-items:center;justify-content:space-between}
+.settings-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer}
+.settings-close:hover{color:var(--text)}
+.settings-section{font-size:10px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:1.2px;margin:16px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;color:var(--muted2);margin-bottom:5px;font-weight:600}
+.field input,.field select{width:100%;background:var(--bg3);border:1px solid var(--border);
+  border-radius:7px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:12px}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
+.field input::placeholder{color:var(--muted)}
+.field-hint{font-size:10px;color:var(--muted);margin-top:4px}
+.settings-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+.test-result{font-size:11px;padding:8px 10px;border-radius:6px;margin-top:8px;display:none}
+.test-result.ok{background:rgba(0,230,118,.1);color:var(--long);border:1px solid rgba(0,230,118,.2)}
+.test-result.err{background:rgba(255,61,90,.1);color:var(--short);border:1px solid rgba(255,61,90,.2)}
+
+@media(max-width:600px){
+  .cards-grid{grid-template-columns:1fr}
+  .levels-row{grid-template-columns:1fr 1fr}
+  .drawer{width:100%;right:-100%}
+  .scan-stats{gap:8px}
+  .stat-val{font-size:18px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">C</div>
+    <div>
+      <div class="logo-text">Crypto<span>Desk</span></div>
+      <div class="logo-sub">FAM &middot; MA34/89/200 &middot; Multi-TF</div>
+    </div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('dashboard')">&#9679; Dashboard</button>
+    <button class="tab" onclick="switchTab('scanner')">&#9906; Market Scan</button>
+    <button class="tab" onclick="switchTab('history')">&#128203; History</button>
+    <button class="tab" onclick="switchTab('backtest')">&#128200; Backtest</button>
+  </div>
+  <div class="header-right">
+    <div class="status-dot" id="statusDot"></div>
+    <span class="status-label" id="statusLabel">Scanner off</span>
+    <button class="btn" id="btnToggle" onclick="toggleDashScanner()">&#9654; Start Scanner</button>
+    <button class="btn primary" id="btnScanNow" onclick="scanNowHeader()">Scan Now</button>
+    <button class="btn" onclick="openSettings()" title="Settings">&#9881;</button>
+  </div>
+</header>
+
+<!-- ══════════════ DASHBOARD PAGE ══════════════ -->
+<div class="page active" id="page-dashboard">
+  <div class="dash-toolbar">
+    <div class="symbol-input-wrap">
+      <input class="symbol-input" id="symInput" placeholder="BTCUSDT" maxlength="20"
+             onkeydown="if(event.key==='Enter')addSymbol()">
+      <button class="btn primary" onclick="addSymbol()">+ Add</button>
+    </div>
+    <button class="btn" onclick="scanNow()">&#8635; Refresh All</button>
+    <span style="font-size:11px;color:var(--muted);margin-left:auto" id="lastScanTime"></span>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="cards-grid" id="cardsGrid">
+    <div class="empty-state">
+      <div class="empty-icon">&#128200;</div>
+      <div class="empty-title">Click "Scan Now" để bắt đầu</div>
+      <div style="font-size:13px">Thêm symbol và scan để xem tín hiệu FAM</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ SCANNER PAGE ══════════════ -->
+<div class="page" id="page-scanner">
+  <div class="scan-settings">
+    <div class="scan-settings-title">Market Scan Settings</div>
+    <div class="scan-controls">
+      <div class="ctrl-group">
+        <label>Min Volume 24h</label>
+        <select id="sMinVol">
+          <option value="5000000">$5M+</option>
+          <option value="10000000" selected>$10M+</option>
+          <option value="50000000">$50M+</option>
+          <option value="100000000">$100M+</option>
+        </select>
+      </div>
+      <div class="ctrl-group" style="display:none">
+        <label>Min R:R</label>
+        <select id="sMinRR">
+          <option value="0" selected>All R:R</option>
+        </select>
+      </div>
+      <div class="ctrl-group">
+        <label>Direction</label>
+        <select id="sDir">
+          <option value="ALL">All</option>
+          <option value="LONG">LONG</option>
+          <option value="SHORT">SHORT</option>
+        </select>
+      </div>
+      <div class="ctrl-group">
+        <label>Confidence</label>
+        <select id="sConf" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
+          <option value="ALL">All Confidence</option>
+          <option value="HIGH">HIGH only</option>
+          <option value="MEDIUM">MEDIUM only</option>
+          <option value="HIGH_MED">HIGH + MEDIUM</option>
+        </select>
+      </div>
+      <button class="btn primary" id="btnMarketScan" onclick="startMarketScan()">&#9654; Start Full Scan</button>
+    </div>
+    <div id="scanProgress" style="display:none">
+      <div class="prog-bar-bg"><div class="prog-bar-fill" id="progFill" style="width:0%"></div></div>
+      <div class="prog-text">
+        <span id="progLabel">Scanning...</span>
+        <span class="prog-found" id="progFound">0 found</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="scan-stats" id="scanStats" style="display:none">
+    <div class="stat-card"><div class="stat-lbl">Scanned</div><div class="stat-val" id="stScanned">--</div></div>
+    <div class="stat-card"><div class="stat-lbl">Opportunities</div><div class="stat-val" style="color:var(--accent)" id="stFound">--</div></div>
+    <div class="stat-card"><div class="stat-lbl">LONG</div><div class="stat-val" style="color:var(--long)" id="stLong">--</div></div>
+    <div class="stat-card"><div class="stat-lbl">SHORT</div><div class="stat-val" style="color:var(--short)" id="stShort">--</div></div>
+    <div class="stat-card"><div class="stat-lbl">HIGH Conf</div><div class="stat-val" style="color:var(--long)" id="stHigh">--</div></div>
+    <div class="stat-card"><div class="stat-lbl">WATCH</div><div class="stat-val" style="color:var(--accent)" id="stWatch">--</div></div>
+    <div class="stat-card"><div class="stat-lbl">Scan Time</div><div class="stat-val" style="font-size:16px;padding-top:6px" id="stTime">--</div></div>
+  </div>
+
+  <div id="scanResults">
+    <div class="empty-state">
+      <div class="empty-icon">&#128269;</div>
+      <div class="empty-title">Ready to scan</div>
+      <div style="font-size:13px">Quét toàn bộ ~400 Binance Futures &middot; 3-5 phút &middot; FAM filter</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ DRAWER ══════════════ -->
+<div class="overlay" id="overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <button class="drawer-close" onclick="closeDrawer()">&#10005;</button>
+  <div id="drawerContent"></div>
+</div>
+
+<!-- ══════════════ HISTORY PAGE ══════════════ -->
+<div class="page" id="page-history">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+    <div>
+      <div style="font-size:18px;font-weight:800">Signal History</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px">Lịch sử tín hiệu được lưu khi auto-scanner chạy</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <select id="histDir" onchange="renderHistory()" style="background:var(--bg3);border:1px solid var(--border);
+        border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font);font-size:12px">
+        <option value="ALL">All</option>
+        <option value="LONG">LONG</option>
+        <option value="SHORT">SHORT</option>
+      </select>
+      <button class="btn danger" onclick="clearHistory()">&#128465; Clear</button>
+      <button class="btn" onclick="loadHistory()">&#8635; Refresh</button>
+    </div>
+  </div>
+  <div id="historyContent">
+    <div class="empty-state">
+      <div class="empty-icon">&#128203;</div>
+      <div class="empty-title">Chưa có lịch sử</div>
+      <div style="font-size:13px">Auto-scanner sẽ tự lưu khi phát hiện signal LONG/SHORT</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ BACKTEST PAGE ══════════════ -->
+<div class="page" id="page-backtest">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+    <div>
+      <div style="font-size:18px;font-weight:800">Backtest</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px">Kiểm tra kết quả thực tế của các signal trong History — SL hay TP chạm trước</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="btConf" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
+        <option value="HIGH">HIGH only</option>
+        <option value="ALL">Tất cả</option>
+      </select>
+      <select id="btDir" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
+        <option value="ALL">All direction</option>
+        <option value="LONG">LONG only</option>
+        <option value="SHORT">SHORT only</option>
+      </select>
+      <div style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 10px">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Vốn/lệnh</span>
+        <input id="btCapital" type="number" value="1000" min="100" step="100"
+          style="width:70px;background:transparent;border:none;color:var(--text);font-family:var(--mono);font-size:13px;font-weight:700;text-align:right;outline:none">
+        <span style="font-size:11px;color:var(--muted)">USDT</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 10px">
+        <span style="font-size:11px;color:var(--muted)">Đòn bẩy</span>
+        <select id="btLeverage" style="background:transparent;border:none;color:var(--text);font-family:var(--mono);font-size:13px;font-weight:700;outline:none;cursor:pointer">
+          <option value="1">1x</option>
+          <option value="2">2x</option>
+          <option value="3">3x</option>
+          <option value="5" selected>5x</option>
+          <option value="10">10x</option>
+          <option value="20">20x</option>
+        </select>
+      </div>
+      <button class="btn primary" id="btnBacktest" onclick="runBacktest()">&#9654; Run Backtest</button>
+    </div>
+  </div>
+
+  <!-- Summary cards -->
+  <div id="btSummary" style="display:none">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:20px">
+      <div class="stat-card" style="text-align:center">
+        <div class="stat-lbl">Win Rate</div>
+        <div class="stat-val" id="btWinRate" style="font-size:28px">--</div>
+      </div>
+      <div class="stat-card" style="text-align:center">
+        <div class="stat-lbl">Trades</div>
+        <div class="stat-val" id="btTotal" style="font-size:22px">--</div>
+        <div style="font-size:10px;color:var(--muted)" id="btBreakdown">--</div>
+      </div>
+      <div class="stat-card" style="text-align:center">
+        <div class="stat-lbl">Total P&L (R)</div>
+        <div class="stat-val" id="btTotalR" style="font-size:22px">--</div>
+      </div>
+      <div class="stat-card" style="text-align:center">
+        <div class="stat-lbl">Expectancy</div>
+        <div class="stat-val" id="btExpect" style="font-size:22px">--</div>
+        <div style="font-size:10px;color:var(--muted)">R per trade</div>
+      </div>
+      <div class="stat-card" style="text-align:center">
+        <div class="stat-lbl">Avg Win</div>
+        <div class="stat-val" id="btAvgWin" style="font-size:22px;color:var(--long)">--</div>
+        <div style="font-size:10px;color:var(--muted)" id="btAvgWinC">--</div>
+      </div>
+      <div class="stat-card" style="text-align:center">
+        <div class="stat-lbl">Avg Loss</div>
+        <div class="stat-val" id="btAvgLoss" style="font-size:22px;color:var(--short)">--</div>
+        <div style="font-size:10px;color:var(--muted)" id="btAvgLossC">--</div>
+      </div>
+    </div>
+
+    <!-- Equity curve mini -->
+    <div id="btEquity" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-radius);padding:16px;margin-bottom:20px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Equity Curve (R)</div>
+      <canvas id="btChart" height="80"></canvas>
+    </div>
+  </div>
+
+  <!-- Detail table -->
+  <div id="btResults">
+    <div class="empty-state">
+      <div class="empty-icon">&#128200;</div>
+      <div class="empty-title">Chưa chạy backtest</div>
+      <div style="font-size:13px">Cần có Signal History — bật auto-scanner để tích lũy data</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ SETTINGS PANEL ══════════════ -->
+<div class="settings-overlay" id="settingsOverlay" onclick="closeSettings()"></div>
+<div class="settings-panel" id="settingsPanel">
+  <div class="settings-title">
+    <span>⚙️ Settings</span>
+    <button class="settings-close" onclick="closeSettings()">✕</button>
+  </div>
+
+  <div class="settings-section">Auto Scanner</div>
+  <div class="field">
+    <label>Interval (phút)</label>
+    <select id="cfgInterval">
+      <option value="5">5 phút</option>
+      <option value="15">15 phút</option>
+      <option value="30" selected>30 phút</option>
+      <option value="60">1 giờ</option>
+      <option value="120">2 giờ</option>
+    </select>
+    <div class="field-hint">Tần suất auto-scan symbols trong Dashboard</div>
+  </div>
+
+  <div class="settings-section">Telegram Alerts</div>
+  <div class="field">
+    <label>Bot Token</label>
+    <input type="password" id="cfgToken" placeholder="1234567890:ABCdef...">
+    <div class="field-hint">Lấy từ @BotFather trên Telegram</div>
+  </div>
+  <div class="field">
+    <label>Chat ID</label>
+    <input type="text" id="cfgChatId" placeholder="-1001234567890">
+    <div class="field-hint">Chat ID của group/channel nhận alert</div>
+  </div>
+  <button class="btn" onclick="testTelegram()" style="width:100%">📨 Test Telegram</button>
+  <div class="test-result" id="testResult"></div>
+
+  <div class="settings-section">Dashboard Filter</div>
+  <div class="field">
+    <label>Min R:R hiển thị signal</label>
+    <select id="cfgRRRatio">
+      <option value="1.0">1.0+</option>
+      <option value="1.5" selected>1.5+</option>
+      <option value="2.0">2.0+</option>
+      <option value="2.5">2.5+</option>
+    </select>
+    <div class="field-hint">Signal có R:R thấp hơn sẽ bị ẩn khỏi Dashboard</div>
+  </div>
+
+  <div class="settings-section">Alert Conditions</div>
+  <div class="field">
+    <label>Chỉ alert khi confidence</label>
+    <select id="cfgAlertConf">
+      <option value="HIGH">HIGH only</option>
+      <option value="MEDIUM" selected>MEDIUM + HIGH</option>
+      <option value="ALL">Tất cả</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Min R:R để alert</label>
+    <select id="cfgAlertRR">
+      <option value="1.0">1.0+</option>
+      <option value="1.5" selected>1.5+</option>
+      <option value="2.0">2.0+</option>
+    </select>
+  </div>
+
+  <div class="settings-footer">
+    <button class="btn" onclick="closeSettings()">Cancel</button>
+    <button class="btn primary" onclick="saveSettings()">💾 Save</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════
+function fmt(n) {
+  if (n === null || n === undefined || n === '') return '--';
+  var v = Number(n);
+  if (isNaN(v)) return '--';
+  var abs = Math.abs(v), dec;
+  if (abs >= 100)        dec = 2;
+  else if (abs >= 1)     dec = 3;
+  else if (abs >= 0.01)  dec = 5;
+  else if (abs >= 0.0001)dec = 6;
+  else                   dec = 8;
+  return '$' + v.toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec});
+}
+function fmtVol(n) {
+  if (!n) return '--';
+  if (n >= 1e9) return '$'+(n/1e9).toFixed(1)+'B';
+  if (n >= 1e6) return '$'+(n/1e6).toFixed(0)+'M';
+  return '$'+n.toLocaleString();
+}
+function rrColor(rr) {
+  if (!rr) return 'var(--muted)';
+  if (rr >= 2)   return 'var(--long)';
+  if (rr >= 1.5) return '#7fffb0';
+  if (rr >= 1)   return 'var(--wait)';
+  return 'var(--short)';
+}
+function fColor(f, dir) {
+  if (f === null || f === undefined) return 'var(--muted)';
+  if (dir === 'LONG'  && f < 0)   return 'var(--long)';
+  if (dir === 'LONG'  && f > 0.03) return 'var(--short)';
+  if (dir === 'SHORT' && f > 0)   return 'var(--long)';
+  if (dir === 'SHORT' && f < -0.03) return 'var(--short)';
+  return 'var(--muted2)';
+}
+function oiColor(oi) {
+  if (oi === null || oi === undefined) return 'var(--muted)';
+  return oi > 0 ? 'var(--long)' : 'var(--short)';
+}
+function slopeArrow(s) { return s==='UP'?'↑':s==='DOWN'?'↓':'→'; }
+
+// ═══════════════════════════════════════════════
+// TAB SWITCHING
+// ═══════════════════════════════════════════════
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active'); });
+  var idx = {dashboard:0,scanner:1,history:2,backtest:3}[tab]||0;
+  document.querySelectorAll('.tab')[idx].classList.add('active');
+  document.getElementById('page-'+tab).classList.add('active');
+  if (tab === 'history') loadHistory();
+}
+
+// ═══════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════
+var config = {symbols:[], interval_minutes:30};
+var signalCache = {};
+
+function loadConfig() {
+  fetch('/api/config').then(function(r){return r.json();}).then(function(cfg){
+    config = cfg;
+    renderChips();
+  });
+}
+
+function saveConfig() {
+  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(config)});
+}
+
+function renderChips() {
+  var html = '';
+  (config.symbols||[]).forEach(function(s) {
+    html += '<div class="chip" data-sym="'+s+'">' +
+      '<span>'+s.replace('USDT','')+'<span style="color:var(--muted)">/USDT</span></span>' +
+      '<button class="chip-rm" onclick="removeSymbol(\''+s+'\')" title="Remove">&#10005;</button>' +
+    '</div>';
+  });
+  document.getElementById('chips').innerHTML = html;
+}
+
+function addSymbol() {
+  var val = document.getElementById('symInput').value.trim().toUpperCase();
+  if (!val) return;
+  if (!val.endsWith('USDT')) val += 'USDT';
+  if (!config.symbols) config.symbols = [];
+  if (config.symbols.indexOf(val) >= 0) { alert(val+' đã có trong list'); return; }
+  config.symbols.push(val);
+  saveConfig();
+  renderChips();
+  document.getElementById('symInput').value = '';
+  scanSingle(val);
+}
+
+function removeSymbol(sym) {
+  config.symbols = (config.symbols||[]).filter(function(s){return s!==sym;});
+  saveConfig();
+  renderChips();
+  delete signalCache[sym];
+  renderCards();
+}
+
+function renderCards() {
+  var syms = config.symbols || [];
+  if (!syms.length) {
+    document.getElementById('cardsGrid').innerHTML =
+      '<div class="empty-state"><div class="empty-icon">&#128200;</div>' +
+      '<div class="empty-title">Thêm symbol để bắt đầu</div></div>';
+    return;
+  }
+  var html = '';
+  syms.forEach(function(s) {
+    if (signalCache[s]) {
+      html += buildCard(signalCache[s]);
+    } else {
+      html += '<div class="card"><div class="card-header">' +
+        '<span class="card-sym">'+s.replace('USDT','')+'<span>/USDT</span></span></div>' +
+        '<div class="card-loading"><span class="spinner"></span>Loading...</div></div>';
+    }
+  });
+  document.getElementById('cardsGrid').innerHTML = html;
+}
+
+function buildCard(d) {
+  if (d.error) {
+    return '<div class="card"><div class="card-header">' +
+      '<span class="card-sym">'+d.symbol.replace('USDT','')+'<span>/USDT</span></span></div>' +
+      '<div class="card-error">&#9888; '+d.error+'</div></div>';
+  }
+  var dir = d.direction || 'WAIT';
+  var conf= d.confidence || 'LOW';
+  var ntBadge = d.no_trade_zone ? '<span class="badge notrade">No-trade</span>' : '';
+  var mk = d.market || {};
+  var fc = fColor(mk.funding, dir);
+  var oc = oiColor(mk.oi_change);
+  var ac = mk.atr_ratio > 1.5 ? 'var(--short)' : mk.atr_ratio < 0.7 ? 'var(--wait)' : 'var(--long)';
+  var btcWarn = '';
+  if (d.btc_context && d.btc_context.sentiment === 'RISK_OFF' || (d.btc_context && d.btc_context.sentiment === 'DUMP')) {
+    if (dir === 'LONG') btcWarn = '<div class="warn-box">&#9888; '+d.btc_context.note+'</div>';
+  }
+
+  var h4 = d.h4 || {};
+  var tfTags = '';
+  if (d.d1) tfTags += '<span class="tf-tag '+(d.d1.bias==='LONG'?'bull':'d1.bias'==='SHORT'?'bear':'')+
+    '">D1:'+(d.d1.bias||'--')+'</span>';
+  if (h4.bias) tfTags += '<span class="tf-tag '+(h4.bias==='LONG'?'bull':h4.bias==='SHORT'?'bear':'')+
+    '">H4:'+h4.bias+'</span>';
+  if (h4.slope_ma34) tfTags += '<span class="tf-tag">MA34'+slopeArrow(h4.slope_ma34)+'</span>';
+  if (h4.slope_ma89) tfTags += '<span class="tf-tag">MA89'+slopeArrow(h4.slope_ma89)+'</span>';
+
+  var warns = (d.warnings||[]).filter(function(w){ return w.indexOf('Market:') < 0; });
+  var warnHtml = warns.slice(0,2).map(function(w){
+    return '<div class="warn-box">'+w+'</div>';
+  }).join('');
+
+  var conds = (d.conditions||[]).slice(0,4).map(function(c){
+    return '<span class="cond-tag">'+c+'</span>';
+  }).join('');
+
+  var rrColor = dir==='LONG'?'var(--long)':dir==='SHORT'?'var(--short)':'var(--wait)';
+  var slColor = 'var(--short)';
+  var tp1Color= 'var(--long)';
+
+  return '<div class="card '+dir+'" onclick="showDetail(\''+d.symbol+'\')">' +
+    '<div class="card-header">' +
+      '<span class="card-sym">'+d.symbol.replace('USDT','')+'<span>/USDT</span></span>' +
+      '<div style="display:flex;align-items:center;gap:6px">' +
+        '<div class="badges"><span class="badge '+conf+'">'+conf+'</span>' +
+          '<span class="badge '+dir+'">'+dir+'</span>'+ntBadge+'</div>' +
+        '<button onclick="event.stopPropagation();refreshSingle(this,\''+d.symbol+'\')" '+
+          'title="Refresh mã này" '+
+          'style="background:rgba(255,255,255,.07);border:1px solid var(--border);border-radius:6px;'+
+          'color:var(--muted);cursor:pointer;font-size:13px;padding:2px 7px;line-height:1.6;'+
+          'transition:all .2s" '+
+          'onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">'+
+          '&#8635;'+
+        '</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="card-price">'+fmt(d.price)+'</div>' +
+    '<div class="tf-tags">'+tfTags+'</div>' +
+    (d.h1_status && dir !== 'WAIT' ?
+      '<div class="h1-status '+d.h1_status+'">' +
+        (d.h1_status==='CONFIRMED'?'✅':d.h1_status==='PULLBACK'?'⏳':d.h1_status==='COUNTER'?'⚠️':'🔍') +
+        ' ' + (d.h1_status_note||'') +
+      '</div>' : '') +
+    (dir!=='WAIT' && d.entry_verdict ? (function(){
+      var v = d.entry_verdict;
+      var vIcon = v==='GO' ? '🟢' : v==='NO' ? '🔴' : '🟡';
+      var vText = v==='GO' ? 'Đã có thể vào lệnh' : v==='NO' ? 'Chưa nên vào lệnh' : 'Chờ thêm tín hiệu';
+      var vColor = v==='GO' ? 'var(--long)' : v==='NO' ? 'var(--short)' : 'var(--wait)';
+      var vBg = v==='GO' ? 'rgba(0,230,118,.08)' : v==='NO' ? 'rgba(255,61,90,.08)' : 'rgba(255,179,0,.08)';
+      var vBorder = v==='GO' ? 'rgba(0,230,118,.25)' : v==='NO' ? 'rgba(255,61,90,.25)' : 'rgba(255,179,0,.25)';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;' +
+        'background:'+vBg+';border:1px solid '+vBorder+';border-radius:8px;' +
+        'padding:8px 12px;margin-bottom:8px;cursor:pointer" onclick="event.stopPropagation();showDetail(\''+d.symbol+'\')">'+
+        '<span style="font-size:13px;font-weight:800;color:'+vColor+'">'+vIcon+' '+vText+'</span>' +
+        '<span style="font-size:10px;color:var(--muted)">Xem chi tiết ›</span>' +
+      '</div>';
+    })() : '') +
+    (dir!=='WAIT' ? '<div class="rr-row" style="color:'+rrColor+'">R:R 1:'+d.rr+
+      '<span class="rr-label">UP '+d.tp1_pct+'% TP / '+d.sl_pct+'% SL</span></div>' : '') +
+    (dir!=='WAIT' ?
+    '<div class="levels-row">' +
+      '<div class="level"><div class="level-lbl">Entry</div>' +
+        '<div class="level-val" style="color:var(--accent)">'+fmt(d.entry)+'</div></div>' +
+      '<div class="level"><div class="level-lbl">SL '+d.sl_pct+'%</div>' +
+        '<div class="level-val" style="color:'+slColor+'">'+fmt(d.sl)+'</div></div>' +
+      '<div class="level"><div class="level-lbl">TP1 '+d.tp1_pct+'%</div>' +
+        '<div class="level-val" style="color:'+tp1Color+'">'+fmt(d.tp1)+'</div></div>' +
+      '<div class="level"><div class="level-lbl">TP2</div>' +
+        '<div class="level-val" style="color:rgba(0,230,118,.6)">'+fmt(d.tp2)+'</div></div>' +
+    '</div>' : '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">'+
+      (d.warnings&&d.warnings[0]?d.warnings[0]:'Cho xác nhận — chưa đủ điều kiện')+'</div>') +
+    '<div class="mkt-row">' +
+      '<div class="mkt-item"><div class="mkt-lbl">Funding</div>' +
+        '<div class="mkt-val" style="color:'+fc+'">'+(mk.funding_pct||'N/A')+'</div></div>' +
+      '<div class="mkt-item"><div class="mkt-lbl">OI 24H</div>' +
+        '<div class="mkt-val" style="color:'+oc+'">'+(mk.oi_str||'N/A')+'</div></div>' +
+      '<div class="mkt-item"><div class="mkt-lbl">ATR</div>' +
+        '<div class="mkt-val" style="color:'+ac+'">'+(mk.atr_ratio||'--')+'x</div></div>' +
+    '</div>' +
+    btcWarn + warnHtml +
+    '<div class="cond-list">'+conds+'</div>' +
+  '</div>';
+}
+
+
+function scanSingle(sym) {
+  fetch('/api/symbol/'+sym).then(function(r){return r.json();}).then(function(d){
+    signalCache[sym] = d;
+    renderCards();
+  });
+}
+
+function refreshSingle(btn, sym) {
+  btn.innerHTML = '<span class="spinner" style="width:10px;height:10px;border-width:2px"></span>';
+  btn.disabled = true;
+  fetch('/api/symbol/'+sym)
+    .then(function(r){return r.json();})
+    .then(function(d){
+      signalCache[sym] = d;
+      renderCards();
+    })
+    .catch(function(){
+      btn.innerHTML = '!';
+      btn.disabled = false;
+    });
+}
+
+function showDetail(sym) {
+  var d = signalCache[sym]; if (!d || d.error) return;
+  var dir  = d.direction || 'WAIT';
+  var mk   = d.market || {};
+  var fc   = fColor(mk.funding, dir);
+  var oc   = oiColor(mk.oi_change);
+  var ac   = mk.atr_ratio > 1.5 ? 'var(--short)' : mk.atr_ratio < 0.7 ? 'var(--wait)' : 'var(--long)';
+  var rrC  = dir==='LONG'?'var(--long)':dir==='SHORT'?'var(--short)':'var(--wait)';
+  var h4   = d.h4||{};
+  var btc  = d.btc_context||{};
+
+  // Verdict variables — cần cho cả showDetail và showScanDrawer
+  var verd      = d.entry_verdict || 'WAIT';
+  var verdIcon  = verd==='GO' ? '🟢' : verd==='NO' ? '🔴' : '🟡';
+  var verdText  = verd==='GO' ? 'Đã có thể vào lệnh' : verd==='NO' ? 'Chưa nên vào lệnh' : 'Chờ thêm tín hiệu';
+  var verdColor = verd==='GO' ? 'var(--long)' : verd==='NO' ? 'var(--short)' : 'var(--wait)';
+  var verdBg    = verd==='GO' ? 'rgba(0,230,118,.1)' : verd==='NO' ? 'rgba(255,61,90,.1)' : 'rgba(255,179,0,.1)';
+  var verdBorder= verd==='GO' ? 'rgba(0,230,118,.3)' : verd==='NO' ? 'rgba(255,61,90,.3)' : 'rgba(255,179,0,.3)';
+
+  var html = '';
+  html += '<div class="drawer-sym">'+d.symbol.replace('USDT','')+'<span style="color:var(--muted);font-size:14px">/USDT</span></div>';
+  html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">';
+  html += '<span class="badge '+dir+'" style="font-size:13px;padding:5px 14px">'+dir+'</span>';
+  html += '<span class="badge '+(d.confidence||'LOW')+'">'+d.confidence+'</span>';
+  if (dir!=='WAIT') html += '<span style="font-family:var(--mono);font-size:22px;font-weight:800;color:'+rrC+';margin-left:8px">R:R 1:'+d.rr+'</span>';
+  html += '</div>';
+  html += '<div class="drawer-price">'+fmt(d.price)+'</div>';
+
+  if (dir !== 'WAIT') {
+    html += '<div class="drawer-section">Trade Levels</div>';
+    html += '<div class="drawer-levels">';
+    html += '<div class="dlevel"><div class="dlevel-lbl">Entry</div><div class="dlevel-val" style="color:var(--accent)">'+fmt(d.entry)+'</div></div>';
+    html += '<div class="dlevel"><div class="dlevel-lbl">Stop Loss (-'+d.sl_pct+'%)</div><div class="dlevel-val" style="color:var(--short)">'+fmt(d.sl)+'</div></div>';
+    html += '<div class="dlevel"><div class="dlevel-lbl">TP1 (+'+d.tp1_pct+'%)</div><div class="dlevel-val" style="color:var(--long)">'+fmt(d.tp1)+'</div></div>';
+    html += '<div class="dlevel"><div class="dlevel-lbl">TP2</div><div class="dlevel-val" style="color:rgba(0,230,118,.6)">'+fmt(d.tp2)+'</div></div>';
+    html += '</div>';
+  }
+
+  html += '<div class="drawer-section">Market Context</div>';
+  html += '<div class="drawer-mkt">';
+  html += '<div class="dmkt"><div class="dmkt-lbl">Funding</div><div class="dmkt-val" style="color:'+fc+'">'+(mk.funding_pct||'N/A')+'</div></div>';
+  html += '<div class="dmkt"><div class="dmkt-lbl">OI 1h</div><div class="dmkt-val" style="color:'+oc+'">'+(mk.oi_str||'N/A')+'</div></div>';
+  html += '<div class="dmkt"><div class="dmkt-lbl">ATR</div><div class="dmkt-val" style="color:'+ac+'">'+(mk.atr_ratio||'--')+'x</div></div>';
+  html += '</div>';
+
+  html += '<div class="drawer-section">BTC Market</div>';
+  var btcC = btc.sentiment==='RISK_ON'?'var(--long)':btc.sentiment==='RISK_OFF'||btc.sentiment==='DUMP'?'var(--short)':'var(--muted2)';
+  html += '<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:12px">';
+  html += '<span style="color:'+btcC+';font-weight:700">'+(btc.sentiment||'--')+'</span> &mdash; '+(btc.note||'--');
+  html += '<br><span style="color:var(--muted);font-size:10px">BTC D1:'+btc.d1_trend+' H4:'+btc.h4_trend+' &middot; 24h: '+(btc.chg_24h>0?'+':'')+btc.chg_24h+'%</span>';
+  html += '</div>';
+
+  if (d.conditions && d.conditions.length) {
+    html += '<div class="drawer-section">Conditions ('+d.score+' signals)</div>';
+    html += '<div class="cond-list">';
+    (d.conditions||[]).forEach(function(c){ html += '<span class="cond-tag">&#10003; '+c+'</span>'; });
+    html += '</div>';
+  }
+
+  if (d.warnings && d.warnings.length) {
+    html += '<div class="drawer-section">Warnings</div>';
+    (d.warnings||[]).forEach(function(w){ html += '<div class="warn-box">'+w+'</div>'; });
+  }
+
+  html += '<div class="drawer-section">Multi-TF</div>';
+  html += '<div style="font-size:12px;color:var(--muted2);line-height:2;background:var(--bg3);border-radius:8px;padding:10px 12px">';
+  if (d.d1) html += 'D1: <b style="color:'+( d.d1.bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.d1.bias+'</b> &middot; '+d.d1.structure+'<br>';
+  if (h4.bias) html += 'H4: <b style="color:'+(h4.bias==='LONG'?'var(--long)':'var(--short)')+'">'+h4.bias+'</b> &middot; MA34 '+slopeArrow(h4.slope_ma34)+' MA89 '+slopeArrow(h4.slope_ma89)+'<br>';
+  if (d.h1) html += 'Fib zone: <b>'+d.h1.fib_zone_price+'</b><br>';
+  html += '</div>';
+
+  // Verdict block
+  if (dir !== 'WAIT') {
+    html += '<div style="background:'+verdBg+';border:2px solid '+verdBorder+';border-radius:12px;' +
+      'padding:16px;margin-bottom:16px;text-align:center">' +
+      '<div style="font-size:28px;margin-bottom:6px">'+verdIcon+'</div>' +
+      '<div style="font-size:20px;font-weight:900;color:'+verdColor+'">'+verdText+'</div>';
+    // Sub-text theo verdict
+    if (verd === 'GO') {
+      html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Tất cả điều kiện đã đáp ứng — quản lý rủi ro trước khi vào</div>';
+    } else if (verd === 'NO') {
+      html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Còn 2+ điều kiện thất bại — chờ setup rõ hơn</div>';
+    } else {
+      // WAIT — liệt kê cụ thể điều kiện nào chưa pass
+      var waitItems = (d.entry_checklist||[]).filter(function(c){ return c.ok !== true; });
+      if (waitItems.length) {
+        var waitLines = waitItems.map(function(c){
+          var icon = c.ok === false ? '❌' : '⏳';
+          return icon + ' ' + c.text;
+        }).join('<br>');
+        html += '<div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:left;line-height:1.8">Cần chờ:<br>' + waitLines + '</div>';
+      } else {
+        html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Một số điều kiện chưa xác nhận — theo dõi thêm</div>';
+      }
+    }
+    html += '</div>';
+  }
+
+  // Checklist động từ entry_checklist backend — có số thực tế
+  var cl = d.entry_checklist || [];
+  if (cl.length) {
+    html += '<div class="checklist"><b>Checklist trước khi vào lệnh</b>';
+    cl.forEach(function(c) {
+      var icon = c.ok === true ? '✅' : c.ok === false ? '❌' : '⬜';
+      var clr  = c.ok === true ? 'var(--long)' : c.ok === false ? 'var(--short)' : 'var(--muted2)';
+      html += '<div style="display:flex;align-items:flex-start;gap:7px;margin-top:6px">' +
+        '<span style="font-size:13px;flex-shrink:0">'+icon+'</span>' +
+        '<span style="font-size:12px;color:'+clr+';line-height:1.5">'+c.text+'</span>' +
+        '</div>';
+    });
+    html += '</div>';
+  } else {
+    // Fallback nếu không có entry_checklist
+    html += '<div class="checklist"><b>Checklist trước khi vào lệnh</b>' +
+      '<div style="font-size:12px;color:var(--muted);margin-top:6px">Refresh mã để tải checklist</div>' +
+      '</div>';
+  }
+
+  document.getElementById('drawerContent').innerHTML = html;
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('overlay').classList.add('show');
+}
+
+// ── Dashboard Scanner ──
+var dashScanning = false;
+var dashRefreshTimer = null;
+var lastScanTS = null;
+
+function toggleDashScanner() {
+  if (dashScanning) {
+    fetch('/api/scanner/stop',{method:'POST'}).then(function(){
+      dashScanning = false;
+      if (dashRefreshTimer) clearInterval(dashRefreshTimer);
+      document.getElementById('btnToggle').textContent = '▶ Start Scanner';
+      document.getElementById('btnToggle').className = 'btn';
+      document.getElementById('statusDot').className = 'status-dot';
+      document.getElementById('statusLabel').textContent = 'Scanner off';
+    });
+  } else {
+    fetch('/api/scanner/start',{method:'POST'}).then(function(){
+      dashScanning = true;
+      document.getElementById('btnToggle').textContent = '■ Stop Scanner';
+      document.getElementById('btnToggle').className = 'btn danger';
+      document.getElementById('statusDot').className = 'status-dot on';
+      document.getElementById('statusLabel').textContent = 'Scanner running';
+      startDashPolling();
+    });
+  }
+}
+
+function startDashPolling() {
+  if (dashRefreshTimer) clearInterval(dashRefreshTimer);
+  dashRefreshTimer = setInterval(function() {
+    fetch('/api/scanner/status').then(function(r){return r.json();}).then(function(st) {
+      if (!dashScanning) return;
+      if (st.is_scanning) {
+        document.getElementById('statusDot').className = 'status-dot scanning';
+        document.getElementById('statusLabel').textContent = 'Scanning...';
+      } else {
+        document.getElementById('statusDot').className = 'status-dot on';
+        if (st.next_scan) {
+          var diff = Math.round((new Date(st.next_scan) - new Date()) / 1000);
+          var diffAbs = Math.abs(diff);
+          var diffLabel = diffAbs >= 60 ? Math.round(diffAbs/60)+'m' : diffAbs+'s';
+          document.getElementById('statusLabel').textContent = diff < 0 ? 'Scanning soon...' : 'Next: '+diffLabel;
+        }
+        if (st.last_scan && st.last_scan !== lastScanTS) {
+          lastScanTS = st.last_scan;
+          fetch('/api/results').then(function(r){return r.json();}).then(function(data) {
+            data.forEach(function(d){ signalCache[d.symbol] = d; });
+            renderCards();
+            document.getElementById('lastScanTime').textContent = 'Last scan: '+new Date(st.last_scan).toLocaleTimeString();
+          });
+        }
+      }
+    });
+  }, 5000);
+}
+
+// ═══════════════════════════════════════════════
+// MARKET SCANNER
+// ═══════════════════════════════════════════════
+var allScanResults = [];
+var scanSortCol = 'rr', scanSortAsc = false;
+var scanPollTimer = null;
+var lastScanMeta = {};
+
+function startMarketScan() {
+  var min_vol = parseFloat(document.getElementById('sMinVol').value);
+  fetch('/api/market-scan/start',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({min_vol:min_vol})})
+  .then(function(r){return r.json();})
+  .then(function(d) {
+    if (d.error) { alert(d.error); return; }
+    document.getElementById('btnMarketScan').disabled = true;
+    document.getElementById('btnMarketScan').innerHTML = '<span class="spinner"></span>Scanning...';
+    document.getElementById('scanProgress').style.display = 'block';
+    document.getElementById('scanStats').style.display = 'none';
+    allScanResults = [];
+    pollScan();
+  });
+}
+
+function pollScan() {
+  fetch('/api/market-scan/status').then(function(r){return r.json();}).then(function(st) {
+    var pct = st.total > 0 ? Math.round(st.progress/st.total*100) : 0;
+    document.getElementById('progFill').style.width = pct+'%';
+    document.getElementById('progLabel').textContent = st.running
+      ? 'Scanning '+st.progress+' / '+st.total+' symbols ('+pct+'%)...'
+      : 'Scan complete';
+    document.getElementById('progFound').textContent = st.found+' found';
+    if (st.running) {
+      scanPollTimer = setTimeout(pollScan, 1500);
+    } else {
+      document.getElementById('btnMarketScan').disabled = false;
+      document.getElementById('btnMarketScan').innerHTML = '&#9654; Start Full Scan';
+      scanPollTimer = null;
+      loadScanResults(st);
+    }
+  });
+}
+
+function loadScanResults(st) {
+  lastScanMeta = st;
+  fetch('/api/market-scan/results').then(function(r){return r.json();}).then(function(data) {
+    allScanResults = data;
+    var filtered = applyScanFilters(data);
+    renderScanStats(filtered, data, st);  // truyền raw array
+    renderScanTable(filtered);
+  });
+}
+
+function applyScanFilters(data) {
+  var minRR = parseFloat(document.getElementById('sMinRR').value);
+  var dir   = document.getElementById('sDir').value;
+  var conf  = document.getElementById('sConf').value;
+  var confRank = {HIGH:3, MEDIUM:2, WATCH:1, LOW:0};
+  return data.filter(function(d) {
+    // R:R filter handled by backend scanner
+    if (dir !== 'ALL' && d.direction !== dir) return false;
+    if (conf === 'ALL')      return true;
+    if (conf === 'HIGH')     return d.confidence === 'HIGH';
+    if (conf === 'MEDIUM')   return d.confidence === 'MEDIUM';
+
+    if (conf === 'HIGH_MED') return d.confidence === 'HIGH' || d.confidence === 'MEDIUM';
+    return d.confidence === conf;
+  });
+}
+
+function applyScanFiltersAndRender() {
+  if (!allScanResults.length) return;
+  var filtered = applyScanFilters(allScanResults);
+  renderScanStats(filtered, allScanResults, lastScanMeta);  // truyền raw array
+  renderScanTable(filtered);
+}
+
+document.getElementById('sMinRR').onchange   = applyScanFiltersAndRender;
+document.getElementById('sDir').onchange     = applyScanFiltersAndRender;
+document.getElementById('sConf').onchange    = applyScanFiltersAndRender;
+
+function renderScanStats(filtered, raw, st) {
+  // raw = full unfiltered array, filtered = after UI filters
+  if (!Array.isArray(raw)) raw = allScanResults;  // fallback
+  var lng   = raw.filter(function(d){return d.direction==='LONG';}).length;
+  var shrt  = raw.filter(function(d){return d.direction==='SHORT';}).length;
+  var high  = raw.filter(function(d){return d.confidence==='HIGH';}).length;
+  var watch = raw.filter(function(d){return d.confidence==='WATCH';}).length;
+
+  document.getElementById('scanStats').style.display = 'flex';
+  document.getElementById('stScanned').textContent = st && st.total ? st.total : raw.length;
+  // Opportunities: raw total, chỉ hiện X/Y khi filter đang ẩn bớt
+  document.getElementById('stFound').textContent =
+    filtered.length < raw.length ? filtered.length + ' / ' + raw.length : raw.length;
+  document.getElementById('stLong').textContent  = lng;
+  document.getElementById('stShort').textContent = shrt;
+  document.getElementById('stHigh').textContent  = high;
+  document.getElementById('stWatch').textContent = watch;
+  if (st && st.started_at && st.finished_at) {
+    var secs = Math.round((new Date(st.finished_at)-new Date(st.started_at))/1000);
+    document.getElementById('stTime').textContent = secs+'s';
+  }
+}
+
+function sortScanResults(data) {
+  return data.slice().sort(function(a,b) {
+    var av=a[scanSortCol]||0, bv=b[scanSortCol]||0;
+    return scanSortAsc ? av-bv : bv-av;
+  });
+}
+
+function setSort(col) {
+  if (scanSortCol===col) scanSortAsc = !scanSortAsc;
+  else { scanSortCol=col; scanSortAsc=false; }
+  renderScanTable(applyScanFilters(allScanResults));
+}
+
+function renderScanTable(data) {
+  var sorted = sortScanResults(data);
+  var toolbar = '<div class="table-toolbar">' +
+    '<span style="font-size:11px;color:var(--muted)">Sort:</span>' +
+    sortBtn('rr','R:R') + sortBtn('score','Score') + sortBtn('volume_24h','Volume') + sortBtn('tp1_pct','TP%') +
+    '<span class="count-badge">'+sorted.length+' opportunities</span></div>';
+
+  if (!sorted.length) {
+    document.getElementById('scanResults').innerHTML = toolbar +
+      '<div class="empty-state"><div class="empty-icon">&#129335;</div>' +
+      '<div class="empty-title">Không tìm thấy</div><div style="font-size:13px">Thử giảm Min R:R hoặc Volume</div></div>';
+    return;
+  }
+
+  var rows = sorted.map(function(d, i) {
+    var fc = fColor(d.funding, d.direction);
+    var oc = oiColor(d.oi_change);
+    var ac = d.atr_ratio > 1.5 ? 'var(--short)' : d.atr_ratio < 0.7 ? 'var(--wait)' : 'var(--long)';
+    var conds = (d.conditions||[]).slice(0,3).map(function(c){
+      return '<span class="cond-tag">'+c+'</span>';
+    }).join('');
+    return '<tr onclick="showScanDrawer('+i+')">' +
+      '<td style="color:var(--muted);font-size:11px">'+(i+1)+'</td>' +
+      '<td><div class="sym-name">'+d.symbol.replace('USDT','')+'</div><div class="sym-sub">/USDT PERP</div></td>' +
+      '<td><span class="badge '+d.direction+'">'+d.direction+'</span></td>' +
+      '<td><span class="badge '+d.confidence+'">'+d.confidence+'</span></td>' +
+      '<td class="mono">'+fmt(d.price)+'</td>' +
+      '<td><span class="rr-val" style="color:'+rrColor(d.rr)+'">1:'+d.rr+'</span></td>' +
+      '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted)">-'+d.sl_pct+'%</span></td>' +
+      '<td class="mono" style="color:var(--long)">'+fmt(d.tp1)+' <span style="font-size:10px;color:var(--muted)">+'+d.tp1_pct+'%</span></td>' +
+      '<td class="mono" style="color:'+fc+'">'+(d.funding_str||'N/A')+'</td>' +
+      '<td class="mono" style="color:'+oc+'">'+(d.oi_str||'N/A')+'</td>' +
+      '<td class="mono" style="color:'+ac+'">'+d.atr_ratio+'x</td>' +
+      '<td style="color:var(--muted);font-size:11px">'+fmtVol(d.volume_24h)+'</td>' +
+      '<td>' +
+        '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">'+conds+'</div>' +
+        ((d.h1_note||d.h1_status_note) ? '<div style="font-size:10px;color:'+(d.h1_status==='CONFIRMED'?'var(--long)':d.h1_status==='PULLBACK'?'var(--wait)':'var(--muted2)')+'">'+
+          (d.h1_status==='CONFIRMED'?'✅':d.h1_status==='PULLBACK'?'⏳':'🔍')+' '+(d.h1_note||d.h1_status_note)+'</div>' : '') +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('scanResults').innerHTML = toolbar +
+    '<div class="table-wrap"><table>' +
+    '<thead><tr><th>#</th><th>Symbol</th><th>Dir</th><th>Conf</th><th>Price</th>' +
+    '<th>R:R</th><th>SL</th><th>TP1</th><th>Funding</th><th>OI</th><th>ATR</th><th>Volume</th><th>Conditions</th>' +
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+function sortBtn(col, label) {
+  var active = scanSortCol===col;
+  var arrow  = active?(scanSortAsc?' ↑':' ↓'):'';
+  return '<button class="btn sort-btn'+(active?' primary':'')+'" onclick="setSort(\''+col+'\')" >'+label+arrow+'</button>';
+}
+
+function showScanDrawer(idx) {
+  var sorted = sortScanResults(applyScanFilters(allScanResults));
+  var d = sorted[idx]; if (!d) return;
+  var dir = d.direction;
+  var fc  = fColor(d.funding, dir);
+  var oc  = oiColor(d.oi_change);
+  var ac  = d.atr_ratio > 1.5 ? 'var(--short)' : 'var(--long)';
+  var rrC = rrColor(d.rr);
+  var verd = d.entry_verdict || 'WAIT';
+  var verdIcon  = verd==='GO' ? '🟢' : verd==='NO' ? '🔴' : '🟡';
+  var verdText  = verd==='GO' ? 'Đã có thể vào lệnh' : verd==='NO' ? 'Chưa nên vào lệnh' : 'Chờ thêm tín hiệu';
+  var verdColor = verd==='GO' ? 'var(--long)' : verd==='NO' ? 'var(--short)' : 'var(--wait)';
+  var verdBg    = verd==='GO' ? 'rgba(0,230,118,.1)' : verd==='NO' ? 'rgba(255,61,90,.1)' : 'rgba(255,179,0,.1)';
+  var verdBorder= verd==='GO' ? 'rgba(0,230,118,.3)' : verd==='NO' ? 'rgba(255,61,90,.3)' : 'rgba(255,179,0,.3)';
+  // Verdict variables — cần cho cả showDetail và showScanDrawer
+  var verd      = d.entry_verdict || 'WAIT';
+  var verdIcon  = verd==='GO' ? '🟢' : verd==='NO' ? '🔴' : '🟡';
+  var verdText  = verd==='GO' ? 'Đã có thể vào lệnh' : verd==='NO' ? 'Chưa nên vào lệnh' : 'Chờ thêm tín hiệu';
+  var verdColor = verd==='GO' ? 'var(--long)' : verd==='NO' ? 'var(--short)' : 'var(--wait)';
+  var verdBg    = verd==='GO' ? 'rgba(0,230,118,.1)' : verd==='NO' ? 'rgba(255,61,90,.1)' : 'rgba(255,179,0,.1)';
+  var verdBorder= verd==='GO' ? 'rgba(0,230,118,.3)' : verd==='NO' ? 'rgba(255,61,90,.3)' : 'rgba(255,179,0,.3)';
+
+  var html = '';
+  html += '<div class="drawer-sym">'+d.symbol.replace('USDT','')+'<span style="color:var(--muted);font-size:14px">/USDT</span></div>';
+  html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">';
+  html += '<span class="badge '+dir+'" style="font-size:13px;padding:5px 14px">'+dir+'</span>';
+  html += '<span class="badge '+d.confidence+'">'+d.confidence+'</span>';
+  html += '<span style="font-family:var(--mono);font-size:22px;font-weight:800;color:'+rrC+';margin-left:8px">R:R 1:'+d.rr+'</span>';
+  html += '</div>';
+  html += '<div class="drawer-price">'+fmt(d.price)+'</div>';
+  html += '<div class="drawer-section">Trade Levels</div>';
+  html += '<div class="drawer-levels">';
+  html += '<div class="dlevel"><div class="dlevel-lbl">Entry</div><div class="dlevel-val" style="color:var(--accent)">'+fmt(d.price)+'</div></div>';
+  html += '<div class="dlevel"><div class="dlevel-lbl">SL (-'+d.sl_pct+'%)</div><div class="dlevel-val" style="color:var(--short)">'+fmt(d.sl)+'</div></div>';
+  html += '<div class="dlevel"><div class="dlevel-lbl">TP1 (+'+d.tp1_pct+'%)</div><div class="dlevel-val" style="color:var(--long)">'+fmt(d.tp1)+'</div></div>';
+  html += '<div class="dlevel"><div class="dlevel-lbl">TP2</div><div class="dlevel-val" style="color:rgba(0,230,118,.6)">'+fmt(d.tp2)+'</div></div>';
+  html += '</div>';
+  html += '<div class="drawer-section">Market Context</div>';
+  html += '<div class="drawer-mkt">';
+  html += '<div class="dmkt"><div class="dmkt-lbl">Funding</div><div class="dmkt-val" style="color:'+fc+'">'+(d.funding_str||'N/A')+'</div></div>';
+  html += '<div class="dmkt"><div class="dmkt-lbl">OI 1h</div><div class="dmkt-val" style="color:'+oc+'">'+(d.oi_str||'N/A')+'</div></div>';
+  html += '<div class="dmkt"><div class="dmkt-lbl">ATR</div><div class="dmkt-val" style="color:'+ac+'">'+d.atr_ratio+'x</div></div>';
+  html += '</div>';
+  html += '<div class="drawer-section">Conditions ('+d.score+')</div>';
+  html += '<div class="cond-list">';
+  (d.conditions||[]).forEach(function(c){ html += '<span class="cond-tag">&#10003; '+c+'</span>'; });
+  html += '</div>';
+  // Verdict block
+  if (dir !== 'WAIT') {
+    html += '<div style="background:'+verdBg+';border:2px solid '+verdBorder+';border-radius:12px;' +
+      'padding:16px;margin-bottom:16px;text-align:center">' +
+      '<div style="font-size:28px;margin-bottom:6px">'+verdIcon+'</div>' +
+      '<div style="font-size:20px;font-weight:900;color:'+verdColor+'">'+verdText+'</div>';
+    // Sub-text theo verdict
+    if (verd === 'GO') {
+      html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Tất cả điều kiện đã đáp ứng — quản lý rủi ro trước khi vào</div>';
+    } else if (verd === 'NO') {
+      html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Còn 2+ điều kiện thất bại — chờ setup rõ hơn</div>';
+    } else {
+      html += '<div style="font-size:11px;color:var(--muted);margin-top:4px">Một số điều kiện chưa xác nhận — theo dõi thêm</div>';
+    }
+    html += '</div>';
+  }
+  html += '<div class="checklist"><b>Checklist trước khi vào lệnh</b>&#9744; H4 đóng nến xác nhận hướng<br>&#9744; Không trong vùng lưng chừng<br>&#9744; Funding không bất lợi<br>&#9744; Volume tăng khi vào entry<br>&#9744; R:R ≥ 1.5 (hiện: 1:'+d.rr+')</div>';
+
+  document.getElementById('drawerContent').innerHTML = html;
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('overlay').classList.add('show');
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('overlay').classList.remove('show');
+}
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+fetch('/api/scanner/status').then(function(r){return r.json();}).then(function(st) {
+  if (st.running) {
+    dashScanning = true;
+    lastScanTS   = st.last_scan;
+    document.getElementById('btnToggle').textContent = '■ Stop Scanner';
+    document.getElementById('btnToggle').className   = 'btn danger';
+    document.getElementById('statusDot').className   = 'status-dot on';
+    document.getElementById('statusLabel').textContent = 'Scanner running';
+    startDashPolling();
+  }
+}).catch(function(){});
+
+fetch('/api/results').then(function(r){return r.json();}).then(function(data) {
+  if (data && data.length) {
+    data.forEach(function(d){ signalCache[d.symbol]=d; });
+  }
+}).catch(function(){});
+
+loadConfig();
+
+function scanNow(e) {
+  var syms = config.symbols || [];
+  if (!syms.length) return;
+
+  var grid = document.getElementById('cardsGrid');
+  grid.innerHTML = syms.map(function(s) {
+    return '<div class="card"><div class="card-header">' +
+      '<span class="card-sym">'+s.replace('USDT','')+'<span>/USDT</span></span></div>' +
+      '<div class="card-loading"><span class="spinner"></span>Scanning '+s+'...</div></div>';
+  }).join('');
+
+  var refreshBtn = document.querySelector('[onclick*="scanNow"]');
+  var headerBtn  = document.getElementById('btnScanNow');
+  if (refreshBtn) { refreshBtn.disabled=true; refreshBtn.innerHTML='<span class="spinner"></span>Scanning...'; }
+  if (headerBtn)  { headerBtn.disabled=true;  headerBtn.innerHTML='<span class="spinner"></span>Scanning...'; }
+
+  fetch('/api/scan').then(function(r){return r.json();}).then(function(data){
+    data.forEach(function(d){ signalCache[d.symbol]=d; });
+    renderCards();
+    document.getElementById('lastScanTime').textContent='Last scan: '+new Date().toLocaleTimeString();
+  }).catch(function(err){
+    grid.innerHTML='<div class="empty-state"><div class="empty-icon">⚠️</div>'+
+      '<div class="empty-title">Lỗi kết nối</div><div style="font-size:13px">'+err.message+'</div></div>';
+  }).finally(function(){
+    if (refreshBtn) { refreshBtn.disabled=false; refreshBtn.innerHTML='&#8635; Refresh All'; }
+    if (headerBtn)  { headerBtn.disabled=false;  headerBtn.innerHTML='Scan Now'; }
+  });
+}
+
+function scanNowHeader() { scanNow(); }
+
+// ═══════════════════════════════════════════════
+// SIGNAL HISTORY
+// ═══════════════════════════════════════════════
+var historyData = [];
+
+function loadHistory() {
+  fetch('/api/history').then(function(r){return r.json();}).then(function(data) {
+    historyData = data.reverse(); // mới nhất lên đầu
+    renderHistory();
+  });
+}
+
+function renderHistory() {
+  var dir = document.getElementById('histDir').value;
+  var data = historyData.filter(function(d) {
+    return dir === 'ALL' || d.direction === dir;
+  });
+
+  if (!data.length) {
+    document.getElementById('historyContent').innerHTML =
+      '<div class="empty-state"><div class="empty-icon">&#128203;</div>' +
+      '<div class="empty-title">Chưa có lịch sử</div>' +
+      '<div style="font-size:13px">Auto-scanner sẽ tự lưu khi phát hiện signal</div></div>';
+    return;
+  }
+
+  var rows = data.map(function(d) {
+    var dc = d.direction==='LONG'?'var(--long)':'var(--short)';
+    var cc = d.confidence==='HIGH'?'var(--long)':d.confidence==='MEDIUM'?'var(--wait)':'var(--muted)';
+    var t  = new Date(d.time);
+    var ts = t.toLocaleDateString()+' '+t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    return '<tr>' +
+      '<td style="color:var(--muted);font-size:11px;white-space:nowrap">'+ts+'</td>' +
+      '<td><b>'+d.symbol.replace('USDT','')+'</b><span style="color:var(--muted)">/USDT</span></td>' +
+      '<td><span class="badge '+d.direction+'">'+d.direction+'</span></td>' +
+      '<td><span style="font-size:11px;font-weight:700;color:'+cc+'">'+d.confidence+'</span></td>' +
+      '<td class="mono">'+fmt(d.price)+'</td>' +
+      '<td class="mono" style="color:var(--accent)">'+fmt(d.entry)+'</td>' +
+      '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted)">-'+d.sl_pct+'%</span></td>' +
+      '<td class="mono" style="color:var(--long)">'+fmt(d.tp1)+' <span style="font-size:10px;color:var(--muted)">+'+d.tp1_pct+'%</span></td>' +
+      '<td><span style="font-family:var(--mono);font-weight:800;color:'+rrColor(d.rr)+'">1:'+d.rr+'</span></td>' +
+      '<td style="font-size:11px;color:'+(d.d1_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.d1_bias+'</td>' +
+      '<td style="font-size:11px;color:'+(d.h4_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.h4_bias+'</td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('historyContent').innerHTML =
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'+data.length+' signals</div>' +
+    '<div class="table-wrap"><table>' +
+    '<thead><tr><th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th>' +
+    '<th>Price</th><th>Entry</th><th>SL</th><th>TP1</th><th>R:R</th><th>D1</th><th>H4</th>' +
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+function clearHistory() {
+  if (!confirm('Xóa toàn bộ signal history?')) return;
+  fetch('/api/history/clear', {method:'POST'}).then(function(){
+    historyData = [];
+    renderHistory();
+  });
+}
+
+// ═══════════════════════════════════════════════
+// BACKTEST
+// ═══════════════════════════════════════════════
+function runBacktest() {
+  var btn  = document.getElementById('btnBacktest');
+  var conf     = document.getElementById('btConf').value;
+  var dir      = document.getElementById('btDir').value;
+  var capital  = parseFloat(document.getElementById('btCapital').value) || 1000;
+  var leverage = parseFloat(document.getElementById('btLeverage').value) || 5;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Running...';
+  document.getElementById('btResults').innerHTML =
+    '<div class="empty-state"><span class="spinner"></span><div style="margin-top:12px;color:var(--muted)">Đang fetch data và backtest từng signal...</div></div>';
+  document.getElementById('btSummary').style.display = 'none';
+
+  fetch('/api/backtest', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({confidence: conf, direction: dir})
+  }).then(function(r){ return r.json(); }).then(function(data) {
+    if (data.error) {
+      document.getElementById('btResults').innerHTML =
+        '<div class="empty-state"><div class="empty-icon">&#128203;</div>' +
+        '<div class="empty-title">'+data.error+'</div>' +
+        '<div style="font-size:13px">Bật auto-scanner để tích lũy signal history</div></div>';
+      return;
+    }
+    renderBtSummary(data.summary, data.results, capital, leverage);
+    renderBtTable(data.results, capital, leverage);
+  }).catch(function(e) {
+    document.getElementById('btResults').innerHTML =
+      '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
+  }).finally(function() {
+    btn.disabled = false;
+    btn.innerHTML = '&#9654; Run Backtest';
+  });
+}
+
+function renderBtSummary(s, results, capital, leverage) {
+  capital  = capital  || 1000;
+  leverage = leverage || 5;
+  if (!s || !s.closed) return;
+  document.getElementById('btSummary').style.display = 'block';
+
+  var wrColor = s.win_rate >= 60 ? 'var(--long)' : s.win_rate >= 45 ? 'var(--wait)' : 'var(--short)';
+  var trColor = s.total_r > 0 ? 'var(--long)' : 'var(--short)';
+  var exColor = s.expectancy > 0 ? 'var(--long)' : 'var(--short)';
+
+  document.getElementById('btWinRate').style.color = wrColor;
+  document.getElementById('btWinRate').textContent  = s.win_rate + '%';
+  document.getElementById('btTotal').textContent    = s.closed + ' closed';
+  document.getElementById('btBreakdown').textContent= s.wins+'W / '+s.losses+'L'+(s.opens?' / '+s.opens+' open':'');
+  document.getElementById('btTotalR').style.color   = trColor;
+  var totalUsd = (s.total_r * capital * leverage / 100 * (results[0] ? (results.filter(function(r){return r.bt_result==='WIN';})[0]||results[0]).tp1_pct||5 : 5));
+  // Tính đơn giản: mỗi 1R = sl_pct% * capital * leverage
+  var avgSlPct = results.filter(function(r){return r.sl_pct;}).reduce(function(a,r){return a+r.sl_pct;},0) /
+                 (results.filter(function(r){return r.sl_pct;}).length||1);
+  var oneR_usd = avgSlPct / 100 * capital * leverage;
+  var totalUsdVal = Math.round(s.total_r * oneR_usd * 100) / 100;
+  document.getElementById('btTotalR').textContent = (s.total_r > 0 ? '+' : '') + s.total_r + 'R' +
+    '  (' + (totalUsdVal >= 0 ? '+' : '') + totalUsdVal + '$)';
+  document.getElementById('btExpect').style.color   = exColor;
+  document.getElementById('btExpect').textContent   = (s.expectancy > 0 ? '+' : '') + s.expectancy + 'R';
+  document.getElementById('btAvgWin').textContent   = '+' + s.avg_win_r + 'R';
+  document.getElementById('btAvgLoss').textContent  = s.avg_loss_r + 'R';
+  document.getElementById('btAvgWinC').textContent  = s.avg_candles_win ? '~'+s.avg_candles_win+'h' : '--';
+  document.getElementById('btAvgLossC').textContent = s.avg_candles_loss ? '~'+s.avg_candles_loss+'h' : '--';
+
+  // Equity curve
+  drawEquityCurve(results);
+}
+
+function drawEquityCurve(results) {
+  var canvas = document.getElementById('btChart');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth || 600;
+
+  var closed = results.filter(function(r){ return r.bt_result==='WIN'||r.bt_result==='LOSS'; });
+  if (!closed.length) return;
+
+  var equity = [0];
+  closed.forEach(function(r){ equity.push(equity[equity.length-1] + (r.bt_pnl_r||0)); });
+
+  var W = canvas.width, H = canvas.height;
+  var minE = Math.min.apply(null, equity);
+  var maxE = Math.max.apply(null, equity);
+  var range = maxE - minE || 1;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid zero line
+  var zeroY = H - ((0 - minE) / range) * H;
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(W, zeroY); ctx.stroke();
+
+  // Equity line
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  equity.forEach(function(v, i) {
+    var x = (i / (equity.length - 1)) * W;
+    var y = H - ((v - minE) / range) * H;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  var lastVal = equity[equity.length-1];
+  ctx.strokeStyle = lastVal >= 0 ? 'var(--long)' : 'var(--short)';
+  ctx.stroke();
+
+  // Fill
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = lastVal >= 0 ? 'rgba(0,230,118,0.06)' : 'rgba(255,61,90,0.06)';
+  ctx.fill();
+
+  // Dots for each trade
+  equity.slice(1).forEach(function(v, i) {
+    var x = ((i+1) / (equity.length - 1)) * W;
+    var y = H - ((v - minE) / range) * H;
+    var r = closed[i];
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI*2);
+    ctx.fillStyle = r.bt_result==='WIN' ? 'var(--long)' : 'var(--short)';
+    ctx.fill();
+  });
+}
+
+function renderBtTable(results, capital, leverage) {
+  capital  = capital  || 1000;
+  leverage = leverage || 5;
+  if (!results || !results.length) return;
+
+  var rows = results.map(function(r, i) {
+    var rc = r.bt_result==='WIN'?'var(--long)':r.bt_result==='LOSS'?'var(--short)':r.bt_result==='OPEN'?'var(--accent)':'var(--muted)';
+    var icon = r.bt_result==='WIN'?'✅':r.bt_result==='LOSS'?'❌':r.bt_result==='OPEN'?'⏳':'⚠️';
+    var pnl;
+    if (r.bt_pnl_r !== null && r.bt_pnl_r !== undefined) {
+      var usdPnl = r.bt_result === 'WIN'
+        ? (r.tp1_pct / 100 * capital * leverage).toFixed(2)
+        : (-r.sl_pct / 100 * capital * leverage).toFixed(2);
+      var usdSign = parseFloat(usdPnl) >= 0 ? '+' : '';
+      pnl = '<span style="color:'+rc+';font-weight:800">'+(r.bt_pnl_r>0?'+':'')+r.bt_pnl_r+'R</span>' +
+            ' <span style="font-size:11px;font-weight:700;color:'+rc+'">'+usdSign+usdPnl+'$</span>';
+    } else {
+      pnl = '<span style="color:var(--muted)">--</span>';
+    }
+    var t = new Date(r.time);
+    var ts = t.toLocaleDateString()+' '+t.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+
+    return '<tr>' +
+      '<td style="color:var(--muted);font-size:11px">'+(i+1)+'</td>' +
+      '<td style="font-size:11px;color:var(--muted);white-space:nowrap">'+ts+'</td>' +
+      '<td><b>'+r.symbol.replace('USDT','')+'</b><span style="color:var(--muted)">/USDT</span></td>' +
+      '<td><span class="badge '+r.direction+'">'+r.direction+'</span></td>' +
+      '<td><span class="badge '+(r.confidence||'')+'">'+r.confidence+'</span></td>' +
+      '<td class="mono">'+fmt(r.entry)+'</td>' +
+      '<td class="mono" style="color:var(--short)">'+fmt(r.sl)+' <span style="font-size:10px;color:var(--muted)">-'+r.sl_pct+'%</span></td>' +
+      '<td class="mono" style="color:var(--long)">'+fmt(r.tp1)+' <span style="font-size:10px;color:var(--muted)">+'+r.tp1_pct+'%</span></td>' +
+      '<td><span style="font-family:var(--mono);font-weight:700;color:'+rrColor(r.rr)+'">1:'+r.rr+'</span></td>' +
+      '<td><span style="font-size:16px">'+icon+'</span> <span style="color:'+rc+';font-weight:700;font-size:12px">'+r.bt_result+'</span></td>' +
+      '<td>'+pnl+'</td>' +
+      '<td>' + (function() {
+        if (r.bt_result !== 'OPEN') return '<span style="color:var(--muted)">--</span>';
+        var pct = r.bt_unrealized_pct;
+        var rr  = r.bt_unrealized_r;
+        if (pct === null || pct === undefined) return '<span style="color:var(--muted)">--</span>';
+        var c = pct >= 0 ? 'var(--long)' : 'var(--short)';
+        var usd = (pct / 100 * capital * leverage).toFixed(2);
+        var usdStr = '<span style="font-size:11px;font-weight:800;color:'+c+'">'+(pct>0?'+':'')+usd+'$</span>';
+        var rStr = rr !== null && rr !== undefined ? ' <span style="font-size:10px;color:'+c+'">('+( rr>0?'+':'')+rr+'R)</span>' : '';
+        return usdStr+' <span style="color:var(--muted);font-size:10px">'+(pct>0?'+':'')+pct+'%</span>'+rStr;
+      })() + '</td>' +
+      '<td class="mono" style="color:var(--muted);font-size:11px">'+(r.bt_exit_price?fmt(r.bt_exit_price):'--')+'</td>' +
+      '<td style="font-size:10px;color:var(--muted2);max-width:180px">'+(r.bt_note||'')+'</td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('btResults').innerHTML =
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'+results.length+' signals backtested</div>' +
+    '<div class="table-wrap" style="overflow-x:auto"><table>' +
+    '<thead><tr>' +
+      '<th>#</th><th>Time</th><th>Symbol</th><th>Dir</th><th>Conf</th>' +
+      '<th>Entry</th><th>SL</th><th>TP1</th><th>R:R</th>' +
+      '<th>Result</th><th>P&L (R / $100)</th><th>Unrealized ($100)</th><th>Exit</th><th>Note</th>' +
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+// ═══════════════════════════════════════════════
+// SETTINGS PANEL
+// ═══════════════════════════════════════════════
+function openSettings() {
+  fetch('/api/config').then(function(r){return r.json();}).then(function(cfg) {
+    // Helper: chọn option gần nhất với value số
+    function selectClosest(id, val) {
+      var el = document.getElementById(id);
+      var best = 0, bestDiff = Infinity;
+      for (var i = 0; i < el.options.length; i++) {
+        var diff = Math.abs(parseFloat(el.options[i].value) - parseFloat(val));
+        if (diff < bestDiff) { bestDiff = diff; best = i; }
+      }
+      el.selectedIndex = best;
+    }
+
+    selectClosest('cfgInterval', cfg.interval_minutes || 30);
+    selectClosest('cfgRRRatio',  cfg.rr_ratio         || 1.5);
+    selectClosest('cfgAlertRR',  cfg.alert_rr         || 1.5);
+
+    document.getElementById('cfgToken').value  = cfg.telegram_token  || '';
+    document.getElementById('cfgChatId').value = cfg.telegram_chat   || '';
+    document.getElementById('cfgAlertConf').value = cfg.alert_confidence || 'MEDIUM';
+  });
+  document.getElementById('settingsOverlay').classList.add('show');
+  document.getElementById('settingsPanel').style.display = 'block';
+}
+
+function closeSettings() {
+  document.getElementById('settingsOverlay').classList.remove('show');
+  document.getElementById('settingsPanel').style.display = 'none';
+  document.getElementById('testResult').style.display = 'none';
+}
+
+function saveSettings() {
+  var updates = {
+    interval_minutes:   parseInt(document.getElementById('cfgInterval').value),
+    telegram_token:     document.getElementById('cfgToken').value.trim(),
+    telegram_chat:      document.getElementById('cfgChatId').value.trim(),
+    alert_confidence:   document.getElementById('cfgAlertConf').value,
+    alert_rr:           parseFloat(document.getElementById('cfgAlertRR').value),
+    rr_ratio:           parseFloat(document.getElementById('cfgRRRatio').value),
+  };
+  fetch('/api/config', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(updates)
+  }).then(function(r){return r.json();}).then(function(d) {
+    if (d.ok) {
+      config = Object.assign(config, updates);
+      closeSettings();
+      // Hiện flash notification
+      var n = document.createElement('div');
+      n.textContent = '✓ Settings saved';
+      n.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--long);color:#000;'+
+        'padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;z-index:999;'+
+        'animation:fadeIn .2s ease';
+      document.body.appendChild(n);
+      setTimeout(function(){ n.remove(); }, 2500);
+    }
+  });
+}
+
+function testTelegram() {
+  var token  = document.getElementById('cfgToken').value.trim();
+  var chatId = document.getElementById('cfgChatId').value.trim();
+  var res    = document.getElementById('testResult');
+  if (!token || !chatId) {
+    res.textContent = '⚠ Nhập Bot Token và Chat ID trước';
+    res.className = 'test-result err';
+    res.style.display = 'block';
+    return;
+  }
+  res.textContent = 'Đang gửi...';
+  res.className = 'test-result';
+  res.style.display = 'block';
+  fetch('/api/telegram/test', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({token:token, chat_id:chatId})
+  }).then(function(r){return r.json();}).then(function(d) {
+    if (d.ok) {
+      res.textContent = '✓ Gửi thành công! Kiểm tra Telegram của bạn.';
+      res.className = 'test-result ok';
+    } else {
+      res.textContent = '✗ Lỗi: ' + (d.error||'Unknown error');
+      res.className = 'test-result err';
+    }
+  }).catch(function(e) {
+    res.textContent = '✗ ' + e.message;
+    res.className = 'test-result err';
+  });
+}
+</script>
+</body>
+</html>

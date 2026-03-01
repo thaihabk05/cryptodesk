@@ -35,19 +35,41 @@ def fetch_klines(symbol: str, interval: str, limit: int = 300,
 
 
 def fetch_all_futures_tickers(min_volume_usd: float = 10_000_000) -> list:
-    """Lấy toàn bộ USDT perpetual futures có volume > threshold."""
+    """Lấy toàn bộ USDT perpetual futures có volume > threshold, đã lọc coin rác."""
+    import re
+
+    # ── Blacklist patterns ──────────────────────────────────────────────
+    # Leverage tokens: BTCUP, ETHDOWN, BNBBULL, BTC2L, ETH3S...
+    LEVERAGE_PAT = re.compile(r'(UP|DOWN|BULL|BEAR|[2-9]L|[2-9]S|HEDGE|HALF)USDT$')
+    # Stablecoins & wrapped USD
+    STABLE_PAT   = re.compile(r'^(USDC|BUSD|TUSD|FDUSD|USDP|DAI|FRAX|LUSD|SUSD|USDD|USTC|GUSD)')
+    # Blacklist cứng
+    BLACKLIST = {"LUNA2USDT", "LUNCUSDT", "LUNAUSDT", "USDTUSDT", "BCCUSDT"}
+    # Giá tối thiểu — coin dưới $0.000001 thường là dead meme
+    MIN_PRICE = 0.000001
+    # ───────────────────────────────────────────────────────────────────
+
     r = requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr", timeout=15)
     r.raise_for_status()
     out = []
     for t in r.json():
         sym = t.get("symbol", "")
-        if not sym.endswith("USDT"): continue
-        vol = float(t.get("quoteVolume", 0))
-        if vol < min_volume_usd: continue
+        if not sym.endswith("USDT"):        continue
+        if sym in BLACKLIST:               continue
+        if LEVERAGE_PAT.search(sym):       continue
+        if STABLE_PAT.match(sym):          continue
+
+        vol   = float(t.get("quoteVolume", 0))
+        if vol < min_volume_usd:           continue
+
+        price = float(t.get("lastPrice", 0))
+        if price < MIN_PRICE:              continue
+
         out.append({
             "symbol":           sym,
             "volume_24h":       vol,
             "price_change_pct": float(t.get("priceChangePercent", 0)),
+            "last_price":       price,
             "is_futures":       True,
         })
     return sorted(out, key=lambda x: x["volume_24h"], reverse=True)

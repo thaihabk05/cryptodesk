@@ -340,19 +340,43 @@ def backtest_signal(signal: dict) -> dict:
         sl_pct  = float(signal.get("sl_pct", 2))
         tp1_pct = float(signal.get("tp1_pct", 3))
 
+        # ── Bước 1: Kiểm tra lệnh có được khớp không ──
+        # Signal entry thường là giá thị trường lúc phát, nhưng có thể là Limit
+        # → phải xác nhận giá SAU signal có chạm entry hay không
+        # Nếu entry == price (market order) → coi như đã khớp ngay
+        sig_price     = float(signal.get("price", entry))
+        is_limit_long  = direction == "LONG"  and entry < sig_price * 0.999
+        is_limit_short = direction == "SHORT" and entry > sig_price * 1.001
+        is_limit       = is_limit_long or is_limit_short
+
+        entry_filled   = not is_limit  # market order → đã khớp ngay
+        entry_fill_idx = None          # nến nào giá chạm entry
+
         for i, row in df_after.iterrows():
             high = float(row["high"])
             low  = float(row["low"])
 
+            # Nếu là Limit, chờ giá chạm entry trước
+            if not entry_filled:
+                if direction == "LONG"  and low  <= entry:
+                    entry_filled   = True
+                    entry_fill_idx = i
+                elif direction == "SHORT" and high >= entry:
+                    entry_filled   = True
+                    entry_fill_idx = i
+                else:
+                    continue  # chưa khớp → bỏ qua nến này
+
+            # ── Bước 2: Đã khớp entry → check TP/SL ──
             if direction == "LONG":
                 hit_sl  = low  <= sl
                 hit_tp1 = high >= tp1
-            else:  # SHORT
+            else:
                 hit_sl  = high >= sl
                 hit_tp1 = low  <= tp1
 
             if hit_tp1 and hit_sl:
-                # Cùng nến — assume TP trước nếu giá đi đúng hướng
+                # Cùng nến — giả định TP trước (conservative)
                 result     = "WIN"
                 exit_price = tp1
                 pnl_r      = round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0
@@ -367,30 +391,46 @@ def backtest_signal(signal: dict) -> dict:
             else:
                 continue
 
+            fill_note = f" (khớp nến {entry_fill_idx+1})" if entry_fill_idx is not None else ""
             return {**signal,
                     "bt_result":     result,
-                    "bt_note":       f"Chạm {'TP1' if result=='WIN' else 'SL'} sau {i+1} nến H1",
+                    "bt_note":       f"Chạm {'TP1' if result=='WIN' else 'SL'} sau {i+1} nến H1{fill_note}",
                     "bt_candles":    i + 1,
                     "bt_pnl_r":      pnl_r,
                     "bt_exit_price": round(exit_price, 6)}
 
-        # Chưa chạm SL/TP
+        # ── Bước 3: Hết dữ liệu, chưa kết quả ──
+        if not entry_filled:
+            # Lệnh Limit chưa được khớp lần nào
+            last_price = float(df_after["close"].iloc[-1])
+            dist_pct   = round((last_price - entry) / entry * 100, 2) if direction == "LONG" \
+                         else round((entry - last_price) / entry * 100, 2)
+            return {**signal,
+                    "bt_result":         "PENDING",
+                    "bt_note":           f"Chưa khớp lệnh — giá hiện tại {round(last_price,6)}, entry {entry} chưa được chạm",
+                    "bt_candles":        len(df_after),
+                    "bt_pnl_r":          None,
+                    "bt_unrealized_pct": dist_pct,
+                    "bt_unrealized_r":   None,
+                    "bt_exit_price":     round(last_price, 6)}
+
+        # Đã khớp nhưng chưa chạm SL/TP
         last_price = float(df_after["close"].iloc[-1])
         if direction == "LONG":
             unrealized = round((last_price - entry) / entry * 100, 2)
         else:
             unrealized = round((entry - last_price) / entry * 100, 2)
 
-        sl_pct_val  = float(signal.get("sl_pct", 2))
+        sl_pct_val   = float(signal.get("sl_pct", 2))
         unrealized_r = round(unrealized / sl_pct_val, 2) if sl_pct_val > 0 else None
         return {**signal,
-                "bt_result":       "OPEN",
-                "bt_note":         f"Chưa chạm SL/TP — giá hiện tại {round(last_price,6)} ({unrealized:+.2f}%)",
-                "bt_candles":      len(df_after),
-                "bt_pnl_r":        None,
+                "bt_result":         "OPEN",
+                "bt_note":           f"Đã khớp, chưa chạm SL/TP — giá hiện tại {round(last_price,6)} ({unrealized:+.2f}%)",
+                "bt_candles":        len(df_after),
+                "bt_pnl_r":          None,
                 "bt_unrealized_pct": round(unrealized, 2),
                 "bt_unrealized_r":   unrealized_r,
-                "bt_exit_price":   round(last_price, 6)}
+                "bt_exit_price":     round(last_price, 6)}
 
     except Exception as e:
         return {**signal, "bt_result": "ERROR", "bt_note": str(e),
@@ -399,19 +439,36 @@ def backtest_signal(signal: dict) -> dict:
 
 @app.route("/api/backtest", methods=["POST"])
 def run_backtest():
-    """Backtest tất cả HIGH signals trong history."""
-    data       = request.json or {}
-    conf_filter = data.get("confidence", "HIGH")  # HIGH | ALL
-    dir_filter  = data.get("direction",  "ALL")   # LONG | SHORT | ALL
+    """Backtest signals trong history, hỗ trợ filter theo khoảng thời gian."""
+    from datetime import datetime, timezone, timedelta
+    import pandas as pd
+
+    data        = request.json or {}
+    conf_filter = data.get("confidence", "HIGH")   # HIGH | ALL
+    dir_filter  = data.get("direction",  "ALL")    # LONG | SHORT | ALL
+    hours_ago   = int(data.get("hours_ago", 8))    # mặc định 8 tiếng
 
     history = load_history()
     if not history:
         return jsonify({"results": [], "summary": {}, "error": "Không có history"})
 
-    # Filter
+    # Filter theo confidence + direction
     signals = [h for h in history
                if (conf_filter == "ALL" or h.get("confidence") == conf_filter)
                and (dir_filter == "ALL" or h.get("direction") == dir_filter)]
+
+    # Filter theo thời gian (hours_ago = 0 → không giới hạn)
+    if hours_ago > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+        def sig_after_cutoff(h):
+            try:
+                t = pd.Timestamp(h.get("time", "")).tz_localize("UTC") \
+                    if pd.Timestamp(h.get("time", "")).tzinfo is None \
+                    else pd.Timestamp(h.get("time", ""))
+                return t >= cutoff
+            except Exception:
+                return False
+        signals = [h for h in signals if sig_after_cutoff(h)]
 
     if not signals:
         return jsonify({"results": [], "summary": {}, "error": "Không có signal phù hợp"})
@@ -423,10 +480,11 @@ def run_backtest():
         results.append(r)
 
     # Summary
-    wins   = [r for r in results if r["bt_result"] == "WIN"]
-    losses = [r for r in results if r["bt_result"] == "LOSS"]
-    opens  = [r for r in results if r["bt_result"] == "OPEN"]
-    errors = [r for r in results if r["bt_result"] == "ERROR"]
+    wins    = [r for r in results if r["bt_result"] == "WIN"]
+    losses  = [r for r in results if r["bt_result"] == "LOSS"]
+    opens   = [r for r in results if r["bt_result"] == "OPEN"]
+    pendings= [r for r in results if r["bt_result"] == "PENDING"]
+    errors  = [r for r in results if r["bt_result"] == "ERROR"]
 
     closed = wins + losses
     win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
@@ -448,6 +506,7 @@ def run_backtest():
         "wins":             len(wins),
         "losses":           len(losses),
         "opens":            len(opens),
+        "pending":          len(pendings),
         "errors":           len(errors),
         "win_rate":         win_rate,
         "total_r":          total_r,

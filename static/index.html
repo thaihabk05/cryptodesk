@@ -559,6 +559,15 @@ tbody td{padding:11px 12px;vertical-align:middle}
       <div style="font-size:12px;color:var(--muted);margin-top:2px">Kiểm tra kết quả thực tế của các signal trong History — SL hay TP chạm trước</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <!-- Time range -->
+      <select id="btTimeRange" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
+        <option value="8">8 giờ qua</option>
+        <option value="24">24 giờ qua</option>
+        <option value="48">48 giờ qua</option>
+        <option value="72">3 ngày qua</option>
+        <option value="168">7 ngày qua</option>
+        <option value="0">Tất cả</option>
+      </select>
       <select id="btConf" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
         <option value="HIGH">HIGH only</option>
         <option value="ALL">Tất cả</option>
@@ -1501,10 +1510,12 @@ function runBacktest() {
     '<div class="empty-state"><span class="spinner"></span><div style="margin-top:12px;color:var(--muted)">Đang fetch data và backtest từng signal...</div></div>';
   document.getElementById('btSummary').style.display = 'none';
 
+  var hoursAgo = parseInt(document.getElementById('btTimeRange').value) || 0;
+
   fetch('/api/backtest', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({confidence: conf, direction: dir})
+    body: JSON.stringify({confidence: conf, direction: dir, hours_ago: hoursAgo})
   }).then(function(r){ return r.json(); }).then(function(data) {
     if (data.error) {
       document.getElementById('btResults').innerHTML =
@@ -1537,7 +1548,7 @@ function renderBtSummary(s, results, capital, leverage) {
   document.getElementById('btWinRate').style.color = wrColor;
   document.getElementById('btWinRate').textContent  = s.win_rate + '%';
   document.getElementById('btTotal').textContent    = s.closed + ' closed';
-  document.getElementById('btBreakdown').textContent= s.wins+'W / '+s.losses+'L'+(s.opens?' / '+s.opens+' open':'');
+  document.getElementById('btBreakdown').textContent= s.wins+'W / '+s.losses+'L'+(s.opens?' / '+s.opens+' open':'')+(s.pending?' / '+s.pending+' pending':'');
   document.getElementById('btTotalR').style.color   = trColor;
   var totalUsd = (s.total_r * capital * leverage / 100 * (results[0] ? (results.filter(function(r){return r.bt_result==='WIN';})[0]||results[0]).tp1_pct||5 : 5));
   // Tính đơn giản: mỗi 1R = sl_pct% * capital * leverage
@@ -1564,7 +1575,8 @@ function drawEquityCurve(results) {
   var ctx = canvas.getContext('2d');
   canvas.width = canvas.offsetWidth || 600;
 
-  var closed = results.filter(function(r){ return r.bt_result==='WIN'||r.bt_result==='LOSS'; });
+  var closed  = results.filter(function(r){ return r.bt_result==='WIN'||r.bt_result==='LOSS'; });
+  var pending = results.filter(function(r){ return r.bt_result==='PENDING'; });
   if (!closed.length) return;
 
   var equity = [0];
@@ -1617,9 +1629,14 @@ function renderBtTable(results, capital, leverage) {
   leverage = leverage || 5;
   if (!results || !results.length) return;
 
+  // Sort mới nhất lên đầu
+  results = results.slice().sort(function(a, b) {
+    return new Date(b.time) - new Date(a.time);
+  });
+
   var rows = results.map(function(r, i) {
-    var rc = r.bt_result==='WIN'?'var(--long)':r.bt_result==='LOSS'?'var(--short)':r.bt_result==='OPEN'?'var(--accent)':'var(--muted)';
-    var icon = r.bt_result==='WIN'?'✅':r.bt_result==='LOSS'?'❌':r.bt_result==='OPEN'?'⏳':'⚠️';
+    var rc = r.bt_result==='WIN'?'var(--long)':r.bt_result==='LOSS'?'var(--short)':r.bt_result==='OPEN'?'var(--accent)':r.bt_result==='PENDING'?'var(--wait)':'var(--muted)';
+    var icon = r.bt_result==='WIN'?'✅':r.bt_result==='LOSS'?'❌':r.bt_result==='OPEN'?'⏳':r.bt_result==='PENDING'?'🕐':'⚠️';
     var pnl;
     if (r.bt_pnl_r !== null && r.bt_pnl_r !== undefined) {
       var usdPnl = r.bt_result === 'WIN'
@@ -1647,7 +1664,7 @@ function renderBtTable(results, capital, leverage) {
       '<td><span style="font-size:16px">'+icon+'</span> <span style="color:'+rc+';font-weight:700;font-size:12px">'+r.bt_result+'</span></td>' +
       '<td>'+pnl+'</td>' +
       '<td>' + (function() {
-        if (r.bt_result !== 'OPEN') return '<span style="color:var(--muted)">--</span>';
+        if (r.bt_result !== 'OPEN' && r.bt_result !== 'PENDING') return '<span style="color:var(--muted)">--</span>';
         var pct = r.bt_unrealized_pct;
         var rr  = r.bt_unrealized_r;
         if (pct === null || pct === undefined) return '<span style="color:var(--muted)">--</span>';

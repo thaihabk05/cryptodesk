@@ -99,6 +99,14 @@ def _is_duplicate_signal(result: dict, history: list, window_hours: int = 2) -> 
     return False
 
 
+def _fetch_vol_safe(symbol: str) -> float:
+    """Fetch volume 24h không throw exception."""
+    try:
+        return fetch_volume_24h(symbol) if symbol else 0.0
+    except Exception:
+        return 0.0
+
+
 def _save_signal_to_history(result: dict):
     """Lưu signal vào history — dedup chặt theo symbol+direction+entry±1% trong 2 giờ."""
     history = load_history()
@@ -123,7 +131,8 @@ def _save_signal_to_history(result: dict):
         "score":           result.get("score", 0),
         "verdict":         result.get("entry_verdict", "WAIT"),
         "entry_verdict":   result.get("entry_verdict", "WAIT"),
-        "volume_24h":      result.get("volume_24h", 0),
+        "volume_24h":      result.get("volume_24h") or
+                           _fetch_vol_safe(result.get("symbol","")),
         "strategy":        result.get("strategy", "SWING_H4"),
         "conditions":      result.get("conditions", []),
         "warnings":        result.get("warnings", []),
@@ -326,7 +335,7 @@ def backtest_signal(signal: dict) -> dict:
     Fetch H1 candles sau thời điểm signal, kiểm tra SL hay TP1 chạm trước.
     Return dict với result: WIN / LOSS / OPEN, candles_to_result, pnl_r
     """
-    from core.binance import fetch_klines
+    from core.binance import fetch_klines, fetch_volume_24h
     import pandas as pd
 
     symbol    = signal["symbol"]

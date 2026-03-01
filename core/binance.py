@@ -34,6 +34,17 @@ def fetch_klines(symbol: str, interval: str, limit: int = 300,
     return df[["open","high","low","close","volume"]]
 
 
+
+def fetch_volume_24h(symbol: str) -> float:
+    """Lấy volume 24h USDT của 1 symbol từ futures ticker."""
+    try:
+        r = requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr",
+                         params={"symbol": symbol}, timeout=5)
+        r.raise_for_status()
+        return float(r.json().get("quoteVolume", 0))
+    except Exception:
+        return 0.0
+
 def fetch_all_futures_tickers(min_volume_usd: float = 10_000_000) -> list:
     """Lấy toàn bộ USDT perpetual futures có volume > threshold, đã lọc coin rác."""
     import re

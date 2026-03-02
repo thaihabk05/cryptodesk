@@ -319,7 +319,7 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
                 conditions = conditions_short
 
             score = len(conditions)
-            confidence = "HIGH" if score >= 4 else "MEDIUM" if score >= 2 else "LOW"
+            confidence = "HIGH" if score >= 5 else "MEDIUM" if score >= 3 else "LOW"
 
     # ── ATR & Funding adjustments ──
     atr_warnings = []
@@ -337,6 +337,32 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         all_warnings.insert(0, f"⚠️ Market: {btc_ctx['note']}")
     elif direction == "SHORT" and btc_ctx["sentiment"] in ("RISK_ON", "PUMP"):
         all_warnings.insert(0, f"⚠️ Market: {btc_ctx['note']}")
+
+    # ── PATCH A: BTC Hard Block ──
+    # Không ra signal ngược chiều BTC macro — đây là nguyên nhân chính loss
+    btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
+    btc_d1   = btc_ctx.get("d1_trend", "")
+    if direction == "LONG" and btc_sent in ("RISK_OFF", "DUMP") and btc_d1 == "BEAR":
+        direction  = "WAIT"
+        confidence = "LOW"
+        all_warnings.insert(0, f"🚫 BLOCK LONG — BTC D1 BEAR + {btc_sent}: {btc_ctx.get('note','')}")
+    elif direction == "SHORT" and btc_sent in ("RISK_ON",) and btc_d1 == "BULL":
+        direction  = "WAIT"
+        confidence = "LOW"
+        all_warnings.insert(0, f"🚫 BLOCK SHORT — BTC D1 BULL + {btc_sent}: {btc_ctx.get('note','')}")
+
+    # ── PATCH E: OI Hard Block ──
+    # OI giảm mạnh = vị thế đang đóng = không có buyer mới → block LONG
+    # OI tăng mạnh khi SHORT = short squeeze risk → block SHORT
+    if oi_change is not None and direction == "LONG" and oi_change < -3:
+        direction  = "WAIT"
+        confidence = "LOW"
+        all_warnings.insert(0, f"🚫 BLOCK LONG — OI {oi_change:+.1f}%: vị thế đang đóng, không có buyer mới")
+    elif oi_change is not None and direction == "SHORT" and oi_change > 3:
+        direction  = "WAIT"
+        confidence = "LOW"
+        all_warnings.insert(0, f"🚫 BLOCK SHORT — OI {oi_change:+.1f}%: tiền đang vào LONG, rủi ro squeeze")
+
 
     total_adj = funding_score_adj + atr_score_adj
     if total_adj <= -2 and confidence != "LOW":

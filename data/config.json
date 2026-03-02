@@ -3,12 +3,8 @@
     "BTCUSDT",
     "ETHUSDT",
     "ARBUSDT",
-    "KITEUSDT",
     "ASTERUSDT",
-    "RENDERUSDT",
-    "SPXUSDT",
-    "SKRUSDT",
-    "SANDUSDT"
+    "GIGGLEUSDT"
   ],
   "interval_minutes": 15,
   "telegram_token": "8676249206:AAEUGQNfL5xVQ4DP6krTNRRW-Zs7zqEQLqg",

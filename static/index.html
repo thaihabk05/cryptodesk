@@ -537,7 +537,11 @@ tbody td{padding:11px 12px;vertical-align:middle}
 <div class="page" id="page-history">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
     <div>
-      <div style="font-size:18px;font-weight:800">Signal History</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:18px;font-weight:800">Signal History</div>
+        <div id="histTzBadge" style="font-size:10px;background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);
+          border-radius:5px;padding:2px 8px;color:var(--accent);font-family:var(--mono)">🕐 ...</div>
+      </div>
       <div style="font-size:12px;color:var(--muted);margin-top:2px">Lịch sử tín hiệu được lưu khi auto-scanner chạy</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -568,7 +572,11 @@ tbody td{padding:11px 12px;vertical-align:middle}
 <div class="page" id="page-backtest">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
     <div>
-      <div style="font-size:18px;font-weight:800">Backtest</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:18px;font-weight:800">Backtest</div>
+        <div id="btTzBadge" style="font-size:10px;background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);
+          border-radius:5px;padding:2px 8px;color:var(--accent);font-family:var(--mono)">🕐 ...</div>
+      </div>
       <div style="font-size:12px;color:var(--muted);margin-top:2px">Kiểm tra kết quả thực tế của các signal trong History — SL hay TP chạm trước</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -585,8 +593,9 @@ tbody td{padding:11px 12px;vertical-align:middle}
         <option value="0">Tất cả</option>
       </select>
       <select id="btConf" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
-        <option value="HIGH">HIGH only</option>
         <option value="ALL">Tất cả</option>
+        <option value="HIGH">HIGH only</option>
+        <option value="MEDIUM">MEDIUM only</option>
       </select>
       <select id="btDir" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
         <option value="ALL">All direction</option>
@@ -819,6 +828,20 @@ function onStrategyChange() {
   signalCache = {};
 }
 
+
+function updateTzBadge() {
+  var tz  = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  var off = -new Date().getTimezoneOffset();
+  var sign = off >= 0 ? '+' : '-';
+  var h   = String(Math.floor(Math.abs(off)/60)).padStart(2,'0');
+  var m   = String(Math.abs(off)%60).padStart(2,'0');
+  var label = '🕐 ' + tz + ' (UTC' + sign + h + ':' + m + ')';
+  ['histTzBadge','btTzBadge'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.textContent = label;
+  });
+}
+
 function loadConfig() {
   fetch('/api/config').then(function(r){return r.json();}).then(function(cfg){
     config = cfg;
@@ -1037,8 +1060,16 @@ function showDetail(sym) {
   var html = '';
   // Banner snapshot nếu mở từ history
   if (d._from_history) {
-    var st = new Date(d._saved_at);
-    var stStr = st.toLocaleDateString('vi-VN')+' '+st.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    var stStr = '??';
+    try {
+      var raw = d._saved_at || d.timestamp || '';
+      var st  = raw ? new Date(raw) : null;
+      if (st && !isNaN(st.getTime())) {
+        stStr = st.toLocaleDateString('vi-VN') + ' ' + st.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      } else if (raw) {
+        stStr = raw.replace('T',' ').substring(0, 16);
+      }
+    } catch(e) {}
     html += '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;'
           + 'padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--wait)">'
           + '<span style="font-size:14px">🕐</span>'
@@ -1537,6 +1568,7 @@ fetch('/api/results').then(function(r){return r.json();}).then(function(data) {
 }).catch(function(){});
 
 loadConfig();
+updateTzBadge();
 
 function scanNow(e) {
   var syms = config.symbols || [];

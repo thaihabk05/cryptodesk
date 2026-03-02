@@ -135,15 +135,15 @@ def fetch_btc_context() -> dict:
                   if len(df_h1) >= 24 else 0
 
         if btc_d1 == "BULL" and btc_h4 == "BULL":
-            sentiment, note = "RISK_ON", "BTC trend BULL D1+H4 — thị trường thuận cho LONG"
+            sentiment, note = "RISK_ON",  "BTC trend BULL D1+H4 — thuận LONG, thận trọng SHORT"
         elif btc_d1 == "BEAR" and btc_h4 == "BEAR":
-            sentiment, note = "RISK_OFF", "BTC trend BEAR D1+H4 — thận trọng với LONG altcoin"
+            sentiment, note = "RISK_OFF", "BTC trend BEAR D1+H4 — thuận SHORT, thận trọng LONG"
         elif btc_h4 == "BEAR" and chg_24h < -3:
-            sentiment, note = "DUMP", f"BTC dump {chg_24h}% / 24h — tránh LONG altcoin"
+            sentiment, note = "DUMP",     f"BTC dump {chg_24h}% / 24h — tránh LONG, SHORT theo đà"
         elif btc_h4 == "BULL" and chg_24h > 3:
-            sentiment, note = "PUMP", f"BTC pump {chg_24h}% / 24h — LONG altcoin có lợi"
+            sentiment, note = "PUMP",     f"BTC pump {chg_24h}% / 24h — LONG altcoin có lợi, tránh SHORT"
         else:
-            sentiment, note = "NEUTRAL", "BTC sideways — xét tín hiệu từng mã riêng"
+            sentiment, note = "NEUTRAL",  "BTC sideways — xét tín hiệu từng mã riêng"
 
         return {"price": round(price, 2), "chg_24h": chg_24h,
                 "d1_trend": btc_d1, "h4_trend": btc_h4,

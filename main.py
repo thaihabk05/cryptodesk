@@ -178,10 +178,16 @@ def _send_high_alert(result: dict, token: str, chat_id: str):
         icon = "OK" if c.get("ok") is True else "XX" if c.get("ok") is False else "--"
         check_lines += "  " + icon + " " + str(c.get("text", "")) + chr(10)
 
+    # Strategy label
+    strat_raw = result.get("strategy", "SWING_H4")
+    strat_map = {"SWING_H4": "Swing H4/D1", "SWING_H1": "Swing H1", "SCALP": "Scalp M15"}
+    strat_label = strat_map.get(strat_raw, strat_raw)
+
     lines = [
         dir_emoji + " " + sym + " — " + dirr + " | HIGH",
         verdict_line,
         "--------------------",
+        "Chien luoc: " + strat_label,
         "Price: " + str(result.get("price","")) + " | R:R 1:" + str(result.get("rr","")),
         "Entry: " + str(result.get("entry","")),
         "SL: " + str(result.get("sl","")) + " (-" + str(result.get("sl_pct","")) + "%)",
@@ -361,14 +367,24 @@ def backtest_signal(signal: dict) -> dict:
     sig_time  = signal["time"]  # ISO string
 
     try:
-        sig_ts = pd.Timestamp(sig_time).timestamp()
+        # Parse timestamp — normalize về UTC để so sánh đúng với Binance klines
+        ts_parsed = pd.Timestamp(sig_time)
+        if ts_parsed.tzinfo is None:
+            # Naive timestamp — giả sử là UTC+7 (VN local)
+            ts_parsed = ts_parsed.tz_localize("Asia/Ho_Chi_Minh")
+        sig_ts = ts_parsed.tz_convert("UTC").timestamp()
     except Exception:
         return {**signal, "bt_result": "ERROR", "bt_note": "Invalid timestamp",
                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
 
     try:
-        # Lấy 200 nến H1 gần nhất — đủ để cover hầu hết trades
-        df = fetch_klines(symbol, "1h", 200)
+        # Tính số nến cần fetch: từ lúc signal đến hiện tại (H1) + buffer 24h
+        from datetime import timezone as _tz
+        now_ts    = datetime.now(_tz.utc).timestamp()
+        hours_ago = max(48, int((now_ts - sig_ts) / 3600) + 24)
+        limit     = min(hours_ago, 500)  # tối đa 500 nến H1 (~20 ngày)
+
+        df = fetch_klines(symbol, "1h", limit)
         # Index là DatetimeIndex (open_time) — convert sang timestamp số
         df = df.copy()
         df["ts"] = df.index.astype("int64") // 10**9  # nanoseconds → seconds

@@ -515,6 +515,7 @@ tbody td{padding:11px 12px;vertical-align:middle}
     <div class="stat-card"><div class="stat-lbl">HIGH Conf</div><div class="stat-val" style="color:var(--long)" id="stHigh">--</div></div>
     <div class="stat-card"><div class="stat-lbl">WATCH</div><div class="stat-val" style="color:var(--accent)" id="stWatch">--</div></div>
     <div class="stat-card"><div class="stat-lbl">Scan Time</div><div class="stat-val" style="font-size:16px;padding-top:6px" id="stTime">--</div></div>
+    <div class="stat-card"><div class="stat-lbl">Kết quả lúc</div><div class="stat-val" style="font-size:13px;padding-top:4px;color:var(--muted2)" id="stFinishedAt">--</div></div>
   </div>
 
   <div id="scanResults">
@@ -802,6 +803,33 @@ function switchTab(tab) {
   document.querySelectorAll('.tab')[idx].classList.add('active');
   document.getElementById('page-'+tab).classList.add('active');
   if (tab === 'history') loadHistory();
+  if (tab === 'scanner') loadScanOnTabSwitch();
+}
+
+function loadScanOnTabSwitch() {
+  // Load kết quả scan gần nhất khi vào tab — không trigger scan mới
+  fetch('/api/market-scan/status').then(function(r){return r.json();}).then(function(st) {
+    if (!st.finished_at && !st.running) return; // chưa từng scan
+    fetch('/api/market-scan/results').then(function(r){return r.json();}).then(function(data) {
+      if (!data || !data.length) return;
+      allScanResults = data;
+      document.getElementById('scanStats').style.display = '';
+      var filtered = applyScanFilters(data);
+      renderScanStats(filtered, data, st);
+      renderScanTable(filtered);
+      // Hiển thị label "Kết quả cũ"
+      var pl = document.getElementById('progLabel');
+      if (pl && !st.running) {
+        var ft = st.finished_at ? new Date(st.finished_at) : null;
+        var timeStr = (ft && !isNaN(ft.getTime()))
+          ? ft.toLocaleDateString('vi-VN')+' '+ft.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})
+          : '--';
+        pl.textContent = 'Kết quả lần quét: ' + timeStr;
+        document.getElementById('scanProgress').style.display = '';
+        document.getElementById('progFound').textContent = data.length + ' signals';
+      }
+    });
+  });
 }
 
 // ═══════════════════════════════════════════════
@@ -1413,6 +1441,19 @@ function renderScanStats(filtered, raw, st) {
   if (st && st.started_at && st.finished_at) {
     var secs = Math.round((new Date(st.finished_at)-new Date(st.started_at))/1000);
     document.getElementById('stTime').textContent = secs+'s';
+  }
+  // Hiển thị thời điểm scan xong
+  var finEl = document.getElementById('stFinishedAt');
+  if (finEl && st && st.finished_at) {
+    try {
+      var ft = new Date(st.finished_at);
+      if (!isNaN(ft.getTime())) {
+        finEl.textContent = ft.toLocaleDateString('vi-VN') + ' ' +
+          ft.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      } else {
+        finEl.textContent = st.finished_at.replace('T',' ').substring(0,16);
+      }
+    } catch(e) { finEl.textContent = '--'; }
   }
 }
 

@@ -229,6 +229,27 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     elif direction == "SHORT" and btc_ctx["sentiment"] == "RISK_ON":
         all_warnings.insert(0, f"⚠️ BTC: {btc_ctx['note']}")
 
+
+    # ── PATCH F: Abnormal Candle Spike Filter ──
+    # Check cả nến cuối VÀ nến trước — spike có thể ở nến trước, nến sau chưa confirm
+    _spike_atr_avg = float(df_m15["atr"].iloc[-20:].mean()) if len(df_m15) >= 20 else atr_m15
+    _spike_threshold = _spike_atr_avg * 2.0
+    _spike_triggered = False
+    _spike_body = 0.0
+    _spike_which = ""
+    for _si, _slabel in [(-1, "hiện tại"), (-2, "trước")]:
+        _sr = df_m15.iloc[_si]
+        _sb = abs(float(_sr["close"]) - float(_sr["open"]))
+        if _sb > _spike_threshold:
+            _spike_triggered = True
+            _spike_body = _sb
+            _spike_which = _slabel
+            break
+    if _spike_triggered and direction in ("LONG", "SHORT"):
+        direction  = "WAIT"
+        confidence = "LOW"
+        all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến M15 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
+
     # ── PATCH A: BTC Hard Block ──
     # Không ra signal ngược chiều BTC macro — đây là nguyên nhân chính loss
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")

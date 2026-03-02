@@ -202,6 +202,18 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
     elif direction == "SHORT" and btc_ctx["sentiment"] in ("RISK_ON",):
         all_warnings.insert(0, f"⚠️ Market: {btc_ctx['note']}")
 
+
+    # ── PATCH F: Abnormal Candle Spike Filter ──
+    # Nen H1 gan nhat co body > 2x ATR trung binh = pump/dump dot ngot
+    # Khong vao lenh ngay - cho confirmation
+    _spike_last = df_h1.iloc[-1]
+    _spike_body = abs(float(_spike_last["close"]) - float(_spike_last["open"]))
+    _spike_atr_avg = float(df_h1["atr"].iloc[-20:].mean()) if len(df_h1) >= 20 else atr_h1
+    if _spike_body > _spike_atr_avg * 2.0 and direction in ("LONG", "SHORT"):
+        direction  = "WAIT"
+        confidence = "LOW"
+        all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến H1 body {_spike_body:.5f} > 2x ATR ({_spike_atr_avg*2:.5f}) — pump/dump đột ngột, chờ confirmation nến tiếp theo")
+
     # ── PATCH A: BTC Hard Block ──
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
     btc_d1   = btc_ctx.get("d1_trend", "")

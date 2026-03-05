@@ -283,6 +283,29 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     elif total_adj == -1 and confidence == "HIGH":
         confidence = "MEDIUM"
 
+
+    # ── PATCH G: Price-OI Divergence Block ──
+    if oi_change is not None and direction == "LONG" and oi_change > 3:
+        _price_chg_m15 = (float(df_m15["close"].iloc[-1]) - float(df_m15["close"].iloc[-4])) / float(df_m15["close"].iloc[-4]) * 100
+        if _price_chg_m15 < -1.0:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 OI DIVERGENCE — OI +{oi_change:.1f}% nhưng giá giảm {_price_chg_m15:.1f}% — tiền đang vào SHORT, không LONG")
+
+    # ── PATCH H: EMA9 Price Position ──
+    if "ema9" in df_m15.columns:
+        _ema9_m15 = float(df_m15["ema9"].iloc[-1])
+        _price_m15 = float(df_m15["close"].iloc[-1])
+        if direction == "LONG" and _price_m15 < _ema9_m15 * 0.999:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK LONG — Giá {_price_m15:.5f} dưới EMA9 M15 ({_ema9_m15:.5f}) — momentum đang bearish")
+        elif direction == "SHORT" and _price_m15 > _ema9_m15 * 1.001:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK SHORT — Giá {_price_m15:.5f} trên EMA9 M15 ({_ema9_m15:.5f}) — momentum đang bullish")
+
+
     # ────────────────────────────────────────
     # SL / TP — ATR M15, swing M15 gần nhất
     # ────────────────────────────────────────

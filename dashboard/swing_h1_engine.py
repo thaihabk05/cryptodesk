@@ -204,15 +204,24 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
 
 
     # ── PATCH F: Abnormal Candle Spike Filter ──
-    # Nen H1 gan nhat co body > 2x ATR trung binh = pump/dump dot ngot
-    # Khong vao lenh ngay - cho confirmation
-    _spike_last = df_h1.iloc[-1]
-    _spike_body = abs(float(_spike_last["close"]) - float(_spike_last["open"]))
+    # Check cả nến cuối VÀ nến trước — spike có thể ở nến trước, nến sau chưa confirm
     _spike_atr_avg = float(df_h1["atr"].iloc[-20:].mean()) if len(df_h1) >= 20 else atr_h1
-    if _spike_body > _spike_atr_avg * 2.0 and direction in ("LONG", "SHORT"):
+    _spike_threshold = _spike_atr_avg * 2.0
+    _spike_triggered = False
+    _spike_body = 0.0
+    _spike_which = ""
+    for _si, _slabel in [(-1, "hiện tại"), (-2, "trước")]:
+        _sr = df_h1.iloc[_si]
+        _sb = abs(float(_sr["close"]) - float(_sr["open"]))
+        if _sb > _spike_threshold:
+            _spike_triggered = True
+            _spike_body = _sb
+            _spike_which = _slabel
+            break
+    if _spike_triggered and direction in ("LONG", "SHORT"):
         direction  = "WAIT"
         confidence = "LOW"
-        all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến H1 body {_spike_body:.5f} > 2x ATR ({_spike_atr_avg*2:.5f}) — pump/dump đột ngột, chờ confirmation nến tiếp theo")
+        all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến H1 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
     # ── PATCH A: BTC Hard Block ──
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
@@ -235,6 +244,31 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         direction  = "WAIT"
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 BLOCK SHORT — OI {oi_change:+.1f}%: tiền đang vào LONG, rủi ro squeeze")
+
+    # ── PATCH G: Price-OI Divergence Block ──
+    # OI tăng nhưng giá đang giảm = tiền vào SHORT, không phải LONG → block LONG
+    # OI giảm nhưng giá đang tăng = tiền rời khỏi SHORT → block SHORT  
+    if oi_change is not None and direction == "LONG" and oi_change > 3:
+        _price_chg_h1 = (float(df_h1["close"].iloc[-1]) - float(df_h1["close"].iloc[-4])) / float(df_h1["close"].iloc[-4]) * 100
+        if _price_chg_h1 < -1.0:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 OI DIVERGENCE — OI +{oi_change:.1f}% nhưng giá giảm {_price_chg_h1:.1f}% (4h) — tiền đang vào SHORT, không LONG")
+
+    # ── PATCH H: EMA9 M15/H1 Price Position ──
+    # Giá đang dưới EMA9 H1 = momentum bearish → không LONG
+    # Giá đang trên EMA9 H1 = momentum bullish → không SHORT
+    if "ema9" in df_h1.columns:
+        _ema9_h1 = float(df_h1["ema9"].iloc[-1])
+        if direction == "LONG" and price < _ema9_h1 * 0.999:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK LONG — Giá {price:.5f} dưới EMA9 H1 ({_ema9_h1:.5f}) — momentum đang bearish")
+        elif direction == "SHORT" and price > _ema9_h1 * 1.001:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK SHORT — Giá {price:.5f} trên EMA9 H1 ({_ema9_h1:.5f}) — momentum đang bullish")
+
 
     total_adj = funding_adj + atr_ctx["score_adj"]
     if total_adj <= -2 and confidence != "LOW":

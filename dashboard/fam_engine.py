@@ -384,6 +384,30 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 BLOCK SHORT — OI {oi_change:+.1f}%: tiền đang vào LONG, rủi ro squeeze")
 
+    # ── PATCH G: Price-OI Divergence Block ──
+    # OI tăng nhưng giá đang giảm = tiền vào SHORT, không phải LONG → block LONG
+    # OI giảm nhưng giá đang tăng = tiền rời khỏi SHORT → block SHORT  
+    if oi_change is not None and direction == "LONG" and oi_change > 3:
+        _price_chg_h1 = (float(df_h1["close"].iloc[-1]) - float(df_h1["close"].iloc[-4])) / float(df_h1["close"].iloc[-4]) * 100
+        if _price_chg_h1 < -1.0:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 OI DIVERGENCE — OI +{oi_change:.1f}% nhưng giá giảm {_price_chg_h1:.1f}% (4h) — tiền đang vào SHORT, không LONG")
+
+    # ── PATCH H: EMA9 M15/H1 Price Position ──
+    # Giá đang dưới EMA9 H1 = momentum bearish → không LONG
+    # Giá đang trên EMA9 H1 = momentum bullish → không SHORT
+    if "ema9" in df_h1.columns:
+        _ema9_h1 = float(df_h1["ema9"].iloc[-1])
+        if direction == "LONG" and price < _ema9_h1 * 0.999:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK LONG — Giá {price:.5f} dưới EMA9 H1 ({_ema9_h1:.5f}) — momentum đang bearish")
+        elif direction == "SHORT" and price > _ema9_h1 * 1.001:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK SHORT — Giá {price:.5f} trên EMA9 H1 ({_ema9_h1:.5f}) — momentum đang bullish")
+
 
     total_adj = funding_score_adj + atr_score_adj
     if total_adj <= -2 and confidence != "LOW":

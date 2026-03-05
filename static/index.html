@@ -1001,6 +1001,14 @@ function buildCard(d) {
           'onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">'+
           '&#8635;'+
         '</button>' +
+        '<button onclick="event.stopPropagation();removeSymbol(\''+d.symbol+'\')" '+
+          'title="Xóa khỏi Dashboard" '+
+          'style="background:rgba(255,60,60,.1);border:1px solid rgba(255,60,60,.3);border-radius:6px;'+
+          'color:rgba(255,100,100,.9);cursor:pointer;font-size:13px;padding:2px 7px;line-height:1.6;'+
+          'transition:all .2s" '+
+          'onmouseover="this.style.background=\'rgba(255,60,60,.25)\'" onmouseout="this.style.background=\'rgba(255,60,60,.1)\'">'+
+          '&#10005;'+
+        '</button>' +
       '</div>' +
     '</div>' +
     '<div class="card-price">'+fmt(d.price)+'</div>' +
@@ -1507,10 +1515,14 @@ function setSort(col) {
 
 function renderScanTable(data) {
   var sorted = sortScanResults(data);
-  var toolbar = '<div class="table-toolbar">' +
+  var toolbar = '<div class="table-toolbar" style="flex-wrap:wrap;gap:8px">' +
     '<span style="font-size:11px;color:var(--muted)">Sort:</span>' +
     sortBtn('rr','R:R') + sortBtn('score','Score') + sortBtn('volume_24h','Volume') + sortBtn('tp1_pct','TP%') +
-    '<span class="count-badge">'+sorted.length+' opportunities</span></div>';
+    '<span class="count-badge">'+sorted.length+' opportunities</span>' +
+    '<input id="scanSearch" type="text" placeholder="🔍 Tìm mã..." oninput="filterScanBySearch()" ' +
+    'style="margin-left:auto;background:#1e2130;border:1px solid var(--border);border-radius:6px;' +
+    'padding:4px 10px;color:#e2e8f0;font-size:12px;width:140px;outline:none">' +
+    '</div>';
 
   if (!sorted.length) {
     document.getElementById('scanResults').innerHTML = toolbar +
@@ -1544,13 +1556,18 @@ function renderScanTable(data) {
         ((d.h1_note||d.h1_status_note) ? '<div style="font-size:10px;color:'+(d.h1_status==='CONFIRMED'?'var(--long)':d.h1_status==='PULLBACK'?'var(--wait)':'var(--muted2)')+'">'+
           (d.h1_status==='CONFIRMED'?'✅':d.h1_status==='PULLBACK'?'⏳':'🔍')+' '+(d.h1_note||d.h1_status_note)+'</div>' : '') +
       '</td>' +
+      '<td onclick="event.stopPropagation()" style="padding:4px 8px">' +
+        '<button data-sym="'+d.symbol+'" onclick="addScanToDash(this.dataset.sym)" ' +
+        'style="background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);' +
+        'color:#818cf8;border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer;white-space:nowrap">+Dash</button>' +
+      '</td>' +
     '</tr>';
   }).join('');
 
   document.getElementById('scanResults').innerHTML = toolbar +
     '<div class="table-wrap"><table>' +
     '<thead><tr><th>#</th><th>Symbol</th><th>Dir</th><th>Conf</th><th>Price</th>' +
-    '<th>R:R</th><th>SL</th><th>TP1</th><th>Funding</th><th>OI</th><th>ATR</th><th>Volume</th><th>Conditions</th>' +
+    '<th>R:R</th><th>SL</th><th>TP1</th><th>Funding</th><th>OI</th><th>ATR</th><th>Volume</th><th>Conditions</th><th></th>' +
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
@@ -1736,14 +1753,25 @@ function renderHistory() {
       '<td style="font-size:11px;color:var(--muted2);font-family:var(--mono)">'+vol+'</td>' +
       '<td style="font-size:11px;color:'+(d.d1_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.d1_bias+'</td>' +
       '<td style="font-size:11px;color:'+(d.h4_bias==='LONG'?'var(--long)':'var(--short)')+'">'+d.h4_bias+'</td>' +
-      '<td onclick="event.stopPropagation()"><button onclick="backtestSingle('+i+')" style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);' +
+      '<td onclick="event.stopPropagation()" style="white-space:nowrap">' +
+        '<button onclick="backtestSingle('+i+')" style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);' +
         'color:var(--accent);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;white-space:nowrap">' +
-        '&#9654; BT</button></td>' +
+        '&#9654; BT</button>' +
+        '<button data-sym="'+d.symbol+'" onclick="addScanToDash(this.dataset.sym)" ' +
+        'title="Thêm vào Dashboard" ' +
+        'style="background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);color:#818cf8;' +
+        'border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;white-space:nowrap">+Dash</button>' +
+      '</td>' +
     '</tr>';
   }).join('');
 
   document.getElementById('historyContent').innerHTML =
-    '<div style="font-size:11px;color:var(--muted2);margin-bottom:10px">'+data.length+' signals — click để xem chi tiết, chọn checkbox để backtest</div>' +
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">' +
+    '<span style="font-size:11px;color:var(--muted2)">'+data.length+' signals</span>' +
+    '<input id="histSearch" type="text" placeholder="🔍 Tìm mã..." oninput="filterHistBySearch()" ' +
+    'style="background:#1e2130;border:1px solid var(--border);border-radius:6px;' +
+    'padding:4px 10px;color:#e2e8f0;font-size:12px;width:140px;outline:none">' +
+    '</div>' +
     '<div class="table-wrap"><table>' +
     '<thead><tr>' +
       '<th style="width:28px"><input type="checkbox" id="histCheckAll" onchange="onHistCheckAll(this)"' +
@@ -3149,6 +3177,102 @@ function exportAnalysis() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+
+// ═══════════════════════════════════════════════
+// SEARCH + ADD TO DASHBOARD FUNCTIONS
+// ═══════════════════════════════════════════════
+
+// Thêm symbol vào Dashboard từ Scan/History
+function addScanToDash(symbol) {
+  if (!symbol) return;
+  var sym = symbol.toUpperCase();
+  if (!sym.endsWith('USDT')) sym += 'USDT';
+  var syms = config.symbols || [];
+  if (syms.indexOf(sym) >= 0) {
+    // Đã có rồi — flash card
+    showToast('⚠️ ' + sym.replace('USDT','') + ' đã có trong Dashboard');
+    return;
+  }
+  config.symbols = [sym].concat(syms);  // thêm lên đầu
+  saveConfig();
+  renderChips();
+  // Fetch ngay data cho symbol mới và switch sang Dashboard
+  fetch('/api/symbol/' + sym)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      signalCache[sym] = d;
+      renderCards();
+      switchTab('dashboard');
+    });
+  showToast('✅ Đã thêm ' + sym.replace('USDT','') + ' vào Dashboard');
+}
+
+// Toast notification
+function showToast(msg) {
+  var toast = document.getElementById('toastMsg');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toastMsg';
+    toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;' +
+      'background:var(--bg2);border:1px solid var(--border);border-radius:10px;' +
+      'padding:10px 18px;font-size:13px;color:var(--text);box-shadow:0 4px 20px rgba(0,0,0,.4);' +
+      'transition:opacity .3s;pointer-events:none';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function(){ toast.style.opacity = '0'; }, 2500);
+}
+
+// Filter scan results by search
+var _allSortedScan = [];
+function filterScanBySearch() {
+  var q = (document.getElementById('scanSearch') || {}).value || '';
+  q = q.toUpperCase().trim();
+  if (!q) {
+    renderScanTable(allScanResults);
+    return;
+  }
+  var filtered = (allScanResults || []).filter(function(d) {
+    return d.symbol && d.symbol.toUpperCase().indexOf(q) >= 0;
+  });
+  renderScanTable(filtered);
+}
+
+// Filter history by search
+function filterHistBySearch() {
+  var q = (document.getElementById('histSearch') || {}).value || '';
+  q = q.toUpperCase().trim();
+  if (!q) {
+    renderHistory();
+    return;
+  }
+  // Lọc historyData theo symbol
+  var dir = (document.getElementById('histDir') || {}).value || 'ALL';
+  var filtered = historyData.filter(function(d) {
+    var matchDir = dir === 'ALL' || d.direction === dir;
+    var matchSym = d.symbol && d.symbol.toUpperCase().indexOf(q) >= 0;
+    return matchDir && matchSym;
+  });
+  renderHistoryFiltered(filtered);
+}
+
+// Render history với data đã filter (không overwrite historyData)
+function renderHistoryFiltered(data) {
+  if (!data.length) {
+    document.getElementById('historyContent').innerHTML =
+      '<div class="empty-state"><div class="empty-icon">🔍</div>' +
+      '<div class="empty-title">Không tìm thấy mã này</div></div>';
+    return;
+  }
+  // Tạm set historyData rồi render, sau đó restore
+  var orig = historyData;
+  historyData = data;
+  renderHistory();
+  historyData = orig;
 }
 
 

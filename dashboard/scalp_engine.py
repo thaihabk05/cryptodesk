@@ -32,6 +32,7 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     ff = bool(cfg.get("force_futures", False))
 
     # Fetch: H1 (bias) + M15 (confirm) + M5 (entry)
+    df_d1  = prepare(fetch_klines(symbol, "1d",   30, force_futures=ff))  # cho pump exhaustion check
     df_h1  = prepare(fetch_klines(symbol, "1h",  100, force_futures=ff))
     df_m15 = prepare(fetch_klines(symbol, "15m", 150, force_futures=ff))
     df_m5  = prepare(fetch_klines(symbol, "5m",  100, force_futures=ff))
@@ -319,6 +320,23 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             all_warnings.append(
                 f"⚠️ GIÁ CÁCH EMA21 M15 -{round(abs(_dist_ema21_m15),1)}% — entry ngay không tối ưu. "
                 f"Chờ rebound về ~{_pb} (vùng EMA21 M15) để R:R tốt hơn"
+            )
+
+    # ── PATCH J: Pump Exhaustion — 7-day price change ──
+    if len(df_d1) >= 8:
+        _price_7d_ago = float(df_d1["close"].iloc[-8])
+        _chg_7d = (price - _price_7d_ago) / _price_7d_ago * 100 if _price_7d_ago > 0 else 0
+        if direction == "LONG" and _chg_7d > 50:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0,
+                f"🚫 PUMP EXHAUSTION — Giá tăng +{round(_chg_7d,1)}% trong 7 ngày "
+                f"— rủi ro reversal/dump cao, không LONG đuổi giá"
+            )
+        elif direction == "SHORT" and _chg_7d < -40:
+            all_warnings.append(
+                f"⚠️ GIẢM MẠNH 7D ({round(_chg_7d,1)}%) — có thể oversold, "
+                f"cẩn thận SHORT vùng capitulation"
             )
 
     # ────────────────────────────────────────

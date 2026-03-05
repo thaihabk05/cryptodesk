@@ -428,6 +428,26 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
             )
 
 
+    # ── PATCH J: Pump Exhaustion — 7-day price change ──
+    # Nếu giá đã tăng > 50% trong 7 ngày = pump exhaustion, rủi ro dump cao
+    # Nếu giá đã giảm > 40% trong 7 ngày = capitulation zone, SHORT cẩn thận
+    if len(df_d1) >= 8:
+        _price_7d_ago = float(df_d1["close"].iloc[-8])
+        _chg_7d = (price - _price_7d_ago) / _price_7d_ago * 100 if _price_7d_ago > 0 else 0
+        if direction == "LONG" and _chg_7d > 50:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0,
+                f"🚫 PUMP EXHAUSTION — Giá tăng +{round(_chg_7d,1)}% trong 7 ngày "
+                f"— rủi ro reversal/dump cao, không LONG đuổi giá"
+            )
+        elif direction == "SHORT" and _chg_7d < -40:
+            all_warnings.append(
+                f"⚠️ GIẢM MẠNH 7D ({round(_chg_7d,1)}%) — có thể oversold, "
+                f"cẩn thận SHORT vùng capitulation"
+            )
+
+
     total_adj = funding_score_adj + atr_score_adj
     if total_adj <= -2 and confidence != "LOW":
         confidence = "LOW"

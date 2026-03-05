@@ -87,6 +87,12 @@ def analyze_symbol(sym_info: dict):
         if conf in ("HIGH", "MEDIUM") and rr < 1.0: return None
         if conf == "LOW" and rr < 1.0: return None
 
+        # ── Filter J1: Volume 24h USDT tối thiểu $5M ──
+        # Coin volume thấp = thanh khoản kém, dễ bị manipulate pump/dump
+        _vol_usdt = float(sym_info.get("volume_24h", 0))
+        if _vol_usdt < 5_000_000:
+            return None  # bỏ qua coin volume quá thấp
+
         # Thêm volume từ ticker
         result["volume_24h"] = sym_info["volume_24h"]
 

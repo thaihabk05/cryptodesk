@@ -148,6 +148,14 @@ def _save_signal_to_history(result: dict):
         "d1":              result.get("d1", {}),
         "h4":              result.get("h4", {}),
         "h1":              result.get("h1", {}),
+        # ── Feature vector cho AI Analysis ──
+        "oi_change":       result.get("market", {}).get("oi_change"),
+        "funding":         result.get("market", {}).get("funding"),
+        "atr_x":           result.get("market", {}).get("atr"),
+        "btc_sentiment":   result.get("btc_context", {}).get("sentiment", ""),
+        "btc_d1_trend":    result.get("btc_context", {}).get("d1_trend", ""),
+        "num_conditions":  len(result.get("conditions", [])),
+        "num_warnings":    len(result.get("warnings", [])),
     })
     save_history(history)
 
@@ -384,7 +392,7 @@ def backtest_signal(signal: dict) -> dict:
         hours_ago = max(48, int((now_ts - sig_ts) / 3600) + 24)
         limit     = min(hours_ago, 500)  # tối đa 500 nến H1 (~20 ngày)
 
-        df = fetch_klines(symbol, "1h", limit)
+        df = fetch_klines(symbol, "1h", limit, force_futures=True)
         # Index là DatetimeIndex (open_time) — convert sang timestamp số
         df = df.copy()
         df["ts"] = df.index.astype("int64") // 10**9  # nanoseconds → seconds
@@ -486,8 +494,35 @@ def backtest_signal(signal: dict) -> dict:
                     "bt_unrealized_r":   None,
                     "bt_exit_price":     round(last_price, 6)}
 
-        # Đã khớp nhưng chưa chạm SL/TP
+        # Đã khớp nhưng chưa chạm SL/TP — check lần cuối bằng close giá mới nhất
         last_price = float(df_after["close"].iloc[-1])
+        last_high  = float(df_after["high"].iloc[-1])
+        last_low   = float(df_after["low"].iloc[-1])
+
+        # Safety check: nếu giá hiện tại đã vượt TP1 hoặc SL → force result
+        if direction == "LONG":
+            if last_high >= tp1:
+                return {**signal, "bt_result": "WIN",
+                        "bt_note": f"TP1 chạm (close check) — giá {round(last_price,6)} vượt TP1 {tp1}",
+                        "bt_candles": len(df_after), "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
+                        "bt_exit_price": round(tp1, 6)}
+            if last_low <= sl:
+                return {**signal, "bt_result": "LOSS",
+                        "bt_note": f"SL chạm (close check) — giá {round(last_price,6)} xuống SL {sl}",
+                        "bt_candles": len(df_after), "bt_pnl_r": -1.0,
+                        "bt_exit_price": round(sl, 6)}
+        else:
+            if last_low <= tp1:
+                return {**signal, "bt_result": "WIN",
+                        "bt_note": f"TP1 chạm (close check) — giá {round(last_price,6)} xuống TP1 {tp1}",
+                        "bt_candles": len(df_after), "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
+                        "bt_exit_price": round(tp1, 6)}
+            if last_high >= sl:
+                return {**signal, "bt_result": "LOSS",
+                        "bt_note": f"SL chạm (close check) — giá {round(last_price,6)} vượt SL {sl}",
+                        "bt_candles": len(df_after), "bt_pnl_r": -1.0,
+                        "bt_exit_price": round(sl, 6)}
+
         if direction == "LONG":
             unrealized = round((last_price - entry) / entry * 100, 2)
         else:

@@ -269,6 +269,25 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
             confidence = "LOW"
             all_warnings.insert(0, f"🚫 BLOCK SHORT — Giá {price:.5f} trên EMA9 H1 ({_ema9_h1:.5f}) — momentum đang bullish")
 
+    # ── PATCH I: Far From EMA34 H1 — gợi ý chờ pullback ──
+    # Nếu giá cách EMA34 H1 > 5% = đã pump/dump quá xa, entry ngay không tối ưu
+    if direction in ("LONG", "SHORT") and ma34_h1 > 0:
+        _dist_ema34_h1 = (price - ma34_h1) / ma34_h1 * 100
+        if direction == "LONG" and _dist_ema34_h1 > 5:
+            _pullback_target = round(ma34_h1 * 1.005, 6)  # vùng ngay trên EMA34
+            _pullback_pct    = round(_dist_ema34_h1, 1)
+            all_warnings.append(
+                f"⚠️ GIÁ CÁCH EMA34 H1 +{_pullback_pct}% — entry ngay không tối ưu. "
+                f"Chờ pullback về ~{_pullback_target} (vùng EMA34 H1) để R:R tốt hơn"
+            )
+        elif direction == "SHORT" and _dist_ema34_h1 < -5:
+            _pullback_target = round(ma34_h1 * 0.995, 6)
+            _pullback_pct    = round(abs(_dist_ema34_h1), 1)
+            all_warnings.append(
+                f"⚠️ GIÁ CÁCH EMA34 H1 -{_pullback_pct}% — entry ngay không tối ưu. "
+                f"Chờ rebound về ~{_pullback_target} (vùng EMA34 H1) để R:R tốt hơn"
+            )
+
 
     total_adj = funding_adj + atr_ctx["score_adj"]
     if total_adj <= -2 and confidence != "LOW":

@@ -305,6 +305,21 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             confidence = "LOW"
             all_warnings.insert(0, f"🚫 BLOCK SHORT — Giá {_price_m15:.5f} trên EMA9 M15 ({_ema9_m15:.5f}) — momentum đang bullish")
 
+    # ── PATCH I: Far From EMA21 M15 — gợi ý chờ pullback ──
+    if direction in ("LONG", "SHORT") and ema21_m15 > 0:
+        _dist_ema21_m15 = (price - ema21_m15) / ema21_m15 * 100
+        if direction == "LONG" and _dist_ema21_m15 > 3:
+            _pb = round(ema21_m15 * 1.003, 6)
+            all_warnings.append(
+                f"⚠️ GIÁ CÁCH EMA21 M15 +{round(_dist_ema21_m15,1)}% — entry ngay không tối ưu. "
+                f"Chờ pullback về ~{_pb} (vùng EMA21 M15) để R:R tốt hơn"
+            )
+        elif direction == "SHORT" and _dist_ema21_m15 < -3:
+            _pb = round(ema21_m15 * 0.997, 6)
+            all_warnings.append(
+                f"⚠️ GIÁ CÁCH EMA21 M15 -{round(abs(_dist_ema21_m15),1)}% — entry ngay không tối ưu. "
+                f"Chờ rebound về ~{_pb} (vùng EMA21 M15) để R:R tốt hơn"
+            )
 
     # ────────────────────────────────────────
     # SL / TP — ATR M15, swing M15 gần nhất

@@ -1,23 +1,5 @@
 [
   {
-    "time": "2026-03-01T13:53:52.291528",
-    "symbol": "LIGHTUSDT",
-    "direction": "SHORT",
-    "confidence": "HIGH",
-    "price": 0.1887,
-    "entry": 0.1887,
-    "sl": 0.19625,
-    "sl_pct": 4.0,
-    "tp1": 0.1713,
-    "tp1_pct": 9.22,
-    "tp2": 0.1539,
-    "rr": 2.31,
-    "d1_bias": "SHORT",
-    "h4_bias": "SHORT",
-    "score": 4,
-    "verdict": "WAIT"
-  },
-  {
     "time": "2026-03-01T13:50:35.940323",
     "symbol": "STABLEUSDT",
     "direction": "LONG",
@@ -19213,6 +19195,111 @@
       "breakout": false,
       "rsi_m15": 54.7,
       "rsi_m5": 37.8
+    }
+  },
+  {
+    "time": "2026-03-05T18:44:24.380842",
+    "symbol": "PHAUSDT",
+    "direction": "LONG",
+    "confidence": "HIGH",
+    "price": 0.05061,
+    "entry": 0.05061,
+    "sl": 0.04985,
+    "sl_pct": 1.5,
+    "tp1": 0.05196,
+    "tp1_pct": 2.67,
+    "tp2": 0.05331,
+    "rr": 1.78,
+    "d1_bias": "LONG",
+    "h4_bias": "LONG",
+    "score": 5,
+    "verdict": "GO",
+    "entry_verdict": "GO",
+    "volume_24h": 336459443.50138,
+    "strategy": "SCALP",
+    "conditions": [
+      "H1 EMA9 > EMA21 \u2014 bias LONG",
+      "EMA9 H1 slope \u2191 \u2014 momentum t\u0103ng",
+      "M15 EMA9 > EMA21 \u2014 x\u00e1c nh\u1eadn LONG",
+      "RSI M15 41 \u2014 v\u00f9ng an to\u00e0n (40\u201370)",
+      "M15 trong Fib 0.382\u20130.618 \u2014 v\u00f9ng pullback t\u1ed1t"
+    ],
+    "warnings": [
+      "\u2705 Funding -0.4747% \u2014 c\u00f3 l\u1ee3i LONG"
+    ],
+    "entry_checklist": [
+      {
+        "ok": true,
+        "text": "Confidence HIGH \u2014 H1+M15+M5 \u0111\u1ed3ng thu\u1eadn"
+      },
+      {
+        "ok": true,
+        "text": "M5 x\u00e1c nh\u1eadn entry \u2014 v\u00e0o \u0111\u01b0\u1ee3c ngay"
+      },
+      {
+        "ok": true,
+        "text": "RSI M15 41 \u2014 v\u00f9ng an to\u00e0n cho LONG"
+      },
+      {
+        "ok": true,
+        "text": "R:R 1:1.78 \u2265 1:1.5 \u2014 ch\u1ea5p nh\u1eadn"
+      },
+      {
+        "ok": true,
+        "text": "Funding -0.4747% \u00e2m \u2014 t\u1ed1t cho LONG"
+      },
+      {
+        "ok": null,
+        "text": "BTC sideways (+2.1%) \u2014 x\u00e9t t\u00edn hi\u1ec7u m\u00e3 ri\u00eang"
+      }
+    ],
+    "market": {
+      "funding": -0.4747,
+      "funding_pct": "-0.4747%",
+      "oi_change": 16.58,
+      "oi_str": "+16.58%",
+      "atr_ratio": 1.02,
+      "atr_state": "NORMAL",
+      "atr_note": ""
+    },
+    "btc_context": {
+      "price": 72805.1,
+      "chg_24h": 2.1,
+      "d1_trend": "NEUTRAL",
+      "h4_trend": "BULL",
+      "sentiment": "NEUTRAL",
+      "note": "BTC sideways \u2014 x\u00e9t t\u00edn hi\u1ec7u t\u1eebng m\u00e3 ri\u00eang"
+    },
+    "d1": {
+      "bias": "LONG",
+      "structure": "",
+      "notes": [
+        "H1 EMA9 > EMA21 \u2014 BULL",
+        "RSI H1: 56"
+      ]
+    },
+    "h4": {
+      "bias": "LONG",
+      "above_ma34": true,
+      "above_ma89": true,
+      "crossed_ma34": false,
+      "slope_ma34": "UP",
+      "slope_ma89": "\u2014",
+      "slope_ma200": "\u2014",
+      "ma34": 0.05007,
+      "ma89": 0.04818,
+      "ma200": 0.04818,
+      "structure": "SIDEWAYS",
+      "notes": []
+    },
+    "h1": {
+      "fib_zone": "0.382-0.618",
+      "fib_zone_price": "0.04977 \u2013 0.05177",
+      "vol_ratio": 0.5,
+      "h1_bullish": true,
+      "breakout": false,
+      "rsi_m15": 41.0,
+      "rsi_m5": 61.9
     }
   }
 ]

@@ -669,6 +669,9 @@ tbody td{padding:11px 12px;vertical-align:middle}
     <div id="btResultSummaryContent"></div>
   </div>
 
+  <!-- Analysis Panel -->
+  <div id="btAnalysis" style="display:none;margin-bottom:16px"></div>
+
   <!-- Detail table -->
   <div id="btResults">
     <div class="empty-state">
@@ -1144,8 +1147,34 @@ function showDetail(sym) {
   }
 
   if (d.warnings && d.warnings.length) {
-    html += '<div class="drawer-section">Warnings</div>';
-    (d.warnings||[]).forEach(function(w){ html += '<div class="warn-box">'+w+'</div>'; });
+    // Tách pullback suggestion ra hiển thị riêng nổi bật hơn
+    var pullbackWarns = (d.warnings||[]).filter(function(w){ return w.indexOf('GIÁ CÁCH EMA') >= 0; });
+    var otherWarns    = (d.warnings||[]).filter(function(w){ return w.indexOf('GIÁ CÁCH EMA') < 0; });
+
+    // Pullback box — hiện ngay dưới Trade Levels với màu accent
+    if (pullbackWarns.length) {
+      pullbackWarns.forEach(function(w) {
+        // Parse pullback target từ warning text
+        var match = w.match(/~([\d.]+)/);
+        var targetPrice = match ? match[1] : null;
+        var distMatch = w.match(/([+-][\d.]+)%/);
+        var distPct = distMatch ? distMatch[1] : null;
+        html += '<div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.35);'
+          + 'border-radius:8px;padding:10px 14px;margin-bottom:8px">'
+          + '<div style="font-size:11px;font-weight:700;color:var(--wait);margin-bottom:4px">⚠️ ENTRY CHƯA TỐI ƯU</div>'
+          + '<div style="font-size:12px;color:var(--muted2);line-height:1.6">' + w.replace(/^⚠️ /, '') + '</div>'
+          + (targetPrice ? '<div style="margin-top:6px;display:flex;align-items:center;gap:8px">'
+            + '<span style="font-size:11px;color:var(--muted)">Limit entry tốt hơn:</span>'
+            + '<span style="font-family:var(--mono);font-size:13px;font-weight:800;color:var(--wait)">$' + targetPrice + '</span>'
+            + '</div>' : '')
+          + '</div>';
+      });
+    }
+
+    if (otherWarns.length) {
+      html += '<div class="drawer-section">Warnings</div>';
+      otherWarns.forEach(function(w){ html += '<div class="warn-box">'+w+'</div>'; });
+    }
   }
 
   html += '<div class="drawer-section">Multi-TF</div>';
@@ -1859,6 +1888,7 @@ function runBacktestWithSignals(signals, label) {
     renderBtSummary(data.summary, data.results, capital, leverage);
     renderBtResultSummary(data.results, data.summary, capital, leverage);
     renderBtTable(data.results, capital, leverage);
+    renderBtAnalysis(data.results, data.summary);
   }).catch(function(e) {
     document.getElementById('btResults').innerHTML =
       '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
@@ -2791,6 +2821,186 @@ function psCopy() {
     setTimeout(function(){ btn2.textContent = '📋 Copy kế hoạch'; }, 2000);
   }
 }
+
+// ═══════════════════════════════════════════════
+// BACKTEST ANALYSIS PANEL
+// ═══════════════════════════════════════════════
+function renderBtAnalysis(results, summary) {
+  var el = document.getElementById('btAnalysis');
+  if (!el) return;
+
+  var closed = results.filter(function(r){ return r.bt_result === 'WIN' || r.bt_result === 'LOSS'; });
+  var wins   = results.filter(function(r){ return r.bt_result === 'WIN'; });
+  var losses = results.filter(function(r){ return r.bt_result === 'LOSS'; });
+  var opens  = results.filter(function(r){ return r.bt_result === 'OPEN'; });
+
+  // Nếu chưa đủ closed signals thì chỉ show thông báo
+  if (closed.length < 5) {
+    el.style.display = 'block';
+    el.innerHTML = '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 20px;color:var(--muted);font-size:13px">'
+      + '🔬 <b>AI Analysis:</b> Cần ít nhất 5 lệnh đã đóng để phân tích. Hiện tại: '
+      + closed.length + ' closed / ' + opens.length + ' đang mở.'
+      + (opens.length > 0 ? ' Chạy lại backtest sau khi các lệnh OPEN chạm SL/TP.' : '')
+      + '</div>';
+    return;
+  }
+
+  var wr = summary.win_rate;
+  var exp = summary.expectancy;
+  var totalR = summary.total_r;
+
+  // ── Phân tích feature WIN vs LOSS ──
+  function avg(arr, fn) {
+    var vals = arr.map(fn).filter(function(v){ return v !== null && v !== undefined && !isNaN(v); });
+    return vals.length ? vals.reduce(function(a,b){return a+b;},0)/vals.length : null;
+  }
+
+  var winAvgRR   = avg(wins,   function(r){ return r.rr; });
+  var lossAvgRR  = avg(losses, function(r){ return r.rr; });
+  var winAvgOI   = avg(wins,   function(r){ return r.oi_change; });
+  var lossAvgOI  = avg(losses, function(r){ return r.oi_change; });
+  var winAvgFund = avg(wins,   function(r){ return r.funding ? Math.abs(r.funding) : null; });
+  var lossFund   = avg(losses, function(r){ return r.funding ? Math.abs(r.funding) : null; });
+
+  // Direction breakdown
+  var longWins  = wins.filter(function(r){   return r.direction === 'LONG'; }).length;
+  var longLoss  = losses.filter(function(r){ return r.direction === 'LONG'; }).length;
+  var shortWins = wins.filter(function(r){   return r.direction === 'SHORT'; }).length;
+  var shortLoss = losses.filter(function(r){ return r.direction === 'SHORT'; }).length;
+  var longWR    = (longWins + longLoss)  > 0 ? Math.round(longWins  / (longWins  + longLoss)  * 100) : null;
+  var shortWR   = (shortWins+ shortLoss) > 0 ? Math.round(shortWins / (shortWins + shortLoss) * 100) : null;
+
+  // Symbols thắng nhiều nhất
+  var symStats = {};
+  closed.forEach(function(r) {
+    var sym = r.symbol || '?';
+    if (!symStats[sym]) symStats[sym] = {w:0, l:0};
+    if (r.bt_result === 'WIN') symStats[sym].w++;
+    else symStats[sym].l++;
+  });
+  var topWinSyms = Object.keys(symStats)
+    .filter(function(s){ return symStats[s].w > 0; })
+    .sort(function(a,b){ return symStats[b].w - symStats[a].w; })
+    .slice(0, 3);
+  var topLossSyms = Object.keys(symStats)
+    .filter(function(s){ return symStats[s].l > 0; })
+    .sort(function(a,b){ return symStats[b].l - symStats[a].l; })
+    .slice(0, 3);
+
+  // ── Nhận xét tổng thể ──
+  var verdict = '';
+  var verdictColor = '';
+  if (exp > 0.3 && wr >= 55) {
+    verdict = '✅ Hệ thống đang hoạt động TỐT — tiếp tục theo dõi và tích lũy thêm data';
+    verdictColor = 'var(--long)';
+  } else if (exp > 0 && wr >= 45) {
+    verdict = '🟡 Hệ thống TRUNG BÌNH — profitable nhưng cần cải thiện thêm';
+    verdictColor = 'var(--wait)';
+  } else if (exp < 0 && wr < 40) {
+    verdict = '🔴 Hệ thống cần CẢI THIỆN — win rate thấp, expectancy âm';
+    verdictColor = 'var(--short)';
+  } else {
+    verdict = '🟡 Hệ thống NEUTRAL — cần thêm data để kết luận';
+    verdictColor = 'var(--wait)';
+  }
+
+  // ── Đề xuất cải thiện ──
+  var suggestions = [];
+
+  if (wr < 40) {
+    suggestions.push({ icon: '🎯', title: 'Win Rate thấp (' + wr + '%)', 
+      desc: 'Nâng ngưỡng MIN Score lên, chỉ lấy signal score ≥ 5 (HIGH confidence). Cân nhắc tăng R:R tối thiểu lên 1.5.' });
+  }
+  if (winAvgRR && lossAvgRR && winAvgRR < lossAvgRR + 0.3) {
+    suggestions.push({ icon: '📐', title: 'R:R win/loss gần nhau',
+      desc: 'WIN avg R:R ' + (winAvgRR||0).toFixed(2) + ' vs LOSS ' + (lossAvgRR||0).toFixed(2) + '. Lọc chỉ lấy signal R:R ≥ 1.5.' });
+  }
+  if (longWR !== null && shortWR !== null) {
+    if (longWR < 40) {
+      suggestions.push({ icon: '📉', title: 'LONG win rate thấp (' + longWR + '%)',
+        desc: 'LONG đang underperform. Kiểm tra BTC context filter — có thể đang vào LONG trong thị trường BEAR.' });
+    }
+    if (shortWR !== null && shortWR < 40 && (shortWins+shortLoss) >= 3) {
+      suggestions.push({ icon: '📈', title: 'SHORT win rate thấp (' + shortWR + '%)',
+        desc: 'SHORT đang underperform. Kiểm tra lại điều kiện SHORT — có thể vào ngược trend D1.' });
+    }
+  }
+  if (winAvgOI !== null && lossAvgOI !== null) {
+    if (Math.abs(winAvgOI - lossAvgOI) > 2) {
+      var betterOI = winAvgOI > lossAvgOI ? 'OI cao' : 'OI thấp';
+      suggestions.push({ icon: '📊', title: 'OI có tương quan với kết quả',
+        desc: 'WIN avg OI: ' + (winAvgOI||0).toFixed(1) + '% vs LOSS: ' + (lossAvgOI||0).toFixed(1) + '%. Signal ' + betterOI + ' cho kết quả tốt hơn. Cân nhắc điều chỉnh ngưỡng OI filter.' });
+    }
+  }
+  if (exp < -0.2) {
+    suggestions.push({ icon: '⚡', title: 'Expectancy âm (' + exp + 'R)',
+      desc: 'Mỗi lệnh trung bình thua ' + Math.abs(exp) + 'R. Cần tăng win rate HOẶC tăng R:R tối thiểu. Ưu tiên giảm số lệnh, tăng chất lượng.' });
+  }
+  if (topLossSyms.length > 0 && symStats[topLossSyms[0]].l >= 2) {
+    suggestions.push({ icon: '🚫', title: 'Symbol hay thua: ' + topLossSyms.slice(0,2).join(', '),
+      desc: 'Các symbol này thua ' + topLossSyms.map(function(s){ return s+' ('+symStats[s].l+'L)'; }).join(', ') + '. Cân nhắc thêm vào blacklist hoặc tăng ngưỡng cụ thể.' });
+  }
+
+  if (suggestions.length === 0 && exp > 0) {
+    suggestions.push({ icon: '💡', title: 'Tích lũy thêm data',
+      desc: 'Hệ thống đang hoạt động ổn. Cần thêm 50+ lệnh closed để phân tích thống kê chính xác hơn.' });
+  }
+
+  // ── Build HTML ──
+  var dirHtml = '';
+  if (longWR !== null) dirHtml += '<span style="color:var(--long)">LONG ' + longWR + '%</span> (' + (longWins+longLoss) + ' lệnh)';
+  if (longWR !== null && shortWR !== null) dirHtml += '&nbsp;&nbsp;|&nbsp;&nbsp;';
+  if (shortWR !== null) dirHtml += '<span style="color:var(--short)">SHORT ' + shortWR + '%</span> (' + (shortWins+shortLoss) + ' lệnh)';
+
+  var statsRows = [
+    ['Win Rate', wr + '%', wr >= 55 ? 'var(--long)' : wr >= 45 ? 'var(--wait)' : 'var(--short)'],
+    ['Expectancy', (exp>0?'+':'')+exp+'R/lệnh', exp>0?'var(--long)':'var(--short)'],
+    ['Closed / Total', closed.length + ' / ' + results.length, 'var(--text)'],
+    ['Direction WR', dirHtml || '--', 'var(--text)'],
+    ['Top WIN symbols', topWinSyms.length ? topWinSyms.join(', ') : '--', 'var(--long)'],
+    ['Top LOSS symbols', topLossSyms.length ? topLossSyms.join(', ') : '--', 'var(--short)'],
+  ];
+  if (winAvgOI !== null) statsRows.push(['OI avg (WIN vs LOSS)', 
+    (winAvgOI>0?'+':'')+winAvgOI.toFixed(1)+'% vs '+(lossAvgOI>0?'+':'')+lossAvgOI.toFixed(1)+'%', 'var(--muted2)']);
+
+  var html = '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:4px">'
+    // Header
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'
+    + '<span style="font-size:18px">🔬</span>'
+    + '<span style="font-size:15px;font-weight:800;letter-spacing:.3px">AI Analysis</span>'
+    + '<span style="font-size:11px;color:var(--muted);margin-left:4px">— ' + closed.length + ' lệnh đóng</span>'
+    + '</div>'
+
+    // Verdict
+    + '<div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;font-weight:600;color:' + verdictColor + '">'
+    + verdict + '</div>'
+
+    // Stats grid
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:16px">'
+    + statsRows.map(function(row) {
+        return '<div style="background:rgba(255,255,255,.03);border-radius:6px;padding:8px 12px">'
+          + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">' + row[0] + '</div>'
+          + '<div style="font-size:13px;font-weight:700;color:' + row[2] + ';font-family:var(--mono)">' + row[1] + '</div>'
+          + '</div>';
+      }).join('')
+    + '</div>'
+
+    // Suggestions
+    + '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">💡 Đề xuất cải thiện</div>'
+    + '<div style="display:flex;flex-direction:column;gap:8px">'
+    + suggestions.map(function(s) {
+        return '<div style="background:rgba(255,255,255,.03);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:8px 12px">'
+          + '<div style="font-size:12px;font-weight:700;margin-bottom:3px">' + s.icon + ' ' + s.title + '</div>'
+          + '<div style="font-size:12px;color:var(--muted2);line-height:1.5">' + s.desc + '</div>'
+          + '</div>';
+      }).join('')
+    + '</div>'
+    + '</div>';
+
+  el.style.display = 'block';
+  el.innerHTML = html;
+}
+
 
 </script>
 

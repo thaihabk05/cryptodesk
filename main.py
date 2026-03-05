@@ -34,6 +34,11 @@ def no_cache(r):
 DATA_DIR     = Path("data")
 CONFIG_FILE  = DATA_DIR / "config.json"
 HISTORY_FILE = DATA_DIR / "history.json"
+
+# ── Algorithm Version — tăng mỗi khi thay đổi filter/threshold ──
+ALGO_VERSION = "v2.0"   # v2.0: PATCH A-I + RR≥1.5 + SL 2% (2026-03-05)
+ALGO_DATE    = "2026-03-05"
+
 DATA_DIR.mkdir(exist_ok=True)
 
 DEFAULT_CONFIG = {
@@ -156,6 +161,9 @@ def _save_signal_to_history(result: dict):
         "btc_d1_trend":    result.get("btc_context", {}).get("d1_trend", ""),
         "num_conditions":  len(result.get("conditions", [])),
         "num_warnings":    len(result.get("warnings", [])),
+        # ── Algorithm version tracking ──
+        "algo_version":    ALGO_VERSION,
+        "algo_date":       ALGO_DATE,
     })
     save_history(history)
 
@@ -343,6 +351,10 @@ def get_results():
 def get_history():
     from datetime import datetime
     history = load_history()
+    # Optional filter theo algo_version
+    ver_filter = request.args.get("algo_version")
+    if ver_filter:
+        history = [h for h in history if h.get("algo_version") == ver_filter]
     # Sort mới nhất lên đầu theo timestamp
     def _ts(h):
         try:
@@ -351,6 +363,18 @@ def get_history():
             return datetime.min
     history.sort(key=_ts, reverse=True)
     return jsonify(history)
+
+@app.route("/api/history/versions")
+def get_history_versions():
+    """Trả về danh sách các algo_version có trong history và số lượng signal."""
+    history = load_history()
+    versions = {}
+    for h in history:
+        v = h.get("algo_version", "legacy")
+        d = h.get("algo_date", "unknown")
+        key = f"{v} ({d})"
+        versions[key] = versions.get(key, 0) + 1
+    return jsonify({"versions": versions, "current": ALGO_VERSION})
 
 @app.route("/api/history/add", methods=["POST"])
 def history_add():
@@ -412,6 +436,35 @@ def backtest_signal(signal: dict) -> dict:
         if len(df_after) == 0:
             # Fallback: thử dùng nến mới nhất để tính unrealized
             last_price   = float(df["close"].iloc[-1])
+
+            # ── Kiểm tra SL/TP trước khi tính unrealized ──
+            # Nếu giá đã vượt SL → trả về LOSS tại SL, không tính unrealized oan
+            if direction == "LONG":
+                if last_price <= sl:
+                    return {**signal, "bt_result": "LOSS",
+                            "bt_note": f"Giá {round(last_price,6)} đã dưới SL {sl} — cắt lỗ tại SL",
+                            "bt_candles": 0, "bt_pnl_r": -1.0,
+                            "bt_exit_price": round(sl, 6)}
+                if last_price >= tp1:
+                    return {**signal, "bt_result": "WIN",
+                            "bt_note": f"Giá {round(last_price,6)} đã trên TP1 {tp1}",
+                            "bt_candles": 0,
+                            "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
+                            "bt_exit_price": round(tp1, 6)}
+            else:
+                if last_price >= sl:
+                    return {**signal, "bt_result": "LOSS",
+                            "bt_note": f"Giá {round(last_price,6)} đã trên SL {sl} — cắt lỗ tại SL",
+                            "bt_candles": 0, "bt_pnl_r": -1.0,
+                            "bt_exit_price": round(sl, 6)}
+                if last_price <= tp1:
+                    return {**signal, "bt_result": "WIN",
+                            "bt_note": f"Giá {round(last_price,6)} đã dưới TP1 {tp1}",
+                            "bt_candles": 0,
+                            "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
+                            "bt_exit_price": round(tp1, 6)}
+
+            # Chưa chạm SL/TP → tính unrealized thực tế (cap tại SL)
             if direction == "LONG":
                 unrealized = round((last_price - entry) / entry * 100, 2)
             else:
@@ -560,9 +613,10 @@ def run_backtest():
     import pandas as pd
 
     data        = request.json or {}
-    conf_filter = data.get("confidence", "HIGH")   # HIGH | ALL
-    dir_filter  = data.get("direction",  "ALL")    # LONG | SHORT | ALL
-    hours_ago   = int(data.get("hours_ago", 8))    # mặc định 8 tiếng
+    conf_filter  = data.get("confidence",   "HIGH")   # HIGH | ALL
+    dir_filter   = data.get("direction",    "ALL")    # LONG | SHORT | ALL
+    hours_ago    = int(data.get("hours_ago", 8))       # mặc định 8 tiếng
+    algo_version = data.get("algo_version", "")        # "" = tất cả versions
 
     history = load_history()
     if not history:
@@ -571,7 +625,8 @@ def run_backtest():
     # Filter theo confidence + direction
     signals = [h for h in history
                if (conf_filter == "ALL" or h.get("confidence") == conf_filter)
-               and (dir_filter == "ALL" or h.get("direction") == dir_filter)]
+               and (dir_filter == "ALL" or h.get("direction") == dir_filter)
+               and (not algo_version or h.get("algo_version", "legacy") == algo_version)]
 
     # Filter theo thời gian (hours_ago = 0 → không giới hạn)
     if hours_ago > 0:

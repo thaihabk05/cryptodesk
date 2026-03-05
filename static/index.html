@@ -620,6 +620,11 @@ tbody td{padding:11px 12px;vertical-align:middle}
           <option value="20">20x</option>
         </select>
       </div>
+      <select id="btAlgoVersion" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;cursor:pointer" title="Lọc theo phiên bản thuật toán">
+        <option value="">Tất cả phiên bản</option>
+        <option value="v2.0" selected>v2.0 (hiện tại)</option>
+        <option value="legacy">Legacy (cũ)</option>
+      </select>
       <button class="btn primary" id="btnBacktest" onclick="runBacktest()">&#9654; Run Backtest</button>
       <button class="btn" id="btnExportAnalysis" onclick="exportAnalysis()" style="display:none;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);color:#818cf8">&#128229; Export Analysis</button>
     </div>
@@ -1934,7 +1939,12 @@ function runBacktest() {
   fetch('/api/backtest', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({confidence: conf, direction: dir, hours_ago: hoursAgo})
+    body: JSON.stringify({
+      confidence:   conf,
+      direction:    dir,
+      hours_ago:    hoursAgo,
+      algo_version: document.getElementById('btAlgoVersion') ? document.getElementById('btAlgoVersion').value : ''
+    })
   }).then(function(r){ return r.json(); }).then(function(data) {
     if (data.error) {
       document.getElementById('btResults').innerHTML =
@@ -2154,6 +2164,9 @@ function renderBtTable(results, capital, leverage) {
         var pct = r.bt_unrealized_pct;
         var rr  = r.bt_unrealized_r;
         if (pct === null || pct === undefined) return '<span style="color:var(--muted2)">--</span>';
+        // Cap unrealized tại SL để không hiện số lớn hơn max loss thực tế
+        var slPct = r.sl_pct || 2;
+        if (pct < -slPct) pct = -slPct;  // không thể lỗ quá SL
         var c = pct >= 0 ? 'var(--long)' : 'var(--short)';
         var usd = (pct / 100 * capital * leverage).toFixed(2);
         var usdStr = '<span style="font-size:12px;font-weight:800;color:'+c+'">'+(pct>0?'+':'')+usd+'$</span>';
@@ -2981,6 +2994,9 @@ function renderBtAnalysis(results, summary) {
     + '<span style="font-size:18px">🔬</span>'
     + '<span style="font-size:15px;font-weight:800;letter-spacing:.3px">AI Analysis</span>'
     + '<span style="font-size:11px;color:var(--muted);margin-left:4px">— ' + closed.length + ' lệnh đóng</span>'
+    + (document.getElementById('btAlgoVersion') && document.getElementById('btAlgoVersion').value
+      ? '<span style="font-size:10px;background:rgba(99,102,241,.2);color:#818cf8;padding:2px 7px;border-radius:10px;margin-left:6px">' + document.getElementById('btAlgoVersion').value + '</span>'
+      : '')
     + '</div>'
 
     // Verdict
@@ -3074,9 +3090,11 @@ function exportAnalysis() {
   var winOI  = avg(wins,   function(r){return r.oi_change;});
   var lossOI = avg(losses, function(r){return r.oi_change;});
 
+  var algoVer = document.getElementById('btAlgoVersion') ? (document.getElementById('btAlgoVersion').value || 'all') : 'all';
   var exportData = {
-    generated_at: new Date().toISOString(),
-    period: document.getElementById('btTimeRange') ? document.getElementById('btTimeRange').value : 'unknown',
+    generated_at:   new Date().toISOString(),
+    algo_version:   algoVer,
+    period:         document.getElementById('btTimeRange') ? document.getElementById('btTimeRange').value : 'unknown',
     summary: {
       total_signals:  _btLastResults.length,
       closed:         closed.length,

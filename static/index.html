@@ -1679,7 +1679,10 @@ var historyData = [];
 
 function loadHistory() {
   fetch('/api/history').then(function(r){return r.json();}).then(function(data) {
-    historyData = data.reverse(); // mới nhất lên đầu
+    // Sort theo timestamp thực — mới nhất lên đầu
+    historyData = data.sort(function(a, b) {
+      return new Date(b.time) - new Date(a.time);
+    });
     renderHistory();
   });
 }
@@ -1940,15 +1943,20 @@ function runBacktest() {
         '<div style="font-size:13px">Bật auto-scanner để tích lũy signal history</div></div>';
       return;
     }
+    _btLastResults = data.results;
+    _btLastSummary = data.summary;
     renderBtSummary(data.summary, data.results, capital, leverage);
     renderBtResultSummary(data.results, data.summary, capital, leverage);
     renderBtTable(data.results, capital, leverage);
+    renderBtAnalysis(data.results, data.summary);
   }).catch(function(e) {
     document.getElementById('btResults').innerHTML =
       '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
   }).finally(function() {
     btn.disabled = false;
     btn.innerHTML = '&#9654; Run Backtest';
+    var exportBtn = document.getElementById('btnExportAnalysis');
+    if (exportBtn) exportBtn.style.display = '';
   });
 }
 

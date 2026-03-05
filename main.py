@@ -341,7 +341,16 @@ def get_results():
 
 @app.route("/api/history")
 def get_history():
-    return jsonify(load_history())
+    from datetime import datetime
+    history = load_history()
+    # Sort mới nhất lên đầu theo timestamp
+    def _ts(h):
+        try:
+            return datetime.fromisoformat(h.get("time","").replace("Z",""))
+        except Exception:
+            return datetime.min
+    history.sort(key=_ts, reverse=True)
+    return jsonify(history)
 
 @app.route("/api/history/add", methods=["POST"])
 def history_add():

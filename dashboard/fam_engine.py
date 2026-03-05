@@ -570,7 +570,7 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     if direction == "LONG" or (direction == "WAIT" and h4_bias == "LONG"):
         entry     = price
         sl_struct = recent_h1_low - atr_h1 * 0.5
-        sl_price  = smart_round(min(entry * 0.99, max(sl_struct, entry * 0.96)))
+        sl_price  = smart_round(min(entry * 0.98, max(sl_struct, entry * 0.94)))
 
         tp1 = _pick_tp1_long(entry, swing_highs_recent, ma34_h4, ma89_h4, ma200_h4, atr_h1)
         tp2 = _pick_tp2_long(entry, tp1, fib_ext_h4_long, atr_h1)
@@ -581,7 +581,7 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     elif direction == "SHORT" or (direction == "WAIT" and h4_bias == "SHORT"):
         entry     = price
         sl_struct = recent_h1_high + atr_h1 * 0.5
-        sl_price  = smart_round(max(entry * 1.01, min(sl_struct, entry * 1.04)))
+        sl_price  = smart_round(max(entry * 1.02, min(sl_struct, entry * 1.06)))
 
         tp1 = _pick_tp1_short(entry, swing_lows_recent, ma34_h4, ma89_h4, ma200_h4, atr_h1)
         tp2 = _pick_tp2_short(entry, tp1, fib_ext_h4_short, atr_h1)
@@ -619,8 +619,8 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         direction, h1_status, rr, funding, oi_change, btc_ctx, no_trade, confidence
     )
 
-    if direction in ("LONG", "SHORT") and rr < 1.0:
-        all_warnings.append(f"❌ R:R {rr} < 1.0 — chờ pullback về MA")
+    if direction in ("LONG", "SHORT") and rr < 1.5:
+        all_warnings.append(f"❌ R:R {rr} < 1.5 — signal yếu, chờ điểm entry tốt hơn")
         direction      = "WAIT"
         confidence     = "LOW"
         entry_verdict  = "NO"   # Override: R:R quá thấp → không vào

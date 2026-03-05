@@ -367,8 +367,8 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
     rr      = round(tp1_pct / sl_pct, 2)                    if sl_pct > 0 else 0
 
     # Drop nếu R:R < 1
-    if direction in ("LONG", "SHORT") and rr < 1.0:
-        all_warnings.append(f"❌ R:R {rr} < 1.0 — chờ H1 pullback về MA")
+    if direction in ("LONG", "SHORT") and rr < 1.5:
+        all_warnings.append(f"❌ R:R {rr} < 1.5 — signal yếu, chờ H1 pullback về MA")
         direction  = "WAIT"
         confidence = "LOW"
 

@@ -359,14 +359,14 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         entry    = price
         # SL: dưới swing low M15 gần nhất + buffer nhỏ, tối đa 1.5%
         sl_struct = recent_m15_low - atr_m15 * 0.3
-        sl_price  = smart_round(min(entry * 0.992, max(sl_struct, entry * 0.985)))
+        sl_price  = smart_round(min(entry * 0.980, max(sl_struct, entry * 0.970)))
         tp1 = _tp1_long(entry, swing_highs_m15, ema9_m15, ema21_m15, atr_m15)
         tp2 = _tp2(entry, tp1, fib_ext_long, "LONG")
 
     elif direction == "SHORT" or (direction == "WAIT" and h1_bias == "SHORT"):
         entry    = price
         sl_struct = recent_m15_high + atr_m15 * 0.3
-        sl_price  = smart_round(max(entry * 1.008, min(sl_struct, entry * 1.015)))
+        sl_price  = smart_round(max(entry * 1.020, min(sl_struct, entry * 1.030)))
         tp1 = _tp1_short(entry, swing_lows_m15, ema9_m15, ema21_m15, atr_m15)
         tp2 = _tp2(entry, tp1, fib_ext_short, "SHORT")
 
@@ -380,8 +380,8 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     tp1_pct = round(abs(tp1 - entry) / entry * 100, 2)      if entry != tp1 else 0
     rr      = round(tp1_pct / sl_pct, 2)                    if sl_pct > 0 else 0
 
-    if direction in ("LONG", "SHORT") and rr < 1.0:
-        all_warnings.append(f"❌ R:R {rr} < 1.0 — chờ M15 pullback về EMA")
+    if direction in ("LONG", "SHORT") and rr < 1.5:
+        all_warnings.append(f"❌ R:R {rr} < 1.5 — signal yếu, chờ M15 pullback về EMA")
         direction  = "WAIT"
         confidence = "LOW"
 

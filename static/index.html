@@ -621,6 +621,7 @@ tbody td{padding:11px 12px;vertical-align:middle}
         </select>
       </div>
       <button class="btn primary" id="btnBacktest" onclick="runBacktest()">&#9654; Run Backtest</button>
+      <button class="btn" id="btnExportAnalysis" onclick="exportAnalysis()" style="display:none;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);color:#818cf8">&#128229; Export Analysis</button>
     </div>
   </div>
 
@@ -1885,6 +1886,8 @@ function runBacktestWithSignals(signals, label) {
         '<div class="empty-title">'+data.error+'</div></div>';
       return;
     }
+    _btLastResults = data.results;
+    _btLastSummary = data.summary;
     renderBtSummary(data.summary, data.results, capital, leverage);
     renderBtResultSummary(data.results, data.summary, capital, leverage);
     renderBtTable(data.results, capital, leverage);
@@ -1895,6 +1898,7 @@ function runBacktestWithSignals(signals, label) {
   }).finally(function() {
     btn.disabled = false;
     btn.innerHTML = '&#9654; Run Backtest';
+    document.getElementById('btnExportAnalysis').style.display = '';
   });
 }
 
@@ -2999,6 +3003,126 @@ function renderBtAnalysis(results, summary) {
 
   el.style.display = 'block';
   el.innerHTML = html;
+}
+
+
+// ═══════════════════════════════════════════════
+// EXPORT ANALYSIS — Mức 1 Semi-auto
+// ═══════════════════════════════════════════════
+var _btLastResults = null;
+var _btLastSummary = null;
+
+function exportAnalysis() {
+  if (!_btLastResults || !_btLastResults.length) {
+    alert('Chưa có kết quả backtest. Hãy Run Backtest trước.');
+    return;
+  }
+
+  var capital  = parseFloat(document.getElementById('btCapital').value)  || 1000;
+  var leverage = parseFloat(document.getElementById('btLeverage').value) || 5;
+  var s = _btLastSummary;
+
+  // Feature analysis
+  var closed  = _btLastResults.filter(function(r){ return r.bt_result==='WIN'||r.bt_result==='LOSS'; });
+  var wins    = _btLastResults.filter(function(r){ return r.bt_result==='WIN'; });
+  var losses  = _btLastResults.filter(function(r){ return r.bt_result==='LOSS'; });
+
+  function avg(arr, fn) {
+    var v = arr.map(fn).filter(function(x){ return x!=null&&!isNaN(x); });
+    return v.length ? Math.round(v.reduce(function(a,b){return a+b;},0)/v.length*100)/100 : null;
+  }
+
+  // Symbol stats
+  var symStats = {};
+  closed.forEach(function(r) {
+    var sym = r.symbol;
+    if (!symStats[sym]) symStats[sym] = {w:0,l:0,rrs:[]};
+    if (r.bt_result==='WIN') symStats[sym].w++;
+    else symStats[sym].l++;
+    if (r.rr) symStats[sym].rrs.push(r.rr);
+  });
+
+  // Direction stats
+  var dirs = {};
+  ['LONG','SHORT'].forEach(function(d) {
+    var dw = wins.filter(function(r){return r.direction===d;});
+    var dl = losses.filter(function(r){return r.direction===d;});
+    dirs[d] = { w: dw.length, l: dl.length,
+      wr: (dw.length+dl.length)>0 ? Math.round(dw.length/(dw.length+dl.length)*100) : null,
+      avg_rr: avg(dw.concat(dl), function(r){return r.rr;})
+    };
+  });
+
+  // RR bucket analysis
+  var rrBuckets = {'<1.5':{w:0,l:0}, '1.5-2':{w:0,l:0}, '2-3':{w:0,l:0}, '>3':{w:0,l:0}};
+  closed.forEach(function(r) {
+    var rr = r.rr || 0;
+    var bucket = rr < 1.5 ? '<1.5' : rr < 2 ? '1.5-2' : rr < 3 ? '2-3' : '>3';
+    if (r.bt_result==='WIN') rrBuckets[bucket].w++;
+    else rrBuckets[bucket].l++;
+  });
+
+  // OI analysis
+  var winOI  = avg(wins,   function(r){return r.oi_change;});
+  var lossOI = avg(losses, function(r){return r.oi_change;});
+
+  var exportData = {
+    generated_at: new Date().toISOString(),
+    period: document.getElementById('btTimeRange') ? document.getElementById('btTimeRange').value : 'unknown',
+    summary: {
+      total_signals:  _btLastResults.length,
+      closed:         closed.length,
+      wins:           wins.length,
+      losses:         losses.length,
+      win_rate:       s.win_rate,
+      total_r:        s.total_r,
+      expectancy:     s.expectancy,
+      avg_win_r:      s.avg_win_r,
+      avg_loss_r:     s.avg_loss_r,
+      avg_candles_win:  s.avg_candles_win,
+      avg_candles_loss: s.avg_candles_loss,
+    },
+    direction_analysis: dirs,
+    rr_buckets: rrBuckets,
+    oi_correlation: { win_avg_oi: winOI, loss_avg_oi: lossOI },
+    symbol_stats: symStats,
+    raw_signals: _btLastResults.map(function(r) {
+      return {
+        time:        r.time,
+        symbol:      r.symbol,
+        direction:   r.direction,
+        confidence:  r.confidence,
+        entry:       r.entry,
+        sl:          r.sl,
+        sl_pct:      r.sl_pct,
+        tp1:         r.tp1,
+        tp1_pct:     r.tp1_pct,
+        rr:          r.rr,
+        score:       r.score,
+        oi_change:   r.oi_change,
+        funding:     r.funding,
+        btc_sentiment: r.btc_sentiment,
+        strategy:    r.strategy,
+        bt_result:   r.bt_result,
+        bt_pnl_r:    r.bt_pnl_r,
+        bt_candles:  r.bt_candles,
+        bt_note:     r.bt_note,
+        num_conditions: r.num_conditions,
+        num_warnings:   r.num_warnings,
+      };
+    })
+  };
+
+  // Download JSON
+  var blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href   = url;
+  a.download = 'cryptodesk_backtest_' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 

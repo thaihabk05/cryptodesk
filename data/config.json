@@ -4,8 +4,15 @@
     "ETHUSDT",
     "ARBUSDT",
     "CYSUSDT",
-    "PHAUSDT"
+    "TAGUSDT",
+    "HUMAUSDT"
   ],
+  "watchlist_algos": {},
+  "scan_modes": [
+    "TREND",
+    "RANGE_SCALP"
+  ],
+  "range_override": {},
   "interval_minutes": 15,
   "telegram_token": "8676249206:AAEUGQNfL5xVQ4DP6krTNRRW-Zs7zqEQLqg",
   "telegram_chat": "636406779",

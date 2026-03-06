@@ -43,6 +43,9 @@ DATA_DIR.mkdir(exist_ok=True)
 
 DEFAULT_CONFIG = {
     "symbols":          ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+    "watchlist_algos":  {},
+    "scan_modes":       ["TREND"],
+    "range_override":   {},
     "interval_minutes": 30,
     "telegram_token":   os.getenv("TELEGRAM_BOT_TOKEN", ""),
     "telegram_chat":    os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -196,8 +199,14 @@ def _send_high_alert(result: dict, token: str, chat_id: str):
 
     # Strategy label
     strat_raw = result.get("strategy", "SWING_H4")
-    strat_map = {"SWING_H4": "Swing H4/D1", "SWING_H1": "Swing H1", "SCALP": "Scalp M15"}
+    strat_map = {
+        "SWING_H4": "Swing H4/D1", "SWING_H1": "Swing H1",
+        "SCALP": "Scalp M15", "RANGE_SCALP": "Range Scalp"
+    }
+    algo_tag    = result.get("algo", "")
     strat_label = strat_map.get(strat_raw, strat_raw)
+    if algo_tag and algo_tag != strat_raw:
+        strat_label = strat_map.get(algo_tag, algo_tag)
 
     lines = [
         dir_emoji + " " + sym + " — " + dirr + " | HIGH",
@@ -227,13 +236,107 @@ def get_analyze_fn(cfg):
     if strategy == "SCALP":     return scalp_analyze
     return fam_analyze  # mặc định SWING_H4
 
+
+def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
+    """Alert Telegram khi mã watchlist đang đúng điểm entry."""
+    token   = cfg.get("telegram_token", "")
+    chat_id = cfg.get("telegram_chat", "")
+    if not token or not chat_id:
+        return
+
+    direction  = result.get("direction", "WAIT")
+    confidence = result.get("confidence", "LOW")
+    rr         = result.get("rr", 0) or 0
+    verdict    = result.get("entry_verdict", "WAIT")
+
+    # Chỉ alert khi: có direction + confidence HIGH/MEDIUM + RR đạt + verdict GO/WAIT
+    if direction not in ("LONG", "SHORT"):
+        return
+    if confidence not in ("HIGH", "MEDIUM"):
+        return
+    if rr < 1.5:
+        return
+
+    # Tránh spam — dùng cooldown key
+    import time
+    cooldown_key = f"{sym}_{direction}_{algo_key}"
+    now = time.time()
+    last_alert = _watchlist_alert_cooldown.get(cooldown_key, 0)
+    if now - last_alert < 3600:  # cooldown 1 tiếng
+        return
+    _watchlist_alert_cooldown[cooldown_key] = now
+
+    strat_labels = {
+        "TREND": "Trend " + cfg.get("strategy", "SWING_H4"),
+        "RANGE_SCALP": "Range Scalp",
+        "SWING_H4": "Swing H4/D1",
+        "SWING_H1": "Swing H1",
+        "SCALP": "Scalp M15",
+    }
+    algo_label = strat_labels.get(algo_key, algo_key)
+    dir_emoji  = "🟢" if direction == "LONG" else "🔴"
+    mk         = result.get("market", {})
+
+    lines = [
+        f"📌 [WATCHLIST] {sym}",
+        f"{dir_emoji} {direction} | {confidence} | [{algo_label}]",
+        "--------------------",
+    ]
+
+    # Range scalp — thêm info range
+    if algo_key == "RANGE_SCALP":
+        pos = result.get("position_in_range", "")
+        rh  = result.get("range_high", "")
+        rl  = result.get("range_low", "")
+        lines.append(f"Gia cham {pos} | Range: {rl} - {rh}")
+
+    lines += [
+        f"Price: {result.get('price','')} | R:R 1:{rr}",
+        f"Entry: {result.get('entry','')}",
+        f"SL: {result.get('sl','')} (-{result.get('sl_pct','')}%)",
+        f"TP1: {result.get('tp1','')} (+{result.get('tp1_pct','')}%)",
+        "--------------------",
+        f"Funding: {mk.get('funding_pct','N/A')} | OI: {mk.get('oi_str','N/A')}",
+    ]
+    if verdict == "GO":
+        lines.append("✅ DA SAN SANG VAO LENH")
+    else:
+        lines.append("🟡 CHO THEM XAC NHAN")
+
+    send_telegram(token, chat_id, chr(10).join(lines))
+
+
+_watchlist_alert_cooldown = {}
+
+
 def dashboard_scan_cycle(cfg):
-    """Scan các symbol trong watchlist Dashboard."""
+    """Scan các symbol trong watchlist — dùng đúng algo đã gắn cho từng mã."""
+    from dashboard.fam_engine      import fam_analyze
+    from dashboard.swing_h1_engine import swing_h1_analyze
+    from dashboard.scalp_engine    import scalp_analyze
+    from dashboard.range_engine    import range_analyze
+
+    algo_map = {
+        "TREND":       get_analyze_fn(cfg),
+        "RANGE_SCALP": range_analyze,
+        "SWING_H4":    fam_analyze,
+        "SWING_H1":    swing_h1_analyze,
+        "SCALP":       scalp_analyze,
+    }
+    watchlist_algos = cfg.get("watchlist_algos", {})
+
     for sym in cfg["symbols"]:
         try:
-            result = get_analyze_fn(cfg)(sym, cfg)
+            algo_key  = watchlist_algos.get(sym, "TREND")
+            engine_fn = algo_map.get(algo_key, get_analyze_fn(cfg))
+            result    = engine_fn(sym, {**cfg, "force_futures": True})
+            result["algo"] = algo_key
             with scan_lock:
                 scan_results[sym] = result
+
+            # Watchlist alert: chỉ alert khi đúng điểm entry
+            _check_watchlist_alert(sym, result, cfg, algo_key)
+
         except Exception as e:
             with scan_lock:
                 scan_results[sym] = {"symbol": sym, "error": str(e)}
@@ -821,6 +924,65 @@ threading.Thread(target=auto_start_scanner, daemon=True).start()
 
 
 # ── Run ───────────────────────────────────────
+
+
+@app.route("/api/config/scan-modes", methods=["POST"])
+def set_scan_modes():
+    """Cập nhật scan_modes: ['TREND'], ['RANGE_SCALP'], ['TREND','RANGE_SCALP']."""
+    data = request.get_json() or {}
+    cfg  = load_config()
+    modes = data.get("modes", ["TREND"])
+    cfg["scan_modes"] = [m for m in modes if m in ("TREND", "RANGE_SCALP")]
+    save_config(cfg)
+    return jsonify({"ok": True, "scan_modes": cfg["scan_modes"]})
+
+
+@app.route("/api/config/watchlist-algo", methods=["POST"])
+def set_watchlist_algo():
+    """Gắn algo cho symbol trong watchlist: {symbol, algo}."""
+    data = request.get_json() or {}
+    sym  = data.get("symbol", "").upper()
+    algo = data.get("algo", "TREND")
+    if not sym:
+        return jsonify({"ok": False, "error": "Missing symbol"}), 400
+    cfg  = load_config()
+    if "watchlist_algos" not in cfg:
+        cfg["watchlist_algos"] = {}
+    cfg["watchlist_algos"][sym] = algo
+    save_config(cfg)
+    return jsonify({"ok": True, "symbol": sym, "algo": algo})
+
+
+@app.route("/api/config/range-override", methods=["POST"])
+def set_range_override():
+    """Set/clear range tay cho symbol: {symbol, range_high, range_low} hoặc {symbol, clear:true}."""
+    data = request.get_json() or {}
+    sym  = data.get("symbol", "").upper()
+    if not sym:
+        return jsonify({"ok": False, "error": "Missing symbol"}), 400
+    cfg  = load_config()
+    if "range_override" not in cfg:
+        cfg["range_override"] = {}
+    if data.get("clear"):
+        cfg["range_override"].pop(sym, None)
+    else:
+        cfg["range_override"][sym] = {
+            "range_high": float(data.get("range_high", 0)),
+            "range_low":  float(data.get("range_low",  0)),
+        }
+    save_config(cfg)
+    return jsonify({"ok": True, "symbol": sym, "range_override": cfg["range_override"].get(sym)})
+
+
+@app.route("/api/config/scan-modes", methods=["GET"])
+def get_scan_modes():
+    cfg = load_config()
+    return jsonify({
+        "scan_modes":      cfg.get("scan_modes", ["TREND"]),
+        "watchlist_algos": cfg.get("watchlist_algos", {}),
+        "range_override":  cfg.get("range_override", {}),
+    })
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n🚀 CryptoDesk running at http://127.0.0.1:{port}\n")

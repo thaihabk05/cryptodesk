@@ -447,6 +447,16 @@ tbody td{padding:11px 12px;vertical-align:middle}
       <button class="btn primary" onclick="addSymbol()">+ Add</button>
     </div>
     <button class="btn" onclick="scanNow()">&#8635; Refresh All</button>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:8px">
+      <span style="font-size:11px;color:var(--muted2)">Hiển thị:</span>
+      <select id="dashAlgoFilter" onchange="renderCards()"
+        style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+               color:var(--text);font-size:11px;padding:3px 7px;outline:none;cursor:pointer">
+        <option value="ALL">Tất cả</option>
+        <option value="TREND">Trend</option>
+        <option value="RANGE_SCALP">Range Scalp</option>
+      </select>
+    </div>
     <span style="font-size:11px;color:var(--muted);margin-left:auto" id="lastScanTime"></span>
   </div>
   <div class="chips" id="chips"></div>
@@ -463,6 +473,18 @@ tbody td{padding:11px 12px;vertical-align:middle}
 <div class="page" id="page-scanner">
   <div class="scan-settings">
     <div class="scan-settings-title">Market Scan Settings</div>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+    <span style="font-size:11px;color:var(--muted2)">Chế độ scan:</span>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px">
+      <input type="checkbox" id="modeTrend" checked onchange="onScanModeChange()"
+        style="accent-color:var(--accent);width:14px;height:14px"> Trend (H4/H1/Scalp)
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px">
+      <input type="checkbox" id="modeRange" onchange="onScanModeChange()"
+        style="accent-color:#a78bfa;width:14px;height:14px">
+      <span style="color:#a78bfa">Range Scalp</span>
+    </label>
+  </div>
     <div class="scan-controls">
       <div class="ctrl-group">
         <label>Min Volume 24h</label>
@@ -518,6 +540,19 @@ tbody td{padding:11px 12px;vertical-align:middle}
     <div class="stat-card"><div class="stat-lbl">Kết quả lúc</div><div class="stat-val" style="font-size:13px;padding-top:4px;color:var(--muted2)" id="stFinishedAt">--</div></div>
   </div>
 
+  <!-- Search bar tĩnh — luôn hiển thị -->
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+    <div style="position:relative;display:inline-flex;align-items:center">
+      <svg style="position:absolute;left:9px;width:14px;height:14px;color:#64748b;pointer-events:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="scanSearch" type="text" placeholder="Tìm mã..." oninput="filterScanBySearch()"
+        style="background:#1a1f35;border:1px solid #2d3555;border-radius:8px;
+               padding:6px 12px 6px 30px;color:#e2e8f0;font-size:13px;
+               width:160px;outline:none;transition:border .2s"
+        onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#2d3555'">
+    </div>
+    <span id="scanSearchCount" style="font-size:11px;color:#64748b"></span>
+  </div>
+
   <div id="scanResults">
     <div class="empty-state">
       <div class="empty-icon">&#128269;</div>
@@ -560,6 +595,19 @@ tbody td{padding:11px 12px;vertical-align:middle}
       <button class="btn" onclick="loadHistory()">&#8635; Refresh</button>
     </div>
   </div>
+  <!-- History search bar tĩnh -->
+  <div style="display:flex;align-items:center;gap:10px;margin:0 0 10px 0">
+    <div style="position:relative;display:inline-flex;align-items:center">
+      <svg style="position:absolute;left:9px;width:14px;height:14px;color:#64748b;pointer-events:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="histSearch" type="text" placeholder="Tìm mã..." oninput="filterHistBySearch()"
+        style="background:#1a1f35;border:1px solid #2d3555;border-radius:8px;
+               padding:6px 12px 6px 30px;color:#e2e8f0;font-size:13px;
+               width:160px;outline:none;transition:border .2s"
+        onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#2d3555'">
+    </div>
+    <span id="histSearchCount" style="font-size:11px;color:#64748b"></span>
+  </div>
+
   <div id="historyContent">
     <div class="empty-state">
       <div class="empty-icon">&#128203;</div>
@@ -816,6 +864,7 @@ function switchTab(tab) {
 }
 
 function loadScanOnTabSwitch() {
+  loadScanModes();
   // Load kết quả scan gần nhất khi vào tab — không trigger scan mới
   fetch('/api/market-scan/status').then(function(r){return r.json();}).then(function(st) {
     if (!st.finished_at && !st.running) return; // chưa từng scan
@@ -935,9 +984,14 @@ function renderCards() {
     return;
   }
   var html = '';
+  var algoFilter = (document.getElementById('dashAlgoFilter') || {}).value || 'ALL';
   syms.forEach(function(s) {
     if (signalCache[s]) {
-      html += buildCard(signalCache[s]);
+      var d = signalCache[s];
+      var cardAlgo = d.algo || d.strategy || 'TREND';
+      var normAlgo = cardAlgo === 'RANGE_SCALP' ? 'RANGE_SCALP' : 'TREND';
+      if (algoFilter !== 'ALL' && normAlgo !== algoFilter) return;
+      html += buildCard(d);
     } else {
       html += '<div class="card"><div class="card-header">' +
         '<span class="card-sym">'+s.replace('USDT','')+'<span>/USDT</span></span></div>' +
@@ -992,6 +1046,7 @@ function buildCard(d) {
       '<span class="card-sym">'+d.symbol.replace('USDT','')+'<span>/USDT</span></span>' +
       '<div style="display:flex;align-items:center;gap:6px">' +
         '<div class="badges"><span class="badge '+conf+'">'+conf+'</span>' +
+          algoTag(d.algo||d.strategy) +
           '<span class="badge '+dir+'">'+dir+'</span>'+ntBadge+'</div>' +
         '<button onclick="event.stopPropagation();refreshSingle(this,\''+d.symbol+'\')" '+
           'title="Refresh mã này" '+
@@ -1012,6 +1067,9 @@ function buildCard(d) {
       '</div>' +
     '</div>' +
     '<div class="card-price">'+fmt(d.price)+'</div>' +
+  ((d.strategy==='RANGE_SCALP'||d.algo==='RANGE_SCALP') && d.range_high ?
+    '<div style="font-size:11px;color:#a78bfa;margin:2px 0 4px">Range: '+fmt(d.range_low)+' – '+fmt(d.range_high)+
+    ' <span style="opacity:.7">('+d.range_pct+'%)</span> | '+d.position_in_range+'</div>' : '') +
     '<div class="tf-tags">'+tfTags+'</div>' +
     (d.h1_status && dir !== 'WAIT' ?
       '<div class="h1-status '+d.h1_status+'">' +
@@ -1519,9 +1577,6 @@ function renderScanTable(data) {
     '<span style="font-size:11px;color:var(--muted)">Sort:</span>' +
     sortBtn('rr','R:R') + sortBtn('score','Score') + sortBtn('volume_24h','Volume') + sortBtn('tp1_pct','TP%') +
     '<span class="count-badge">'+sorted.length+' opportunities</span>' +
-    '<input id="scanSearch" type="text" placeholder="🔍 Tìm mã..." oninput="filterScanBySearch()" ' +
-    'style="margin-left:auto;background:#1e2130;border:1px solid var(--border);border-radius:6px;' +
-    'padding:4px 10px;color:#e2e8f0;font-size:12px;width:140px;outline:none">' +
     '</div>';
 
   if (!sorted.length) {
@@ -1543,6 +1598,7 @@ function renderScanTable(data) {
       '<td><div class="sym-name">'+d.symbol.replace('USDT','')+'</div><div class="sym-sub">/USDT PERP</div></td>' +
       '<td><span class="badge '+d.direction+'">'+d.direction+'</span></td>' +
       '<td><span class="badge '+d.confidence+'">'+d.confidence+'</span></td>' +
+      '<td>'+algoTag(d.algo)+'</td>' +
       '<td class="mono">'+fmt(d.price)+'</td>' +
       '<td><span class="rr-val" style="color:'+rrColor(d.rr)+'">1:'+d.rr+'</span></td>' +
       '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted)">-'+d.sl_pct+'%</span></td>' +
@@ -1557,7 +1613,7 @@ function renderScanTable(data) {
           (d.h1_status==='CONFIRMED'?'✅':d.h1_status==='PULLBACK'?'⏳':'🔍')+' '+(d.h1_note||d.h1_status_note)+'</div>' : '') +
       '</td>' +
       '<td onclick="event.stopPropagation()" style="padding:4px 8px">' +
-        '<button data-sym="'+d.symbol+'" onclick="addScanToDash(this.dataset.sym)" ' +
+        '<button data-sym="'+d.symbol+'" data-algo="'+(d.algo||'TREND')+'" onclick="addScanToDash(this.dataset.sym,this.dataset.algo)" ' +
         'style="background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);' +
         'color:#818cf8;border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer;white-space:nowrap">+Dash</button>' +
       '</td>' +
@@ -1566,7 +1622,7 @@ function renderScanTable(data) {
 
   document.getElementById('scanResults').innerHTML = toolbar +
     '<div class="table-wrap"><table>' +
-    '<thead><tr><th>#</th><th>Symbol</th><th>Dir</th><th>Conf</th><th>Price</th>' +
+    '<thead><tr><th>#</th><th>Symbol</th><th>Dir</th><th>Conf</th><th>Algo</th><th>Price</th>' +
     '<th>R:R</th><th>SL</th><th>TP1</th><th>Funding</th><th>OI</th><th>ATR</th><th>Volume</th><th>Conditions</th><th></th>' +
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
@@ -1745,6 +1801,7 @@ function renderHistory() {
       '<td><span class="badge '+d.direction+'">'+d.direction+'</span></td>' +
       '<td><span style="font-size:11px;font-weight:700;color:'+cc+'">'+d.confidence+'</span></td>' +
       '<td style="font-size:10px;color:var(--muted2)">'+strat+'</td>' +
+      '<td>'+algoTag(d.algo)+'</td>' +
       '<td class="mono" style="color:var(--text)">'+fmt(d.price)+'</td>' +
       '<td class="mono" style="color:var(--accent)">'+fmt(d.entry)+'</td>' +
       '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted2)">-'+d.sl_pct+'%</span></td>' +
@@ -1766,17 +1823,12 @@ function renderHistory() {
   }).join('');
 
   document.getElementById('historyContent').innerHTML =
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">' +
-    '<span style="font-size:11px;color:var(--muted2)">'+data.length+' signals</span>' +
-    '<input id="histSearch" type="text" placeholder="🔍 Tìm mã..." oninput="filterHistBySearch()" ' +
-    'style="background:#1e2130;border:1px solid var(--border);border-radius:6px;' +
-    'padding:4px 10px;color:#e2e8f0;font-size:12px;width:140px;outline:none">' +
-    '</div>' +
+    '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px">'+data.length+' signals — click để xem chi tiết</div>' +
     '<div class="table-wrap"><table>' +
     '<thead><tr>' +
       '<th style="width:28px"><input type="checkbox" id="histCheckAll" onchange="onHistCheckAll(this)"' +
         ' style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent)"></th>' +
-      '<th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th><th>Strat</th>' +
+      '<th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th><th>Strat</th><th>Algo</th>' +
       '<th>Price</th><th>Entry</th><th>SL</th><th>TP1</th><th>R:R</th>' +
       '<th>Vol 24h</th><th>D1</th><th>H4</th><th></th>' +
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -3230,33 +3282,38 @@ function showToast(msg) {
 // Filter scan results by search
 var _allSortedScan = [];
 function filterScanBySearch() {
-  var q = (document.getElementById('scanSearch') || {}).value || '';
-  q = q.toUpperCase().trim();
+  var el = document.getElementById('scanSearch');
+  var q = el ? el.value.toUpperCase().trim() : '';
+  var countEl = document.getElementById('scanSearchCount');
   if (!q) {
+    if (countEl) countEl.textContent = '';
     renderScanTable(allScanResults);
     return;
   }
   var filtered = (allScanResults || []).filter(function(d) {
     return d.symbol && d.symbol.toUpperCase().indexOf(q) >= 0;
   });
+  if (countEl) countEl.textContent = filtered.length + ' kết quả';
   renderScanTable(filtered);
 }
 
 // Filter history by search
 function filterHistBySearch() {
-  var q = (document.getElementById('histSearch') || {}).value || '';
-  q = q.toUpperCase().trim();
+  var el = document.getElementById('histSearch');
+  var q = el ? el.value.toUpperCase().trim() : '';
+  var countEl = document.getElementById('histSearchCount');
   if (!q) {
+    if (countEl) countEl.textContent = '';
     renderHistory();
     return;
   }
-  // Lọc historyData theo symbol
   var dir = (document.getElementById('histDir') || {}).value || 'ALL';
   var filtered = historyData.filter(function(d) {
     var matchDir = dir === 'ALL' || d.direction === dir;
     var matchSym = d.symbol && d.symbol.toUpperCase().indexOf(q) >= 0;
     return matchDir && matchSym;
   });
+  if (countEl) countEl.textContent = filtered.length + ' kết quả';
   renderHistoryFiltered(filtered);
 }
 
@@ -3273,6 +3330,88 @@ function renderHistoryFiltered(data) {
   historyData = data;
   renderHistory();
   historyData = orig;
+}
+
+
+// ═══════════════════════════════════════════════
+// ALGO TAG + SCAN MODES
+// ═══════════════════════════════════════════════
+
+function algoTag(algo) {
+  if (!algo) return '';
+  if (algo === 'RANGE_SCALP') {
+    return '<span style="background:rgba(167,139,250,.15);border:1px solid rgba(167,139,250,.4);' +
+           'color:#a78bfa;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">RANGE</span>';
+  }
+  var labels = {'SWING_H4':'H4','SWING_H1':'H1','SCALP':'M15','TREND':'TREND'};
+  var label  = labels[algo] || algo;
+  return '<span style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);' +
+         'color:var(--accent);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">'+label+'</span>';
+}
+
+function onScanModeChange() {
+  var trend = document.getElementById('modeTrend');
+  var range = document.getElementById('modeRange');
+  var modes = [];
+  if (trend && trend.checked) modes.push('TREND');
+  if (range && range.checked) modes.push('RANGE_SCALP');
+  if (!modes.length) { modes = ['TREND']; if (trend) trend.checked = true; }
+
+  fetch('/api/config/scan-modes', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({modes: modes})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    console.log('Scan modes:', d.scan_modes);
+  });
+}
+
+// Load scan modes từ server khi vào tab
+function loadScanModes() {
+  fetch('/api/config/scan-modes').then(function(r){return r.json();}).then(function(d){
+    var modes = d.scan_modes || ['TREND'];
+    var trend = document.getElementById('modeTrend');
+    var range = document.getElementById('modeRange');
+    if (trend) trend.checked = modes.indexOf('TREND') >= 0;
+    if (range) range.checked = modes.indexOf('RANGE_SCALP') >= 0;
+    // Lưu watchlist_algos để dùng khi add
+    window._watchlistAlgos = d.watchlist_algos || {};
+  });
+}
+
+// Override addScanToDash để gắn algo đúng
+function addScanToDash(symbol, algo) {
+  if (!symbol) return;
+  var sym = symbol.toUpperCase();
+  if (!sym.endsWith('USDT')) sym += 'USDT';
+  var syms = config.symbols || [];
+  if (syms.indexOf(sym) >= 0) {
+    showToast('⚠️ ' + sym.replace('USDT','') + ' đã có trong Dashboard');
+    return;
+  }
+  config.symbols = [sym].concat(syms);
+  saveConfig();
+  renderChips();
+
+  // Gắn algo cho symbol này
+  var algoToSave = algo || 'TREND';
+  fetch('/api/config/watchlist-algo', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: sym, algo: algoToSave})
+  });
+
+  // Fetch data và chuyển sang Dashboard
+  fetch('/api/symbol/' + sym)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      d.algo = algoToSave;
+      signalCache[sym] = d;
+      renderCards();
+      switchTab('dashboard');
+    });
+
+  showToast('✅ Đã thêm ' + sym.replace('USDT','') + ' [' + algoToSave + '] vào Dashboard');
 }
 
 

@@ -62,62 +62,84 @@ SCAN_CFG = {
 def _get_engine(cfg):
     """Chọn engine phù hợp với strategy trong config."""
     s = cfg.get("strategy", "SWING_H4")
-    if s == "SWING_H1": return swing_h1_analyze
-    if s == "SCALP":    return scalp_analyze
+    if s == "SWING_H1":    return swing_h1_analyze
+    if s == "SCALP":       return scalp_analyze
+    if s == "RANGE_SCALP": return range_analyze
     return fam_analyze
+
+
+def _get_engines_for_modes(cfg):
+    """Trả về list các engine cần chạy dựa trên scan_modes."""
+    modes   = cfg.get("scan_modes", ["TREND"])  # default chỉ TREND
+    engines = []
+    strategy = cfg.get("strategy", "SWING_H4")
+    if "TREND" in modes:
+        if strategy == "SWING_H1": engines.append(("TREND", swing_h1_analyze))
+        elif strategy == "SCALP":  engines.append(("TREND", scalp_analyze))
+        else:                      engines.append(("TREND", fam_analyze))
+    if "RANGE_SCALP" in modes:
+        engines.append(("RANGE_SCALP", range_analyze))
+    return engines
+
+
+def _process_result(result, sym_info, mode_tag):
+    """Xử lý kết quả từ engine: filter, tag, flatten."""
+    if result.get("direction") not in ("LONG", "SHORT"):
+        return None
+
+    rr   = result.get("rr", 0)
+    conf = result.get("confidence", "LOW")
+    if rr < 1.5: return None
+    if conf == "LOW": return None
+
+    _vol_usdt = float(sym_info.get("volume_24h", 0))
+    if _vol_usdt < 5_000_000:
+        return None
+
+    # Tag algo source
+    result["algo"] = mode_tag
+
+    result["volume_24h"]  = sym_info["volume_24h"]
+    mk = result.get("market", {})
+    result["funding"]     = mk.get("funding")
+    result["funding_str"] = mk.get("funding_pct") or "N/A"
+    result["oi_change"]   = mk.get("oi_change")
+    result["oi_str"]      = mk.get("oi_str") or "N/A"
+    result["atr_ratio"]   = mk.get("atr_ratio")
+
+    return sanitize(result)
 
 
 def analyze_symbol(sym_info: dict):
     import time as _t
     symbol = sym_info["symbol"]
     try:
-        # Delay nhỏ để tránh 429 rate limit — 3 workers × 0.3s = ~1 req/100ms/worker
         _t.sleep(0.3)
-        cfg    = {**SCAN_CFG, "force_futures": True}
-        engine = _get_engine(cfg)
-        result = engine(symbol, cfg)
+        cfg     = {**SCAN_CFG, "force_futures": True}
+        engines = _get_engines_for_modes(cfg)
+        results = []
 
-        # Bỏ qua WAIT
-        if result.get("direction") not in ("LONG", "SHORT"):
-            return None
-
-        # Filter R:R tối thiểu
-        rr = result.get("rr", 0)
-        conf = result.get("confidence", "LOW")
-        if conf in ("HIGH", "MEDIUM") and rr < 1.0: return None
-        if conf == "LOW" and rr < 1.0: return None
-
-        # ── Filter J1: Volume 24h USDT tối thiểu $5M ──
-        # Coin volume thấp = thanh khoản kém, dễ bị manipulate pump/dump
-        _vol_usdt = float(sym_info.get("volume_24h", 0))
-        if _vol_usdt < 5_000_000:
-            return None  # bỏ qua coin volume quá thấp
-
-        # Thêm volume từ ticker
-        result["volume_24h"] = sym_info["volume_24h"]
-
-        # fam_analyze lưu market data trong nested "market" dict — flatten ra root cho UI
-        mk = result.get("market", {})
-        result["funding"]     = mk.get("funding")
-        result["funding_str"] = mk.get("funding_pct") or "N/A"
-        result["oi_change"]   = mk.get("oi_change")
-        result["oi_str"]      = mk.get("oi_str") or "N/A"
-        result["atr_ratio"]   = mk.get("atr_ratio")
-
-        return sanitize(result)
-    except Exception as e:
-        err_str = str(e)
-        if "429" in err_str:
-            # Rate limited — đợi và retry 1 lần
-            import time as _t2
-            _t2.sleep(2)
+        for mode_tag, engine_fn in engines:
             try:
-                cfg    = {**SCAN_CFG, "force_futures": True}
-                engine = _get_engine(cfg)
-                result = engine(symbol, cfg)
-                # (tiếp tục xử lý bình thường nếu retry OK)
-            except:
-                pass
+                result = engine_fn(symbol, cfg)
+                processed = _process_result(result, sym_info, mode_tag)
+                if processed:
+                    results.append(processed)
+            except Exception as e:
+                print(f"[SCAN {mode_tag}] {symbol}: {e}")
+
+        # Trả về result tốt nhất (ưu tiên HIGH confidence, rồi RR cao)
+        if not results:
+            return None
+        results.sort(key=lambda r: (
+            0 if r.get("confidence") == "HIGH" else 1,
+            -(r.get("rr") or 0)
+        ))
+        return results[0]
+
+    except Exception as e:
+        if "429" in str(e):
+            import time as _t2; _t2.sleep(2)
         print(f"[SCAN ERROR] {symbol}: {e}")
         return None
 

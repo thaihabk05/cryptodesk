@@ -34,9 +34,10 @@ def _load_persisted_scan() -> dict:
     except Exception:
         pass
     return {}
-from dashboard.fam_engine import fam_analyze
+from dashboard.fam_engine      import fam_analyze
 from dashboard.swing_h1_engine import swing_h1_analyze
-from dashboard.scalp_engine import scalp_analyze
+from dashboard.scalp_engine    import scalp_analyze
+from dashboard.range_engine    import range_analyze
 
 _persisted = _load_persisted_scan()
 scan_state = {
@@ -83,22 +84,40 @@ def _get_engines_for_modes(cfg):
 
 
 def _process_result(result, sym_info, mode_tag):
-    """Xử lý kết quả từ engine: filter, tag, flatten."""
+    """Xử lý kết quả từ engine: filter, tag, flatten — giữ đầy đủ các filter coin rác."""
     if result.get("direction") not in ("LONG", "SHORT"):
         return None
 
-    rr   = result.get("rr", 0)
+    # ── Filter 1: Confidence — bỏ LOW ──
     conf = result.get("confidence", "LOW")
-    if rr < 1.5: return None
-    if conf == "LOW": return None
-
-    _vol_usdt = float(sym_info.get("volume_24h", 0))
-    if _vol_usdt < 5_000_000:
+    if conf == "LOW":
         return None
 
-    # Tag algo source
+    # ── Filter 2: R:R tối thiểu 1.5 ──
+    rr = result.get("rr", 0) or 0
+    if rr < 1.5:
+        return None
+
+    # ── Filter 3: Volume 24h tối thiểu (lấy từ SCAN_CFG) ──
+    _vol_usdt = float(sym_info.get("volume_24h", 0))
+    _min_vol  = float(SCAN_CFG.get("min_vol", 5_000_000))
+    if _vol_usdt < _min_vol:
+        return None
+
+    # ── Filter 4: Coin đang pump/dump quá mạnh 24h → rủi ro cao ──
+    # Trend mode: không vào coin đang pump > 25% hoặc dump > -20% trong 24h
+    # Range mode: được phép (coin đang dao động trong range)
+    if mode_tag != "RANGE_SCALP":
+        chg_24h = float(sym_info.get("price_change_pct", 0) or 0)
+        if chg_24h > 25:
+            return None   # đang pump mạnh — PATCH J trong engine đã block nhưng double-check
+        if chg_24h < -20:
+            return None   # đang dump mạnh — rủi ro tiếp tục rơi
+
+    # ── Tag algo source ──
     result["algo"] = mode_tag
 
+    # ── Flatten market data ──
     result["volume_24h"]  = sym_info["volume_24h"]
     mk = result.get("market", {})
     result["funding"]     = mk.get("funding")
@@ -106,6 +125,10 @@ def _process_result(result, sym_info, mode_tag):
     result["oi_change"]   = mk.get("oi_change")
     result["oi_str"]      = mk.get("oi_str") or "N/A"
     result["atr_ratio"]   = mk.get("atr_ratio")
+
+    # ── D1/H4 bias cho history ──
+    result["d1_bias"] = (result.get("d1") or {}).get("bias", "")
+    result["h4_bias"] = (result.get("h4") or {}).get("bias", "")
 
     return sanitize(result)
 
@@ -144,13 +167,15 @@ def analyze_symbol(sym_info: dict):
         return None
 
 
-def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: str = "SWING_H4"):
+def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: str = "SWING_H4", scan_modes: list = None):
     global scan_state
     with _state_lock:
         if scan_state["running"]:
             print("[SCAN] Đang chạy, bỏ qua lần này")
             return
-        SCAN_CFG["strategy"] = strategy
+        SCAN_CFG["strategy"]   = strategy
+        SCAN_CFG["min_vol"]    = min_vol
+        SCAN_CFG["scan_modes"] = scan_modes or ["TREND"]
         scan_state.update({"running": True, "progress": 0, "results": [],
                            "error": None, "started_at": datetime.now().isoformat(),
                            "finished_at": None, "strategy": strategy})

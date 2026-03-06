@@ -402,6 +402,80 @@ tbody td{padding:11px 12px;vertical-align:middle}
   font-size: 10px; margin-top: 3px; color: var(--muted);
 }
 
+
+/* Range Check Panel */
+.range-panel {
+  margin-top: 10px;
+  background: rgba(167,139,250,.07);
+  border: 1px solid rgba(167,139,250,.25);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 12px;
+}
+.range-panel-title {
+  font-size: 11px; font-weight: 700; color: #a78bfa;
+  letter-spacing: .5px; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.range-row {
+  display: flex; justify-content: space-between;
+  align-items: center; padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.range-row:last-child { border-bottom: none; }
+.range-lbl { color: var(--muted2); font-size: 11px; }
+.range-val { color: var(--text); font-family: var(--mono); font-size: 12px; }
+.range-entry-ready {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(0,200,100,.1); border: 1px solid rgba(0,200,100,.3);
+  color: #4ade80; font-weight: 600; font-size: 12px;
+}
+.range-entry-wait {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(250,200,0,.07); border: 1px solid rgba(250,200,0,.25);
+  color: var(--wait); font-size: 12px;
+}
+.range-entry-block {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,60,60,.08); border: 1px solid rgba(255,60,60,.25);
+  color: var(--short); font-size: 12px;
+}
+.range-zone-box {
+  margin-top: 8px; display: flex; gap: 6px;
+}
+.range-zone {
+  flex: 1; padding: 6px 8px; border-radius: 7px;
+  font-size: 11px; text-align: center;
+}
+.range-zone.long  { background: rgba(0,200,100,.08); border: 1px solid rgba(0,200,100,.25); }
+.range-zone.short { background: rgba(255,60,60,.08);  border: 1px solid rgba(255,60,60,.25); }
+.range-zone .zone-lbl  { color: var(--muted2); font-size: 10px; margin-bottom: 2px; }
+.range-zone .zone-price { color: var(--text); font-family: var(--mono); font-weight: 700; font-size: 12px; }
+.range-override-row {
+  margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.range-override-row input {
+  background: #1a1f35; border: 1px solid #2d3555; border-radius: 6px;
+  color: #e2e8f0; padding: 3px 8px; font-size: 11px; width: 90px; outline: none;
+}
+.range-override-row input:focus { border-color: #a78bfa; }
+.range-bar-wrap {
+  margin: 10px 0 4px; position: relative; height: 20px;
+  background: rgba(255,255,255,.05); border-radius: 10px; overflow: visible;
+}
+.range-bar-fill {
+  position: absolute; height: 100%; border-radius: 10px;
+  background: linear-gradient(90deg, rgba(167,139,250,.2), rgba(167,139,250,.4));
+}
+.range-bar-price {
+  position: absolute; top: -2px; width: 4px; height: 24px;
+  background: #e2e8f0; border-radius: 2px; transform: translateX(-50%);
+}
+.range-bar-label {
+  position: absolute; top: 22px; font-size: 10px; color: var(--muted2);
+  transform: translateX(-50%); white-space: nowrap;
+}
+
 </style>
 </head>
 <body>
@@ -1056,6 +1130,15 @@ function buildCard(d) {
           'onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">'+
           '&#8635;'+
         '</button>' +
+        '<button onclick="event.stopPropagation();checkRange(this,\''+d.symbol+'\')" '+
+          'title="Kiểm tra Range Scalp" '+
+          'style="background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.35);border-radius:6px;'+
+          'color:#a78bfa;cursor:pointer;font-size:11px;padding:2px 8px;line-height:1.6;'+
+          'font-weight:600;transition:all .2s;white-space:nowrap" '+
+          'onmouseover="this.style.background=\'rgba(167,139,250,.25)\'" '+
+          'onmouseout="this.style.background=\'rgba(167,139,250,.12)\'">'+
+          '&#9711; Range'+
+        '</button>' +
         '<button onclick="event.stopPropagation();removeSymbol(\''+d.symbol+'\')" '+
           'title="Xóa khỏi Dashboard" '+
           'style="background:rgba(255,60,60,.1);border:1px solid rgba(255,60,60,.3);border-radius:6px;'+
@@ -1115,6 +1198,7 @@ function buildCard(d) {
     btcWarn + warnHtml +
     '<div class="cond-list">'+conds+'</div>' +
     '<button class="btn-try" data-sym="' + d.symbol + '">🎯 Thử vào lệnh</button>' +
+    '<div id="range-panel-'+d.symbol+'" style="display:none"></div>' +
   '</div>';
 }
 
@@ -3412,6 +3496,210 @@ function addScanToDash(symbol, algo) {
     });
 
   showToast('✅ Đã thêm ' + sym.replace('USDT','') + ' [' + algoToSave + '] vào Dashboard');
+}
+
+
+// ═══════════════════════════════════════════════
+// RANGE CHECK
+// ═══════════════════════════════════════════════
+
+function checkRange(btn, symbol) {
+  var panel = document.getElementById('range-panel-' + symbol);
+  if (!panel) return;
+
+  // Toggle nếu đang mở
+  if (panel.style.display !== 'none' && panel.dataset.loaded === '1') {
+    panel.style.display = 'none';
+    panel.dataset.loaded = '0';
+    btn.style.background = 'rgba(167,139,250,.12)';
+    return;
+  }
+
+  btn.style.background = 'rgba(167,139,250,.3)';
+  panel.style.display  = 'block';
+  panel.innerHTML = '<div style="padding:10px;text-align:center;color:var(--muted2);font-size:12px">' +
+    '<span class="spinner"></span> Đang phân tích range...</div>';
+
+  fetch('/api/range-check/' + symbol)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      panel.dataset.loaded = '1';
+      panel.innerHTML = buildRangePanel(d, symbol);
+    })
+    .catch(function(e){
+      panel.innerHTML = '<div style="color:var(--short);padding:8px;font-size:12px">❌ Lỗi: ' + e + '</div>';
+    });
+}
+
+function buildRangePanel(d, symbol) {
+  if (d.error) {
+    return '<div class="range-panel"><div style="color:var(--short)">❌ ' + d.error + '</div></div>';
+  }
+
+  var price    = d.price      || 0;
+  var rh       = d.range_high || 0;
+  var rl       = d.range_low  || 0;
+  var rangePct = d.range_pct  || 0;
+  var dir      = d.direction  || 'WAIT';
+  var src      = d.range_source === 'manual' ? '✏️ Manual' : '🤖 Auto (swing H4)';
+
+  // Không đang range
+  if (!rh || !rl) {
+    var warns = (d.warnings || []).join('<br>');
+    return '<div class="range-panel">' +
+      '<div class="range-panel-title">🟣 RANGE SCALP</div>' +
+      '<div class="range-entry-block">⚠️ Coin không đang trong range rõ ràng</div>' +
+      (warns ? '<div style="margin-top:8px;color:var(--muted2);font-size:11px">' + warns + '</div>' : '') +
+      buildRangeOverrideRow(symbol, rh, rl) +
+      '</div>';
+  }
+
+  // Tính vị trí price trong range (%)
+  var rangeSize  = rh - rl;
+  var pricePos   = rangeSize > 0 ? (price - rl) / rangeSize * 100 : 50;
+  var bottomZone = rl + rangeSize * 0.15;
+  var topZone    = rh - rangeSize * 0.15;
+
+  // Visual bar
+  var barPricePct = Math.max(2, Math.min(98, pricePos));
+  var barHtml = '<div class="range-bar-wrap">' +
+    '<div class="range-bar-fill" style="left:0;width:100%"></div>' +
+    '<div class="range-bar-price" style="left:' + barPricePct + '%"></div>' +
+    '<div class="range-bar-label" style="left:0;transform:none">$' + fmt(rl) + '</div>' +
+    '<div class="range-bar-label" style="right:0;left:auto;transform:none">$' + fmt(rh) + '</div>' +
+    '<div class="range-bar-label" style="left:' + barPricePct + '%">$' + fmt(price) + '</div>' +
+    '</div>';
+
+  // Entry status
+  var statusHtml = '';
+  if (dir === 'LONG') {
+    statusHtml = '<div class="range-entry-ready">' +
+      '🟢 ĐANG Ở ĐÁY RANGE — CÓ THỂ VÀO LONG<br>' +
+      '<span style="font-weight:400;font-size:11px">' + (d.reversal_note || '') + '</span>' +
+      '</div>';
+  } else if (dir === 'SHORT') {
+    statusHtml = '<div class="range-entry-ready" style="background:rgba(255,60,60,.1);border-color:rgba(255,60,60,.3);color:var(--short)">' +
+      '🔴 ĐANG Ở ĐỈNH RANGE — CÓ THỂ VÀO SHORT<br>' +
+      '<span style="font-weight:400;font-size:11px">' + (d.reversal_note || '') + '</span>' +
+      '</div>';
+  } else {
+    // WAIT — tính khoảng cách về vùng entry
+    var distToBottom = d.dist_to_long  || ((price - bottomZone) / price * 100).toFixed(1);
+    var distToTop    = d.dist_to_short || ((topZone - price)    / price * 100).toFixed(1);
+    statusHtml = '<div class="range-entry-wait">' +
+      '🟡 Giá đang giữa range (' + pricePos.toFixed(0) + '% từ đáy)<br>' +
+      '<span style="font-size:11px;opacity:.85">' +
+        'Cách vùng Long: <b>-' + distToBottom + '%</b> ($' + fmt(bottomZone) + ')' +
+        ' &nbsp;|&nbsp; Cách vùng Short: <b>+' + distToTop + '%</b> ($' + fmt(topZone) + ')' +
+      '</span>' +
+      '</div>';
+  }
+
+  // SL/TP info
+  var slTpHtml = '';
+  if (dir !== 'WAIT' && d.entry) {
+    slTpHtml = '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px">' +
+      '<span style="color:var(--muted2)">Entry:</span> <span style="font-family:var(--mono)">' + fmt(d.entry) + '</span>' +
+      '<span style="color:var(--muted2)">SL:</span> <span style="color:var(--short);font-family:var(--mono)">' + fmt(d.sl) + ' (-' + d.sl_pct + '%)</span>' +
+      '<span style="color:var(--muted2)">TP1:</span> <span style="color:var(--long);font-family:var(--mono)">' + fmt(d.tp1) + ' (+' + d.tp1_pct + '%)</span>' +
+      '<span style="color:var(--muted2)">R:R</span> <span style="color:#a78bfa;font-weight:700">1:' + d.rr + '</span>' +
+      '</div>';
+  }
+
+  return '<div class="range-panel">' +
+    '<div class="range-panel-title">🟣 RANGE SCALP <span style="font-weight:400;color:var(--muted2);font-size:10px">' + src + '</span></div>' +
+
+    // Visual bar
+    barHtml +
+    '<div style="margin-top:18px"></div>' +
+
+    // Timeframe note
+    '<div style="font-size:10px;color:var(--muted2);margin-bottom:8px">' +
+      (d.timeframe_note || 'Range: H1 (2 ngày) | Entry: M15 (4 giờ) | Macro: H4') + '</div>' +
+
+    // Range stats
+    '<div class="range-row"><span class="range-lbl">H1 Range</span>' +
+      '<span class="range-val">$' + fmt(rl) + ' – $' + fmt(rh) + ' (' + rangePct + '%)</span></div>' +
+    '<div class="range-row"><span class="range-lbl">Vùng Long H1 (≤)</span>' +
+      '<span class="range-val" style="color:var(--long)">$' + fmt(bottomZone) + '</span></div>' +
+    '<div class="range-row"><span class="range-lbl">M15 Entry Long</span>' +
+      '<span class="range-val" style="color:var(--long);font-weight:700">$' + fmt(d.m15_entry_long || bottomZone) + '</span></div>' +
+    '<div class="range-row"><span class="range-lbl">Vùng Short H1 (≥)</span>' +
+      '<span class="range-val" style="color:var(--short)">$' + fmt(topZone) + '</span></div>' +
+    '<div class="range-row"><span class="range-lbl">M15 Entry Short</span>' +
+      '<span class="range-val" style="color:var(--short);font-weight:700">$' + fmt(d.m15_entry_short || topZone) + '</span></div>' +
+
+    // Entry zones visual — H1 zone + M15 trigger
+    '<div class="range-zone-box">' +
+      '<div class="range-zone long">' +
+        '<div class="zone-lbl">LONG zone (H1)</div>' +
+        '<div class="zone-price">≤ $' + fmt(bottomZone) + '</div>' +
+        '<div style="font-size:10px;color:var(--muted2);margin-top:3px">M15 trigger: $' + fmt(d.m15_entry_long || bottomZone) + '</div>' +
+      '</div>' +
+      '<div class="range-zone short">' +
+        '<div class="zone-lbl">SHORT zone (H1)</div>' +
+        '<div class="zone-price">≥ $' + fmt(topZone) + '</div>' +
+        '<div style="font-size:10px;color:var(--muted2);margin-top:3px">M15 trigger: $' + fmt(d.m15_entry_short || topZone) + '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // Status
+    statusHtml +
+
+    // SL/TP
+    slTpHtml +
+
+    // Override
+    buildRangeOverrideRow(symbol, rh, rl) +
+  '</div>';
+}
+
+function buildRangeOverrideRow(symbol, currentHigh, currentLow) {
+  var hiVal = currentHigh ? fmt(currentHigh) : '';
+  var loVal = currentLow  ? fmt(currentLow)  : '';
+  return '<div class="range-override-row">' +
+    '<span style="color:var(--muted2);font-size:11px">Override:</span>' +
+    '<input id="ro-hi-' + symbol + '" type="text" placeholder="Đỉnh" value="' + hiVal + '">' +
+    '<input id="ro-lo-' + symbol + '" type="text" placeholder="Đáy"  value="' + loVal + '">' +
+    '<button onclick="saveRangeOverride(\''+symbol+'\')" ' +
+      'style="background:rgba(167,139,250,.2);border:1px solid rgba(167,139,250,.4);' +
+      'color:#a78bfa;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">Lưu</button>' +
+    '<button onclick="clearRangeOverride(\''+symbol+'\')" ' +
+      'style="background:transparent;border:1px solid var(--border);' +
+      'color:var(--muted2);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">Auto</button>' +
+  '</div>';
+}
+
+function saveRangeOverride(symbol) {
+  var hi = parseFloat(document.getElementById('ro-hi-'+symbol).value);
+  var lo = parseFloat(document.getElementById('ro-lo-'+symbol).value);
+  if (!hi || !lo || lo >= hi) {
+    showToast('⚠️ Đỉnh/Đáy không hợp lệ'); return;
+  }
+  fetch('/api/config/range-override', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: symbol, range_high: hi, range_low: lo})
+  }).then(function(){ 
+    showToast('✅ Đã lưu range tay cho ' + symbol.replace('USDT',''));
+    // Re-check với range mới
+    var btn = document.querySelector('[onclick*="checkRange"][onclick*="' + symbol + '"]');
+    var panel = document.getElementById('range-panel-'+symbol);
+    if (panel) { panel.dataset.loaded = '0'; }
+    checkRange(btn || {style:{background:''}}, symbol);
+  });
+}
+
+function clearRangeOverride(symbol) {
+  fetch('/api/config/range-override', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: symbol, clear: true})
+  }).then(function(){
+    showToast('↩️ ' + symbol.replace('USDT','') + ' về Auto detect');
+    var panel = document.getElementById('range-panel-'+symbol);
+    if (panel) { panel.dataset.loaded = '0'; checkRange({style:{background:''}}, symbol); }
+  });
 }
 
 

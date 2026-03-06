@@ -2,52 +2,67 @@
 Range Scalp Engine — CryptoDesk
 Phát hiện coin đang sideway + signal khi giá chạm biên range
 """
-from dashboard.indicators import prepare
-from dashboard.binance    import fetch_klines, fetch_funding_rate, fetch_oi_change, fetch_btc_context
+from core.indicators import prepare
+from core.binance    import fetch_klines, fetch_funding_rate, fetch_oi_change, fetch_btc_context
+from core.utils      import smart_round
 
 import numpy as np
-
-def smart_round(v):
-    if v == 0: return 0
-    from math import floor, log10
-    mag = floor(log10(abs(v)))
-    digits = max(2, 2 - mag)
-    return round(v, digits)
 
 # ─────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────
 
-def _detect_range(df_h4, lookback=20):
+def _detect_range(df_h1, df_m15, df_h4, lookback_h1=48, lookback_m15=60):
     """
-    Tự động phát hiện range từ swing H4.
-    Trả về (range_high, range_low, range_pct, is_ranging)
+    Detect range dùng H1 (biên range) + M15 (entry precision).
+    - H1 lookback 48 nến = 2 ngày → xác định vùng tích lũy gần nhất
+    - M15 lookback 60 nến = 15 giờ → tìm swing high/low precision cho entry
+    - H4 chỉ dùng để check macro context (coin có đang trending không)
     """
-    recent = df_h4.iloc[-lookback:]
-    highs  = recent["high"].astype(float)
-    lows   = recent["low"].astype(float)
+    # ── Macro check từ H4 — nếu H4 đang trend mạnh thì không range scalp ──
+    h4_recent = df_h4.iloc[-20:]
+    h4_atr_mean = float(h4_recent["atr"].mean()) if "atr" in h4_recent.columns else 0
+    h4_atr_last = float(df_h4["atr"].iloc[-1])   if "atr" in df_h4.columns else 0
+    h4_atr_ratio = h4_atr_last / h4_atr_mean if h4_atr_mean > 0 else 1
 
-    range_high = float(highs.max())
-    range_low  = float(lows.min())
+    # H4 ATR đang spike mạnh → coin đang breakout, không range
+    if h4_atr_ratio > 2.0:
+        price = float(df_h1["close"].iloc[-1])
+        return 0, 0, 0, False, h4_atr_ratio
+
+    # ── Range biên từ H1 (2 ngày gần nhất) ──
+    h1_recent  = df_h1.iloc[-lookback_h1:]
+    h1_highs   = h1_recent["high"].astype(float)
+    h1_lows    = h1_recent["low"].astype(float)
+
+    # Loại bỏ outlier spike (top/bottom 5%)
+    h1_high_90 = float(h1_highs.quantile(0.95))
+    h1_low_10  = float(h1_lows.quantile(0.05))
+
+    range_high = h1_high_90
+    range_low  = h1_low_10
     range_pct  = (range_high - range_low) / range_low * 100 if range_low > 0 else 0
 
-    # ATR trung bình
-    atr_mean  = float(recent["atr"].mean()) if "atr" in recent.columns else 0
-    atr_last  = float(df_h4["atr"].iloc[-1]) if "atr" in df_h4.columns else 0
-    atr_ratio = atr_last / atr_mean if atr_mean > 0 else 1
+    price = float(df_h1["close"].iloc[-1])
 
-    # Coin được coi là ranging nếu:
-    # 1. Range % đủ nhỏ (< 25% — không phải trend mạnh)
-    # 2. ATR không đang spike
-    # 3. Giá không cách range_high/low quá xa
-    price = float(df_h4["close"].iloc[-1])
+    # ── Entry zone precision từ M15 (15 giờ gần nhất) ──
+    m15_recent    = df_m15.iloc[-lookback_m15:]
+    m15_high      = float(m15_recent["high"].max())
+    m15_low       = float(m15_recent["low"].min())
+
+    # ATR H1 để check volatility
+    h1_atr_mean = float(h1_recent["atr"].mean()) if "atr" in h1_recent.columns else 0
+    h1_atr_last = float(df_h1["atr"].iloc[-1])   if "atr" in df_h1.columns else 0
+    atr_ratio   = h1_atr_last / h1_atr_mean if h1_atr_mean > 0 else 1
+
     price_in_range = range_low <= price <= range_high
 
     is_ranging = (
-        range_pct >= 2.0          # range đủ rộng để có lãi
-        and range_pct <= 30.0     # không phải swing quá lớn
-        and atr_ratio < 1.8       # ATR không spike bất thường
+        range_pct >= 1.5          # H1 range đủ rộng (scalp cần ít nhất 1.5%)
+        and range_pct <= 20.0     # không phải swing quá lớn
+        and atr_ratio < 1.8       # H1 ATR không spike
         and price_in_range
+        and h4_atr_ratio < 2.0    # H4 không đang breakout
     )
 
     return range_high, range_low, round(range_pct, 2), is_ranging, round(atr_ratio, 2)
@@ -126,11 +141,12 @@ def _btc_allows(btc_ctx, direction):
 def range_analyze(symbol: str, cfg: dict) -> dict:
     ff = bool(cfg.get("force_futures", False))
 
-    df_d1 = prepare(fetch_klines(symbol, "1d",  60, force_futures=ff))
-    df_h4 = prepare(fetch_klines(symbol, "4h", 120, force_futures=ff))
-    df_h1 = prepare(fetch_klines(symbol, "1h",  80, force_futures=ff))
+    df_d1  = prepare(fetch_klines(symbol, "1d",  60, force_futures=ff))
+    df_h4  = prepare(fetch_klines(symbol, "4h",  80, force_futures=ff))
+    df_h1  = prepare(fetch_klines(symbol, "1h", 120, force_futures=ff))
+    df_m15 = prepare(fetch_klines(symbol, "15m", 96, force_futures=ff))
 
-    for df in [df_d1, df_h4, df_h1]:
+    for df in [df_d1, df_h4, df_h1, df_m15]:
         if len(df) < 10:
             raise ValueError(f"Không đủ data cho {symbol}")
 
@@ -149,7 +165,7 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         atr_ratio  = 1.0
         range_source = "manual"
     else:
-        range_high, range_low, range_pct, is_ranging, atr_ratio = _detect_range(df_h4)
+        range_high, range_low, range_pct, is_ranging, atr_ratio = _detect_range(df_h1, df_m15, df_h4)
         range_source = "auto"
 
     # ── Không phải ranging → WAIT ──
@@ -169,10 +185,18 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         }
 
     # ── Xác định vị trí trong range ──
-    range_size   = range_high - range_low
-    zone_pct     = 0.15   # 15% biên trên/dưới = entry zone
-    bottom_zone  = range_low  + range_size * zone_pct
-    top_zone     = range_high - range_size * zone_pct
+    # Dùng M15 để tính entry zone chính xác hơn (swing M15 gần nhất)
+    range_size = range_high - range_low
+
+    # Entry zone: 20% biên (H1 range thường hẹp hơn H4 nên cần zone rộng hơn chút)
+    zone_pct    = 0.20
+    bottom_zone = range_low  + range_size * zone_pct
+    top_zone    = range_high - range_size * zone_pct
+
+    # Precision: dùng M15 swing low/high trong 4 giờ gần nhất làm entry trigger
+    m15_4h      = df_m15.iloc[-16:]   # 16 nến M15 = 4 tiếng
+    m15_entry_long  = float(m15_4h["low"].min())    # swing low M15 gần nhất
+    m15_entry_short = float(m15_4h["high"].max())   # swing high M15 gần nhất
 
     at_bottom = price <= bottom_zone
     at_top    = price >= top_zone
@@ -183,19 +207,27 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         direction = "SHORT"
     else:
         # Giữa range — không vào
-        mid_pct = (price - range_low) / range_size * 100
+        mid_pct     = (price - range_low) / range_size * 100
+        dist_to_long  = round((price - bottom_zone) / price * 100, 1)
+        dist_to_short = round((top_zone - price)    / price * 100, 1)
         return {
-            "symbol":     symbol,
-            "strategy":   "RANGE_SCALP",
-            "direction":  "WAIT",
-            "confidence": "LOW",
-            "price":      smart_round(price),
-            "range_high": smart_round(range_high),
-            "range_low":  smart_round(range_low),
-            "range_pct":  range_pct,
-            "range_source": range_source,
-            "warnings":   ["Giá đang giữa range ({:.0f}% từ đáy) — chờ về biên".format(mid_pct)],
-            "conditions": ["Range {:.1f}%".format(range_pct)],
+            "symbol":        symbol,
+            "strategy":      "RANGE_SCALP",
+            "direction":     "WAIT",
+            "confidence":    "LOW",
+            "price":         smart_round(price),
+            "range_high":    smart_round(range_high),
+            "range_low":     smart_round(range_low),
+            "range_pct":     range_pct,
+            "range_source":  range_source,
+            "bottom_zone":   smart_round(bottom_zone),
+            "top_zone":      smart_round(top_zone),
+            "m15_entry_long":  smart_round(m15_entry_long),
+            "m15_entry_short": smart_round(m15_entry_short),
+            "dist_to_long":  dist_to_long,
+            "dist_to_short": dist_to_short,
+            "warnings":      ["Giá đang giữa range ({:.0f}% từ đáy) — cách vùng Long -{:.1f}%, cách vùng Short +{:.1f}%".format(mid_pct, dist_to_long, dist_to_short)],
+            "conditions":    ["H1 Range {:.1f}%".format(range_pct)],
         }
 
     # ── BTC context filter ──
@@ -310,5 +342,10 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
             "oi_str":      "{:+.2f}%".format(oi_change) if oi_change is not None else "N/A",
             "atr_ratio":   atr_ratio,
         },
-        "btc_context": btc_ctx,
+        "btc_context":     btc_ctx,
+        "bottom_zone":    smart_round(bottom_zone),
+        "top_zone":       smart_round(top_zone),
+        "m15_entry_long":  smart_round(m15_entry_long),
+        "m15_entry_short": smart_round(m15_entry_short),
+        "timeframe_note": "Range: H1 (2 ngày) | Entry zone: M15 (4 giờ) | Macro: H4",
     }

@@ -218,12 +218,21 @@ def _send_high_alert(result: dict, token: str, chat_id: str):
         "SL: " + str(result.get("sl","")) + " (-" + str(result.get("sl_pct","")) + "%)",
         "TP1: " + str(result.get("tp1","")) + " (+" + str(result.get("tp1_pct","")) + "%) | TP2: " + str(result.get("tp2","")),
         "--------------------",
-        "D1: " + str(result.get("d1",{}).get("bias","")) + " | H4: " + str(result.get("h4",{}).get("bias","")),
+        "D1: " + str(result.get("d1_bias") or result.get("d1",{}).get("bias","?")) +
+        " | H4: " + str(result.get("h4_bias") or result.get("h4",{}).get("bias","?")),
         "Funding: " + funding_str + " | OI: " + oi_str + " | ATR: " + atr_str,
         "--------------------",
         "Checklist:",
         check_lines.rstrip(),
     ]
+
+    # Thêm warnings nếu có (quan trọng để anh biết tại sao)
+    warns = result.get("warnings", [])
+    if warns:
+        lines.append("--------------------")
+        lines.append("Canh bao:")
+        for w in warns[:3]:
+            lines.append("  " + str(w))
     msg = chr(10).join(lines)
     send_telegram(token, chat_id, msg)
 
@@ -714,6 +723,7 @@ def run_backtest():
     """Backtest signals trong history, hỗ trợ filter theo khoảng thời gian."""
     from datetime import datetime, timezone, timedelta
     import pandas as pd
+    import concurrent.futures
 
     data        = request.json or {}
     conf_filter  = data.get("confidence",   "HIGH")   # HIGH | ALL
@@ -750,11 +760,19 @@ def run_backtest():
     if not signals:
         return jsonify({"results": [], "summary": {}, "error": "Không có signal phù hợp"})
 
-    # Backtest từng signal
+    # Backtest parallel — tránh timeout khi có nhiều signal
     results = []
-    for sig in signals:
-        r = backtest_signal(sig)
-        results.append(r)
+    max_signals = 50  # giới hạn 50 signal để tránh timeout
+    signals = signals[:max_signals]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(backtest_signal, sig): sig for sig in signals}
+        for fut in concurrent.futures.as_completed(futures, timeout=110):
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                sig = futures[fut]
+                results.append({**sig, "bt_result": "ERROR", "bt_note": str(e),
+                                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None})
 
     # Summary
     wins    = [r for r in results if r["bt_result"] == "WIN"]

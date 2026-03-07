@@ -1,7 +1,6 @@
 {
   "symbols": [
-    "STABLEUSDT",
-    "VIRTUALUSDT",
+    "PTBUSDT",
     "BTCUSDT",
     "ETHUSDT",
     "ARBUSDT",
@@ -9,7 +8,8 @@
     "HUMAUSDT"
   ],
   "watchlist_algos": {
-    "DYDXUSDT": "RANGE_SCALP"
+    "DYDXUSDT": "RANGE_SCALP",
+    "BTRUSDT": "TREND"
   },
   "scan_modes": [
     "TREND",

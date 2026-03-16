@@ -4740,13 +4740,17 @@ function buildRangePanel(d, symbol) {
 
   // Visual bar
   var barPricePct = Math.max(2, Math.min(98, pricePos));
-  var barHtml = '<div class="range-bar-wrap">' +
-    '<div class="range-bar-fill" style="left:0;width:100%"></div>' +
-    '<div class="range-bar-price" style="left:' + barPricePct + '%"></div>' +
-    '<div class="range-bar-label" style="left:0;transform:none">$' + fmt(rl) + '</div>' +
-    '<div class="range-bar-label" style="right:0;left:auto;transform:none">$' + fmt(rh) + '</div>' +
-    '<div class="range-bar-label" style="left:' + barPricePct + '%">$' + fmt(price) + '</div>' +
-    '</div>';
+  var barHtml = '<div style="margin:12px 0 28px;position:relative">' +
+    '<div style="position:relative;height:20px;background:rgba(128,128,128,.15);border-radius:10px;overflow:visible">' +
+      '<div style="position:absolute;height:100%;width:100%;border-radius:10px;background:linear-gradient(90deg,rgba(167,139,250,.2),rgba(167,139,250,.4))"></div>' +
+      '<div style="position:absolute;top:-3px;width:4px;height:26px;background:#a78bfa;border-radius:2px;transform:translateX(-50%);left:' + barPricePct + '%;z-index:2"></div>' +
+    '</div>' +
+    '<div style="position:relative;height:18px;margin-top:4px">' +
+      '<span style="position:absolute;left:0;font-size:10px;color:var(--color-text-secondary)">$' + fmt(rl) + '</span>' +
+      '<span style="position:absolute;left:' + barPricePct + '%;transform:translateX(-50%);font-size:10px;color:#a78bfa;font-weight:500;white-space:nowrap">$' + fmt(price) + '</span>' +
+      '<span style="position:absolute;right:0;font-size:10px;color:var(--color-text-secondary)">$' + fmt(rh) + '</span>' +
+    '</div>' +
+  '</div>';
 
   // Entry status
   var statusHtml = '';
@@ -4852,16 +4856,16 @@ function buildRangePanel(d, symbol) {
       if (!ms && !bv) return '';
 
       var alignColors = {
-        'BULLISH':   ['#EAF3DE','#3B6D11','#1D9E75'],
-        'WEAK_BULL': ['#FAEEDA','#633806','#BA7517'],
-        'FLAT':      ['rgba(99,102,241,.1)','#3C3489','#534AB7'],
-        'WEAK_BEAR': ['#FAEEDA','#633806','#BA7517'],
-        'BEARISH':   ['#FCEBEB','#A32D2D','#E24B4A'],
+        'BULLISH':   ['rgba(29,158,117,.12)','#1D9E75','#1D9E75'],
+        'WEAK_BULL': ['rgba(29,158,117,.07)','#1D9E75','#0F6E56'],
+        'FLAT':      ['rgba(99,102,241,.1)', '#534AB7','#534AB7'],
+        'WEAK_BEAR': ['rgba(226,75,74,.07)', '#E24B4A','#A32D2D'],
+        'BEARISH':   ['rgba(226,75,74,.12)', '#E24B4A','#E24B4A'],
       };
       var verdictColors = {
-        'LONG_ONLY':  ['rgba(29,158,117,.12)','#1D9E75','#0F6E56'],
-        'SHORT_ONLY': ['rgba(226,75,74,.12)','#E24B4A','#A32D2D'],
-        'BOTH_OK':    ['rgba(99,102,241,.1)','#534AB7','#3C3489'],
+        'LONG_ONLY':  ['rgba(29,158,117,.12)','rgba(29,158,117,.4)','#1D9E75'],
+        'SHORT_ONLY': ['rgba(226,75,74,.12)', 'rgba(226,75,74,.4)', '#E24B4A'],
+        'BOTH_OK':    ['rgba(99,102,241,.1)', 'rgba(99,102,241,.4)','#534AB7'],
       };
       var volColors = {
         'BULL_DOMINANT':'#1D9E75','RISING_BULL':'#1D9E75',
@@ -4889,10 +4893,10 @@ function buildRangePanel(d, symbol) {
       if (ms && ms.ema_align) {
         var ac = alignColors[ms.ema_align] || alignColors['FLAT'];
         html += '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">';
-        html += '<div style="flex:1;min-width:130px;background:'+ac[0]+';border-radius:5px;padding:7px 10px">' +
+        html += '<div style="flex:1;min-width:130px;background:'+ac[0]+';border:0.5px solid '+ac[1]+'55;border-radius:5px;padding:7px 10px">' +
           '<div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:3px">EMA Alignment H1</div>' +
-          '<div style="font-size:12px;font-weight:500;color:'+ac[2]+'">'+ms.ema_align+'</div>' +
-          '<div style="font-size:10px;color:var(--color-text-secondary);margin-top:2px">'+ms.ema_note+'</div>' +
+          '<div style="font-size:13px;font-weight:500;color:'+ac[2]+'">'+ms.ema_align+'</div>' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-top:3px;line-height:1.4">'+ms.ema_note+'</div>' +
           '</div>';
         html += '<div style="flex:1;min-width:130px;background:var(--color-background-secondary);border-radius:5px;padding:7px 10px">' +
           '<div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:4px">EMA Values</div>';

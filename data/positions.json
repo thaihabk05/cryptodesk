@@ -1,0 +1,13 @@
+[
+  {
+    "id": 1773686460420,
+    "saved_at": "2026-03-17T01:41:31.137563+07:00",
+    "direction": "LONG",
+    "entry": 0.107,
+    "base_mode": "atr",
+    "base_value": 2,
+    "margin": 780,
+    "leverage": 20,
+    "symbol": "ARBUSDT"
+  }
+]

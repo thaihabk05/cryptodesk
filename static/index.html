@@ -476,6 +476,12 @@ tbody td{padding:11px 12px;vertical-align:middle}
   transform: translateX(-50%); white-space: nowrap;
 }
 
+
+  .btc-bias-box { padding:8px 10px; border-radius:var(--border-radius-md);
+    background:var(--color-background-primary); border:0.5px solid var(--color-border-tertiary); }
+  .btc-bias-box .tf-label { font-size:10px; color:var(--color-text-secondary); margin-bottom:2px; }
+  .btc-bias-box .bias-val  { font-size:13px; font-weight:500; }
+  .btc-bias-box .bias-signs { font-size:10px; color:var(--color-text-secondary); margin-top:2px; }
 </style>
 </head>
 <body>
@@ -489,10 +495,11 @@ tbody td{padding:11px 12px;vertical-align:middle}
     </div>
   </div>
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('dashboard')">&#9679; Dashboard</button>
-    <button class="tab" onclick="switchTab('scanner')">&#9906; Market Scan</button>
-    <button class="tab" onclick="switchTab('history')">&#128203; History</button>
-    <button class="tab" onclick="switchTab('backtest')">&#128200; Backtest</button>
+    <button class="tab active" onclick="switchTab('dashboard')" data-tab="dashboard">&#9679; Dashboard</button>
+    <button class="tab" onclick="switchTab('scanner')" data-tab="scanner">&#9906; Market Scan</button>
+    <button class="tab" onclick="switchTab('history')" data-tab="history">&#128203; History</button>
+    <button class="tab" onclick="switchTab('backtest')" data-tab="backtest">&#128200; Backtest</button>
+    <button class="tab" onclick="switchTab('position')" data-tab="position">&#9654; Position</button>
   </div>
   <div class="header-right">
     <div class="status-dot" id="statusDot"></div>
@@ -532,7 +539,32 @@ tbody td{padding:11px 12px;vertical-align:middle}
       </select>
     </div>
     <span style="font-size:11px;color:var(--muted);margin-left:auto" id="lastScanTime"></span>
+    <button onclick="toggleBtcTrend()" style="font-size:11px;padding:4px 10px;border:0.5px solid var(--color-border-secondary);
+            border-radius:var(--border-radius-md);background:transparent;color:var(--color-text-secondary);cursor:pointer;margin-left:8px"
+            id="btnBtcTrend">₿ BTC Trend</button>
   </div>
+  <!-- BTC Trend Panel -->
+  <div id="btcTrendPanel" style="margin-bottom:14px;display:none">
+    <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr 1fr;gap:10px;align-items:center;
+                background:var(--color-background-secondary);border-radius:var(--border-radius-lg);
+                padding:12px 16px;border:0.5px solid var(--color-border-tertiary)">
+      <div id="btcPriceBox" style="padding-right:14px;border-right:0.5px solid var(--color-border-tertiary)">
+        <div style="font-size:11px;color:var(--color-text-secondary)">BTC</div>
+        <div id="btcPriceVal" style="font-size:18px;font-weight:500">--</div>
+        <div id="btcChgVal" style="font-size:11px"></div>
+      </div>
+      <div id="btcShort"  class="btc-bias-box"></div>
+      <div id="btcMedium" class="btc-bias-box"></div>
+      <div id="btcLong2"  class="btc-bias-box"></div>
+      <div id="btcOverall" style="padding:8px 12px;border-radius:var(--border-radius-md);
+                                   background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);
+                                   text-align:center">
+        <div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:3px">Gợi ý altcoin</div>
+        <div id="btcOverallVal" style="font-size:12px;font-weight:500">--</div>
+      </div>
+    </div>
+  </div>
+
   <div class="chips" id="chips"></div>
   <div class="cards-grid" id="cardsGrid">
     <div class="empty-state">
@@ -692,6 +724,96 @@ tbody td{padding:11px 12px;vertical-align:middle}
 </div>
 
 <!-- ══════════════ BACKTEST PAGE ══════════════ -->
+<div class="page" id="page-position">
+  <div style="max-width:680px;margin:0 auto;padding:16px">
+
+    <div style="background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:16px 18px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em">Thông tin lệnh đang mở</div>
+
+      <!-- Direction -->
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button id="posBtnLong" onclick="posSetDir('LONG')"
+          style="flex:1;padding:10px;border-radius:var(--border-radius-md);border:0.5px solid #3B6D11;background:#EAF3DE;color:#27500A;font-size:14px;font-weight:500;cursor:pointer">Long</button>
+        <button id="posBtnShort" onclick="posSetDir('SHORT')"
+          style="flex:1;padding:10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);font-size:14px;font-weight:500;cursor:pointer">Short</button>
+      </div>
+
+      <!-- Entry + Symbol + Margin + Lev -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px">Entry price</div>
+          <input type="number" id="posEntry" placeholder="0.1002" step="any" style="width:100%">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px">Symbol</div>
+          <input type="text" id="posSymbol" placeholder="ARBUSDT" style="width:100%;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px">Margin (USDT)</div>
+          <input type="number" id="posMargin" placeholder="780" step="any" style="width:100%">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px">Đòn bẩy</div>
+          <input type="number" id="posLev" placeholder="20" min="1" max="125" style="width:100%">
+        </div>
+      </div>
+
+      <!-- Base leg cho Fibo -->
+      <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:8px">Cơ sở tính Fibo TP</div>
+        <div style="display:flex;gap:6px;margin-bottom:10px" id="posBaseModeRow">
+          <button id="posModePct" onclick="posSetMode('pct')"
+            style="flex:1;padding:7px;border-radius:var(--border-radius-md);border:0.5px solid #185FA5;background:#E6F1FB;color:#0C447C;font-size:12px;font-weight:500;cursor:pointer">
+            % từ entry
+          </button>
+          <button id="posModeAtr" onclick="posSetMode('atr')"
+            style="flex:1;padding:7px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);font-size:12px;font-weight:500;cursor:pointer">
+            ATR H1 (tự động)
+          </button>
+          <button id="posModeSl" onclick="posSetMode('sl')"
+            style="flex:1;padding:7px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);font-size:12px;font-weight:500;cursor:pointer">
+            Nhập SL tay
+          </button>
+        </div>
+        <!-- Pct input -->
+        <div id="posInputPct">
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="number" id="posBasePct" value="2" min="0.1" max="30" step="0.1" style="width:80px">
+            <span style="font-size:13px;color:var(--color-text-secondary)">% từ entry → Fibo base leg</span>
+          </div>
+        </div>
+        <!-- ATR info -->
+        <div id="posInputAtr" style="display:none">
+          <span style="font-size:12px;color:var(--color-text-secondary)">ATR H1 sẽ được fetch tự động từ Symbol khi phân tích</span>
+        </div>
+        <!-- SL input -->
+        <div id="posInputSl" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="number" id="posSlPrice" placeholder="0.100" step="any" style="width:140px">
+            <span style="font-size:12px;color:var(--color-text-secondary)">SL price (tùy chọn)</span>
+          </div>
+        </div>
+      </div>
+
+      <button onclick="posAnalyze()" id="posAnalyzeBtn"
+        style="width:100%;padding:12px;border-radius:var(--border-radius-md);background:#1D9E75;border:none;color:#EAF3DE;font-size:14px;font-weight:500;cursor:pointer">
+        &#9654; Phân tích ngay (BTC realtime)
+      </button>
+    </div>
+
+    <div id="posResults" style="display:none"></div>
+
+    <!-- Saved positions -->
+    <div id="posSavedWrap" style="display:none;margin-top:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.04em">Lệnh đã lưu</div>
+        <button onclick="posClearAll()" style="font-size:11px;padding:3px 10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);cursor:pointer">Xóa tất cả</button>
+      </div>
+      <div id="posSavedList"></div>
+    </div>
+  </div>
+</div>
+
 <div class="page" id="page-backtest">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
     <div>
@@ -881,6 +1003,662 @@ tbody td{padding:11px 12px;vertical-align:middle}
   </div>
 </div>
 
+
+
+<!-- ═══════════════════════════════════════════════
+     POSITION SIZING MODAL — Thu vao lenh
+     ═══════════════════════════════════════════════ -->
+<div class="ps-overlay" id="psOverlay">
+  <div class="ps-modal">
+
+    <div class="ps-header">
+      <div class="ps-header-left">
+        <div class="ps-title" id="psTitle">---</div>
+        <div class="ps-dir" id="psDirBadge">LONG</div>
+        <div class="ps-price" id="psCurrentPrice"></div>
+      </div>
+      <button class="ps-close" id="psCloseBtn">&#10005;</button>
+    </div>
+
+    <div class="ps-body">
+
+      <!-- 1. Von & Risk -->
+      <div class="ps-section">Vốn &amp; Rủi ro</div>
+      <div class="ps-grid2">
+        <div class="ps-field">
+          <div class="ps-label">Margin bỏ vào lệnh này <em>USDT</em></div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psCapital" type="number" placeholder="300" min="0">
+            <span class="ps-unit">$</span>
+          </div>
+          <div class="ps-hint" id="psCapHint">Tiền ký quỹ thực tế · Notional = Margin × Đòn bẩy</div>
+        </div>
+        <div class="ps-field">
+          <div class="ps-label">Tổng tài khoản <em>để tính % risk</em></div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psAccount" type="number" placeholder="10000" min="0">
+            <span class="ps-unit">$</span>
+          </div>
+          <div class="ps-hint" id="psRiskHint">Nhập để xem lệnh này chiếm % tài khoản</div>
+        </div>
+      </div>
+
+      <!-- 2. Don bay -->
+      <div class="ps-section">Đòn bẩy</div>
+      <div class="ps-lev-grid" id="psLevGrid"></div>
+      <div class="ps-grid2" style="margin-top:10px">
+        <div class="ps-field">
+          <div class="ps-label">Đòn bẩy tùy chỉnh</div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psLevCustom" type="number" min="1" max="125" placeholder="Tự nhập...">
+            <span class="ps-unit">x</span>
+          </div>
+          <div class="ps-hint" id="psNotionalHint">Notional = Margin × Đòn bẩy</div>
+        </div>
+        <div class="ps-field">
+          <div class="ps-label">Số lệnh DCA <em>1–5 lệnh</em></div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psDCA" type="number" value="1" min="1" max="5">
+            <span class="ps-unit">lệnh</span>
+          </div>
+          <div class="ps-hint">Chia nhỏ để giảm slippage &amp; rủi ro entry</div>
+        </div>
+      </div>
+
+      <!-- 3. Entry / SL / TP -->
+      <div class="ps-section">Entry · SL · TP <span style="font-size:9px;color:var(--accent);text-transform:none;letter-spacing:0;margin-left:4px;font-weight:400">✎ có thể sửa</span></div>
+
+      <!-- Entry selector: Now vs Optimal -->
+      <div id="psEntrySelector" style="display:none;gap:8px;margin-bottom:12px"></div>
+
+      <div class="ps-grid4">
+        <div class="ps-field">
+          <div class="ps-label" id="psEntryLabel">Entry</div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psEntry" type="number" step="any">
+            <span class="ps-unit">$</span>
+          </div>
+          <div class="ps-hint" id="psEntryHint"></div>
+        </div>
+        <div class="ps-field">
+          <div class="ps-label">Stop Loss</div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psSL" type="number" step="any">
+            <span class="ps-unit">$</span>
+          </div>
+          <div class="ps-hint" id="psSLHint" style="color:var(--short)"></div>
+        </div>
+        <div class="ps-field">
+          <div class="ps-label">Take Profit 1</div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psTP1" type="number" step="any">
+            <span class="ps-unit">$</span>
+          </div>
+          <div class="ps-hint" id="psTP1Hint" style="color:var(--long)"></div>
+        </div>
+        <div class="ps-field">
+          <div class="ps-label">Take Profit 2</div>
+          <div class="ps-input-wrap">
+            <input class="ps-input" id="psTP2" type="number" step="any">
+            <span class="ps-unit">$</span>
+          </div>
+          <div class="ps-hint" id="psTP2Hint" style="color:rgba(0,230,118,.6)"></div>
+        </div>
+      </div>
+
+      <!-- 4. Ke hoach lenh -->
+      <div class="ps-section">Kế hoạch vào lệnh</div>
+      <div>
+        <div class="ps-order-header">
+          <div>#</div><div>Entry</div><div>% Vốn</div><div>Margin ($)</div><div>Size (coin)</div><div>Notional</div>
+        </div>
+        <div id="psOrderRows" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+          <div style="padding:14px;text-align:center;color:var(--muted);font-size:12px">Nhập vốn và SL để hiển thị kế hoạch</div>
+        </div>
+        <div class="ps-hint" style="text-align:center;margin-top:6px" id="psAvgNote"></div>
+      </div>
+
+      <!-- 5. Risk meter -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+          <div class="ps-label">Risk Meter</div>
+          <div style="font-size:11px;font-weight:700" id="psRiskMeterLabel"></div>
+        </div>
+        <div class="ps-risk-bar"><div class="ps-risk-fill" id="psRiskFill" style="width:0%"></div></div>
+        <div class="ps-risk-labels"><span>Thấp (0%)</span><span>Vừa (2%)</span><span>Cao (5%+)</span></div>
+      </div>
+
+      <!-- 6. PnL du kien -->
+      <div class="ps-section">Dự kiến kết quả</div>
+      <div class="ps-pnl-grid">
+        <div class="ps-pnl-card">
+          <div class="ps-pnl-label">Margin (ký quỹ)</div>
+          <div class="ps-pnl-val" id="psTotalMargin">--</div>
+          <div class="ps-pnl-sub" id="psNotionalSub">notional: --</div>
+        </div>
+        <div class="ps-pnl-card">
+          <div class="ps-pnl-label">Lãi nếu hit TP1</div>
+          <div class="ps-pnl-val" style="color:var(--long)" id="psProfit">--</div>
+          <div class="ps-pnl-sub" id="psProfitR"></div>
+        </div>
+        <div class="ps-pnl-card">
+          <div class="ps-pnl-label">Lỗ nếu hit SL</div>
+          <div class="ps-pnl-val" style="color:var(--short)" id="psLoss">--</div>
+          <div class="ps-pnl-sub" id="psLossPct"></div>
+        </div>
+        <div class="ps-pnl-card">
+          <div class="ps-pnl-label">R:R thực tế</div>
+          <div class="ps-pnl-val" id="psRRActual">--</div>
+          <div class="ps-pnl-sub" id="psRRQual"></div>
+        </div>
+      </div>
+
+      <!-- 7. Liq warning -->
+      <div id="psLiqBox"></div>
+
+      <!-- 8. Tips -->
+      <div class="ps-tips" id="psTips">Nhập thông tin để nhận gợi ý cụ thể...</div>
+
+    </div><!-- /.ps-body -->
+
+    <div class="ps-footer">
+      <button class="btn" id="psFootClose">Đóng</button>
+      <button class="btn primary" id="psCopyBtn">📋 Copy kế hoạch</button>
+    </div>
+
+  </div><!-- /.ps-modal -->
+</div><!-- /.ps-overlay -->
+
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoDesk — FAM Trading</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#05080f;--bg2:#0a0f1a;--bg3:#0f1623;--bg4:#141d2e;
+  --border:#1a2744;--border2:#243050;
+  --accent:#00c8ff;--accent2:#0088cc;
+  --long:#00e676;--long2:#00a854;
+  --short:#ff3d5a;--short2:#cc2040;
+  --wait:#ffb300;--warn:#ff6d00;
+  --text:#dce8ff;--muted:#7a96b8;--muted2:#9ab0cc;
+  --mono:'JetBrains Mono',monospace;
+  --font:'Space Grotesk',sans-serif;
+  --card-radius:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh;overflow-x:hidden}
+
+/* ── HEADER ── */
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 24px;border-bottom:1px solid var(--border);
+  background:rgba(5,8,15,.95);backdrop-filter:blur(12px);
+  position:sticky;top:0;z-index:100;
+}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-icon{width:28px;height:28px;border-radius:6px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#000}
+.logo-text{font-size:16px;font-weight:800;letter-spacing:-.3px}
+.logo-text span{color:var(--accent)}
+.logo-sub{font-size:10px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:4px;background:var(--bg3);border-radius:8px;padding:4px}
+.tab{padding:7px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;
+     border:none;background:none;color:var(--muted);transition:all .2s;font-family:var(--font)}
+.tab.active{background:var(--bg4);color:var(--text);border:1px solid var(--border)}
+.tab:hover:not(.active){color:var(--text)}
+
+.header-right{display:flex;align-items:center;gap:10px}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.status-dot.on{background:var(--long);box-shadow:0 0 8px var(--long)}
+.status-dot.scanning{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.status-label{font-size:11px;color:var(--muted)}
+
+/* ── BUTTONS ── */
+.btn{padding:8px 16px;border-radius:7px;border:1px solid var(--border);
+     background:var(--bg3);color:var(--text);font-family:var(--font);
+     font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.danger{background:rgba(255,61,90,.15);color:var(--short);border-color:var(--short)}
+.btn.danger:hover{background:rgba(255,61,90,.25)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── LAYOUT ── */
+.page{display:none;padding:20px 24px}
+.page.active{display:block}
+
+/* ── DASHBOARD PAGE ── */
+.dash-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+.symbol-input-wrap{display:flex;gap:6px;align-items:center}
+.symbol-input{background:var(--bg3);border:1px solid var(--border);border-radius:7px;
+  padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:12px;width:120px;
+  text-transform:uppercase}
+.symbol-input:focus{outline:none;border-color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;
+  border-radius:20px;background:var(--bg3);border:1px solid var(--border);
+  font-size:12px;font-weight:600;cursor:default}
+.chip-rm{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;
+  padding:0 2px;line-height:1}
+.chip-rm:hover{color:var(--short)}
+
+/* ── SIGNAL CARDS ── */
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-radius);
+  padding:18px;cursor:pointer;transition:border-color .2s;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--muted)}
+.card.LONG::before{background:linear-gradient(90deg,var(--long),var(--long2))}
+.card.SHORT::before{background:linear-gradient(90deg,var(--short),var(--short2))}
+.card.WAIT::before{background:var(--wait)}
+.card:hover{border-color:var(--border2)}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.card-sym{font-size:18px;font-weight:800}
+.card-sym span{font-size:12px;color:var(--muted);font-weight:500}
+.badges{display:flex;gap:5px;align-items:center}
+.badge{padding:3px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:.3px}
+.badge.LONG{background:rgba(0,230,118,.12);color:var(--long);border:1px solid rgba(0,230,118,.2)}
+.badge.SHORT{background:rgba(255,61,90,.12);color:var(--short);border:1px solid rgba(255,61,90,.2)}
+.badge.WAIT{background:rgba(255,179,0,.12);color:var(--wait);border:1px solid rgba(255,179,0,.2)}
+.badge.HIGH{background:rgba(0,230,118,.1);color:var(--long)}
+.badge.MEDIUM{background:rgba(255,179,0,.1);color:var(--wait)}
+.badge.WATCH{background:rgba(0,200,255,.08);color:var(--accent);border:1px solid rgba(0,200,255,.15)}
+.badge.LOW{background:rgba(100,120,140,.1);color:var(--muted2)}
+.badge.notrade{background:rgba(255,109,0,.12);color:var(--warn);border:1px solid rgba(255,109,0,.2)}
+.card-price{font-family:var(--mono);font-size:22px;font-weight:700;margin-bottom:10px}
+.tf-tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}
+.tf-tag{font-size:10px;padding:3px 7px;border-radius:5px;font-weight:600;font-family:var(--mono);
+  background:var(--bg4);border:1px solid var(--border)}
+.tf-tag.bull{border-color:rgba(0,230,118,.3);color:var(--long)}
+.tf-tag.bear{border-color:rgba(255,61,90,.3);color:var(--short)}
+.rr-row{font-family:var(--mono);font-size:20px;font-weight:800;margin-bottom:10px}
+.rr-label{font-size:11px;color:var(--muted);font-family:var(--font);font-weight:400;margin-left:6px}
+.levels-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:12px}
+.level{background:var(--bg3);border-radius:7px;padding:7px 8px;text-align:center}
+.level-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.level-val{font-family:var(--mono);font-size:11px;font-weight:700}
+.mkt-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;
+  background:var(--bg3);border-radius:8px;padding:8px}
+.mkt-item{text-align:center}
+.mkt-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
+.mkt-val{font-family:var(--mono);font-size:12px;font-weight:700}
+.warn-box{background:rgba(255,109,0,.08);border:1px solid rgba(255,109,0,.2);
+  border-radius:7px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5;color:#ffb080}
+.cond-list{display:flex;flex-wrap:wrap;gap:4px}
+.cond-tag{font-size:10px;padding:2px 7px;border-radius:10px;
+  background:rgba(0,200,255,.06);color:var(--accent);border:1px solid rgba(0,200,255,.12)}
+.card-loading{color:var(--muted);font-size:13px;padding:20px 0;text-align:center}
+.card-error{color:var(--short);font-size:12px}
+
+/* ── SCANNER PAGE ── */
+.scan-settings{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-radius);
+  padding:18px 20px;margin-bottom:20px}
+.scan-settings-title{font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+.scan-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.ctrl-group{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.ctrl-group select{background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+  padding:6px 10px;color:var(--text);font-family:var(--font);font-size:12px;cursor:pointer}
+.ctrl-group select:focus{outline:none;border-color:var(--accent)}
+.progress-wrap{margin-top:12px}
+.prog-bar-bg{background:var(--bg3);border-radius:20px;height:5px;overflow:hidden;margin-bottom:8px}
+.prog-bar-fill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--accent),var(--long));transition:width .4s}
+.prog-text{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.prog-found{color:var(--long);font-weight:700}
+
+/* ── SCAN STATS ── */
+.scan-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+  padding:12px 16px;flex:1;min-width:100px}
+.stat-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+.stat-val{font-size:24px;font-weight:800;font-family:var(--mono)}
+
+/* ── SCAN RESULTS TABLE ── */
+.table-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.sort-btn{padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600}
+.count-badge{font-size:11px;color:var(--muted);margin-left:auto}
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-radius);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{padding:10px 12px;text-align:left;color:var(--muted);font-size:10px;
+  letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border);
+  background:var(--bg3);white-space:nowrap}
+tbody tr{border-bottom:1px solid rgba(26,39,68,.4);cursor:pointer;transition:background .12s}
+tbody tr:hover{background:var(--bg3)}
+tbody td{padding:11px 12px;vertical-align:middle}
+.sym-name{font-weight:800;font-size:13px}
+.sym-sub{font-size:10px;color:var(--muted)}
+.mono{font-family:var(--mono)}
+.rr-val{font-family:var(--mono);font-weight:800;font-size:14px}
+
+/* ── DRAWER ── */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;backdrop-filter:blur(2px)}
+.overlay.show{display:block}
+.drawer{position:fixed;right:-520px;top:0;bottom:0;width:500px;
+  background:var(--bg2);border-left:1px solid var(--border);z-index:201;
+  overflow-y:auto;padding:24px;transition:right .3s cubic-bezier(.4,0,.2,1)}
+.drawer.open{right:0}
+.drawer-close{position:absolute;top:16px;right:16px;background:none;border:none;
+  color:var(--muted);font-size:22px;cursor:pointer;padding:4px;line-height:1}
+.drawer-close:hover{color:var(--text)}
+.drawer-sym{font-size:26px;font-weight:800;margin-bottom:4px}
+.drawer-price{font-family:var(--mono);font-size:22px;color:var(--accent);margin-bottom:14px}
+.drawer-section{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin:16px 0 8px}
+.drawer-levels{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px}
+.dlevel{background:var(--bg3);border-radius:8px;padding:10px 12px}
+.dlevel-lbl{font-size:10px;color:var(--muted);margin-bottom:2px}
+.dlevel-val{font-family:var(--mono);font-weight:700;font-size:15px}
+.drawer-mkt{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.dmkt{background:var(--bg3);border-radius:8px;padding:10px;text-align:center}
+.dmkt-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.dmkt-val{font-family:var(--mono);font-weight:700;font-size:14px}
+.checklist{background:var(--bg3);border-radius:8px;padding:12px 14px;
+  font-size:11px;color:var(--muted2);line-height:2;margin-top:16px}
+.checklist b{color:var(--text);display:block;margin-bottom:4px}
+
+/* ── EMPTY STATE ── */
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty-icon{font-size:48px;margin-bottom:12px}
+.empty-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px}
+
+/* ── H1 STATUS ── */
+.h1-status{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+  margin-bottom:10px;font-size:11px;font-weight:600;border:1px solid}
+.h1-status.CONFIRMED{background:rgba(0,230,118,.08);color:var(--long);border-color:rgba(0,230,118,.2)}
+.h1-status.PULLBACK{background:rgba(255,179,0,.08);color:var(--wait);border-color:rgba(255,179,0,.2)}
+.h1-status.COUNTER{background:rgba(255,61,90,.08);color:var(--short);border-color:rgba(255,61,90,.2)}
+.h1-status.FORMING{background:rgba(100,120,160,.08);color:var(--muted2);border-color:rgba(100,120,160,.2)}
+.h1-status.NEUTRAL{background:rgba(100,120,160,.08);color:var(--muted2);border-color:rgba(100,120,160,.2)}
+
+/* ── ENTRY VERDICT ── */
+.verdict{text-align:center;padding:14px;border-radius:10px;margin-bottom:16px;border:1px solid}
+.verdict.GO{background:rgba(0,230,118,.1);border-color:rgba(0,230,118,.3)}
+.verdict.WAIT{background:rgba(255,179,0,.1);border-color:rgba(255,179,0,.3)}
+.verdict.NO{background:rgba(255,61,90,.1);border-color:rgba(255,61,90,.3)}
+.verdict-label{font-size:22px;font-weight:900;margin-bottom:4px}
+.verdict-label.GO{color:var(--long)}
+.verdict-label.WAIT{color:var(--wait)}
+.verdict-label.NO{color:var(--short)}
+.verdict-sub{font-size:11px;color:var(--muted2)}
+
+/* ── CHECKLIST ── */
+.check-item{display:flex;align-items:flex-start;gap:8px;padding:8px 0;
+  border-bottom:1px solid rgba(26,39,68,.4);font-size:12px;line-height:1.4}
+.check-item:last-child{border-bottom:none}
+.check-icon{flex-shrink:0;font-size:14px;margin-top:1px}
+
+/* ── SPINNER ── */
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(0,200,255,.3);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── SETTINGS PANEL ── */
+.settings-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;backdrop-filter:blur(3px)}
+.settings-overlay.show{display:block}
+.settings-panel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:480px;max-width:95vw;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:16px;z-index:301;padding:28px;max-height:90vh;overflow-y:auto}
+.settings-title{font-size:16px;font-weight:800;margin-bottom:20px;display:flex;
+  align-items:center;justify-content:space-between}
+.settings-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer}
+.settings-close:hover{color:var(--text)}
+.settings-section{font-size:10px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:1.2px;margin:16px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;color:var(--muted2);margin-bottom:5px;font-weight:600}
+.field input,.field select{width:100%;background:var(--bg3);border:1px solid var(--border);
+  border-radius:7px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:12px}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
+.field input::placeholder{color:var(--muted)}
+.field-hint{font-size:10px;color:var(--muted);margin-top:4px}
+.settings-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+.test-result{font-size:11px;padding:8px 10px;border-radius:6px;margin-top:8px;display:none}
+.test-result.ok{background:rgba(0,230,118,.1);color:var(--long);border:1px solid rgba(0,230,118,.2)}
+.test-result.err{background:rgba(255,61,90,.1);color:var(--short);border:1px solid rgba(255,61,90,.2)}
+
+@media(max-width:600px){
+  .cards-grid{grid-template-columns:1fr}
+  .levels-row{grid-template-columns:1fr 1fr}
+  .drawer{width:100%;right:-100%}
+  .scan-stats{gap:8px}
+  .stat-val{font-size:18px}
+}
+
+/* ═══════════════════════════════════════════════
+   POSITION SIZING MODAL — Thu vao lenh
+   ═══════════════════════════════════════════════ */
+.ps-overlay {
+  display: none; position: fixed; inset: 0; z-index: 400;
+  background: rgba(2,5,12,.85); backdrop-filter: blur(8px);
+  overflow-y: auto; padding: 20px 16px;
+}
+.ps-overlay.open { display: flex; align-items: flex-start; justify-content: center; }
+.ps-modal {
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: 16px; width: 100%; max-width: 820px;
+  animation: psSlideIn .25s ease;
+}
+@keyframes psSlideIn { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
+
+.ps-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 24px; border-bottom: 1px solid var(--border);
+  background: var(--bg3); border-radius: 16px 16px 0 0;
+}
+.ps-header-left { display: flex; align-items: center; gap: 10px; }
+.ps-title { font-size: 18px; font-weight: 800; }
+.ps-dir { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; letter-spacing: .5px; }
+.ps-dir.LONG  { background: rgba(0,230,118,.18); color: var(--long);  border: 1px solid rgba(0,230,118,.3); }
+.ps-dir.SHORT { background: rgba(255,61,90,.18);  color: var(--short); border: 1px solid rgba(255,61,90,.3); }
+.ps-price { font-family: var(--mono); font-size: 14px; color: var(--accent); }
+.ps-close { background: none; border: none; color: var(--muted); font-size: 24px; cursor: pointer; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+.ps-close:hover { color: var(--text); background: var(--bg4); }
+
+.ps-body { padding: 22px 24px; display: flex; flex-direction: column; gap: 20px; }
+
+.ps-section {
+  font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 1.5px;
+  text-transform: uppercase; display: flex; align-items: center; gap: 8px;
+}
+.ps-section::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+.ps-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.ps-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.ps-grid4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; }
+@media(max-width:600px) {
+  .ps-grid2 { grid-template-columns: 1fr; }
+  .ps-grid3 { grid-template-columns: 1fr 1fr; }
+  .ps-grid4 { grid-template-columns: 1fr 1fr; }
+}
+
+.ps-field { display: flex; flex-direction: column; gap: 5px; }
+.ps-label { font-size: 10px; font-weight: 700; color: var(--muted2); letter-spacing: .5px; text-transform: uppercase; }
+.ps-label em { font-style: normal; color: var(--accent); font-size: 9px; margin-left: 4px; text-transform: none; letter-spacing: 0; }
+.ps-input-wrap { position: relative; display: flex; align-items: center; }
+.ps-input {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 36px 10px 12px;
+  color: var(--text); font-family: var(--mono); font-size: 14px; font-weight: 600;
+  transition: border-color .2s;
+}
+.ps-input:focus { outline: none; border-color: var(--accent); }
+.ps-unit { position: absolute; right: 11px; font-size: 11px; color: var(--muted); font-weight: 600; pointer-events: none; }
+.ps-hint { font-size: 10px; color: var(--muted); min-height: 14px; line-height: 1.4; }
+
+/* Leverage cards */
+.ps-lev-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ps-lev-card {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 10px;
+  padding: 11px 8px; text-align: center; cursor: pointer; transition: all .18s;
+}
+.ps-lev-card:hover { border-color: var(--border2); }
+.ps-lev-card.active { border-color: var(--accent); background: rgba(0,200,255,.07); }
+.ps-lev-name { font-size: 9px; font-weight: 700; color: var(--muted); letter-spacing: .5px; text-transform: uppercase; margin-bottom: 5px; }
+.ps-lev-val  { font-size: 22px; font-weight: 800; font-family: var(--mono); }
+.ps-lev-sub  { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+/* Order table */
+.ps-order-header, .ps-order-row {
+  display: grid; grid-template-columns: 26px 1fr 60px 1fr 1fr 1fr;
+  gap: 8px; align-items: center; font-size: 12px;
+}
+.ps-order-header { padding: 4px 12px; font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.ps-order-row {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; font-family: var(--mono);
+}
+.ps-order-num { font-size: 14px; font-weight: 800; color: var(--accent); }
+
+/* PnL Cards */
+.ps-pnl-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
+@media(max-width:540px){ .ps-pnl-grid { grid-template-columns: 1fr 1fr; } }
+.ps-pnl-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; text-align: center; }
+.ps-pnl-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+.ps-pnl-val { font-size: 18px; font-weight: 800; font-family: var(--mono); }
+.ps-pnl-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+/* Risk bar */
+.ps-risk-bar { height: 6px; border-radius: 3px; background: var(--bg4); overflow: hidden; margin: 5px 0; }
+.ps-risk-fill { height: 100%; border-radius: 3px; transition: width .3s, background .3s; }
+.ps-risk-labels { display: flex; justify-content: space-between; font-size: 9px; color: var(--muted); }
+
+/* Liq warning */
+.ps-liq-warn { background: rgba(255,61,90,.08); border: 1px solid rgba(255,61,90,.25); border-radius: 8px; padding: 10px 14px; font-size: 12px; color: var(--short); }
+.ps-liq-ok   { background: rgba(0,230,118,.07); border: 1px solid rgba(0,230,118,.2);  border-radius: 8px; padding: 10px 14px; font-size: 12px; color: var(--long); }
+
+/* Tips */
+.ps-tips { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 12px; color: var(--muted2); line-height: 1.9; }
+
+/* Footer */
+.ps-footer { display: flex; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--border); background: var(--bg3); border-radius: 0 0 16px 16px; }
+.ps-footer .btn { flex: 1; }
+
+/* Try button on signal cards */
+.btn-try {
+  margin-top: 12px; width: 100%;
+  background: rgba(0,200,255,.08); border: 1px solid rgba(0,200,255,.3);
+  color: var(--accent); font-family: var(--font); font-size: 12px; font-weight: 700;
+  padding: 9px; border-radius: 8px; cursor: pointer; transition: all .2s; display: block;
+}
+.btn-try:hover { background: rgba(0,200,255,.18); border-color: var(--accent); }
+
+
+/* Entry selector — Now vs Optimal */
+.ps-entry-btn {
+  flex: 1; padding: 10px 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg3);
+  text-align: left; transition: all .18s; font-family: var(--font);
+}
+.ps-entry-btn:hover { border-color: var(--border2); }
+.ps-entry-btn.active-now {
+  border-color: var(--accent); background: rgba(0,200,255,.08);
+}
+.ps-entry-btn.active-opt {
+  border-color: var(--long); background: rgba(0,230,118,.07);
+}
+.ps-entry-btn-tag {
+  font-size: 9px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; margin-bottom: 4px;
+}
+.ps-entry-btn-price {
+  font-size: 16px; font-weight: 800; font-family: var(--mono);
+}
+.ps-entry-btn-rr {
+  font-size: 10px; margin-top: 3px; color: var(--muted);
+}
+
+
+/* Range Check Panel */
+.range-panel {
+  margin-top: 10px;
+  background: rgba(167,139,250,.07);
+  border: 1px solid rgba(167,139,250,.25);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 12px;
+}
+.range-panel-title {
+  font-size: 11px; font-weight: 700; color: #a78bfa;
+  letter-spacing: .5px; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.range-row {
+  display: flex; justify-content: space-between;
+  align-items: center; padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.range-row:last-child { border-bottom: none; }
+.range-lbl { color: var(--muted2); font-size: 11px; }
+.range-val { color: var(--text); font-family: var(--mono); font-size: 12px; }
+.range-entry-ready {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(0,200,100,.1); border: 1px solid rgba(0,200,100,.3);
+  color: #4ade80; font-weight: 600; font-size: 12px;
+}
+.range-entry-wait {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(250,200,0,.07); border: 1px solid rgba(250,200,0,.25);
+  color: var(--wait); font-size: 12px;
+}
+.range-entry-block {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,60,60,.08); border: 1px solid rgba(255,60,60,.25);
+  color: var(--short); font-size: 12px;
+}
+.range-zone-box {
+  margin-top: 8px; display: flex; gap: 6px;
+}
+.range-zone {
+  flex: 1; padding: 6px 8px; border-radius: 7px;
+  font-size: 11px; text-align: center;
+}
+.range-zone.long  { background: rgba(0,200,100,.08); border: 1px solid rgba(0,200,100,.25); }
+.range-zone.short { background: rgba(255,60,60,.08);  border: 1px solid rgba(255,60,60,.25); }
+.range-zone .zone-lbl  { color: var(--muted2); font-size: 10px; margin-bottom: 2px; }
+.range-zone .zone-price { color: var(--text); font-family: var(--mono); font-weight: 700; font-size: 12px; }
+.range-override-row {
+  margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.range-override-row input {
+  background: #1a1f35; border: 1px solid #2d3555; border-radius: 6px;
+  color: #e2e8f0; padding: 3px 8px; font-size: 11px; width: 90px; outline: none;
+}
+.range-override-row input:focus { border-color: #a78bfa; }
+.range-bar-wrap {
+  margin: 10px 0 4px; position: relative; height: 20px;
+  background: rgba(255,255,255,.05); border-radius: 10px; overflow: visible;
+}
+.range-bar-fill {
+  position: absolute; height: 100%; border-radius: 10px;
+  background: linear-gradient(90deg, rgba(167,139,250,.2), rgba(167,139,250,.4));
+}
+.range-bar-price {
+  position: absolute; top: -2px; width: 4px; height: 24px;
+  background: #e2e8f0; border-radius: 2px; transform: translateX(-50%);
+}
+.range-bar-label {
+  position: absolute; top: 22px; font-size: 10px; color: var(--muted2);
+  transform: translateX(-50%); white-space: nowrap;
+}
+
+
+  .btc-bias-box { padding:8px 10px; border-radius:var(--border-radius-md);
+    background:var(--color-background-primary); border:0.5px solid var(--color-border-tertiary); }
+  .btc-bias-box .tf-label { font-size:10px; color:var(--color-text-secondary); margin-bottom:2px; }
+  .btc-bias-box .bias-val  { font-size:13px; font-weight:500; }
+  .btc-bias-box .bias-signs { font-size:10px; color:var(--color-text-secondary); margin-top:2px; }
+</style>
+</head>
+<body>
+<!-- ══════════════ DASHBOARD PAGE ══════════════ -->
+
 <script>
 // ═══════════════════════════════════════════════
 // UTILS
@@ -933,8 +1711,9 @@ function switchTab(tab) {
   var idx = {dashboard:0,scanner:1,history:2,backtest:3}[tab]||0;
   document.querySelectorAll('.tab')[idx].classList.add('active');
   document.getElementById('page-'+tab).classList.add('active');
-  if (tab === 'history') loadHistory();
-  if (tab === 'scanner') loadScanOnTabSwitch();
+  if (tab === 'history')  loadHistory();
+  if (tab === 'scanner')  loadScanOnTabSwitch();
+  if (tab === 'position') loadPositions();
 }
 
 function loadScanOnTabSwitch() {
@@ -966,6 +1745,384 @@ function loadScanOnTabSwitch() {
     });
   });
 }
+
+
+
+// ═══════════════════════════════════════════════
+// POSITION MONITOR
+// ═══════════════════════════════════════════════
+
+
+function renderPosResults(d) {
+  var isLong = d.direction === 'LONG';
+  var dirColor = isLong ? '#1D9E75' : '#E24B4A';
+  var fmt = function(v) {
+    if (v === null || v === undefined) return '--';
+    var n = Math.abs(v);
+    return n < 0.000001 ? v.toFixed(8) : n < 0.0001 ? v.toFixed(6) : n < 0.01 ? v.toFixed(5) : n < 1 ? v.toFixed(4) : v.toFixed(2);
+  };
+
+  // Rec colors
+  var recBg = {'danger':'rgba(226,75,74,.12)','warning':'rgba(186,117,23,.12)','success':'rgba(29,158,117,.12)','info':'rgba(55,138,221,.12)'};
+  var recBorder = {'danger':'#E24B4A','warning':'#BA7517','success':'#1D9E75','info':'#378ADD'};
+  var recTextColor = {'danger':'#A32D2D','warning':'#633806','success':'#0F6E56','info':'#0C447C'};
+  var rc  = d.rec_color || 'info';
+
+  // BTC sentiment colors
+  var sentColor = {'PUMP':'#1D9E75','RISK_ON':'#1D9E75','DUMP':'#E24B4A','RISK_OFF':'#E24B4A','NEUTRAL':'#BA7517','UNKNOWN':'#888780'};
+  var btcCol = sentColor[d.btc.sentiment] || '#888780';
+
+  // BTC H1 candles mini
+  var candlesHtml = (d.btc.h1_candles || []).map(function(c2) {
+    var clr = c2.dir === 'green' ? '#1D9E75' : '#E24B4A';
+    var sign = c2.pct >= 0 ? '+' : '';
+    return '<span style="font-size:11px;padding:2px 6px;border-radius:3px;background:' + clr + '22;color:' + clr + '">' + sign + c2.pct.toFixed(2) + '%</span>';
+  }).join('');
+
+  // TP cards
+  var tpHtml = d.tps.map(function(tp, i) {
+    var tpColors = ['#1D9E75','#534AB7','#BA7517','#D85A30'];
+    var tpBg     = ['rgba(29,158,117,.08)','rgba(83,74,183,.08)','rgba(186,117,23,.08)','rgba(216,90,48,.08)'];
+    var pnlStr   = tp.pnl !== null ? '<span style="font-weight:500;color:' + tpColors[i] + '">+$' + tp.pnl.toFixed(2) + '</span>' : '';
+    return '<div style="background:' + tpBg[i] + ';border:0.5px solid ' + tpColors[i] + '44;border-radius:var(--border-radius-md);padding:12px 14px;margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+        '<span style="font-size:13px;font-weight:500;color:' + tpColors[i] + '">' + tp.label + '</span>' +
+        '<span style="font-size:11px;color:var(--color-text-secondary)">' + tp.hint + '</span>' +
+      '</div>' +
+      '<div style="display:flex;align-items:baseline;gap:12px">' +
+        '<span style="font-size:18px;font-weight:500;color:' + tpColors[i] + '">$' + fmt(tp.price) + '</span>' +
+        '<span style="font-size:12px;color:' + tpColors[i] + '">' + (tp.pct >= 0 ? '+' : '') + tp.pct.toFixed(2) + '%</span>' +
+        '<span style="font-size:12px;color:var(--color-text-secondary)">R:R 1:' + tp.rr + '</span>' +
+        pnlStr +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  // Signal rows
+  var sigHtml = (d.signals || []).map(function(s) {
+    var ic = s.type==='ok' ? '✓' : s.type==='warn' ? '!' : 'i';
+    var sc = s.type==='ok' ? '#1D9E75' : s.type==='warn' ? '#E24B4A' : '#378ADD';
+    var sb = s.type==='ok' ? 'rgba(29,158,117,.1)' : s.type==='warn' ? 'rgba(226,75,74,.1)' : 'rgba(55,138,221,.1)';
+    return '<div style="display:flex;gap:8px;padding:7px 10px;border-radius:var(--border-radius-md);background:' + sb + ';margin-bottom:6px;font-size:12px">' +
+      '<span style="color:' + sc + ';font-weight:500;flex-shrink:0">' + ic + '</span>' +
+      '<span style="color:var(--color-text-primary)">' + s.msg + '</span>' +
+    '</div>';
+  }).join('');
+
+  var genAt = d.generated_at ? d.generated_at.replace('T',' ').substring(0,16) : '';
+
+  document.getElementById('posResults').innerHTML =
+    // Recommendation header
+    '<div style="background:' + recBg[rc] + ';border:1px solid ' + recBorder[rc] + ';border-radius:var(--border-radius-lg);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:16px;font-weight:500;color:' + recTextColor[rc] + ';margin-bottom:4px">' + d.recommendation + '</div>' +
+      '<div style="font-size:13px;color:var(--color-text-secondary)">' + d.rec_detail + '</div>' +
+    '</div>' +
+
+    // BTC status bar
+    '<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px 14px;margin-bottom:14px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<div style="font-size:12px;font-weight:500;color:var(--color-text-secondary)">BTC REALTIME</div>' +
+        '<div style="font-size:11px;color:var(--color-text-secondary)">' + genAt + '</div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">' +
+        '<div>' +
+          '<span style="font-size:20px;font-weight:500;color:var(--color-text-primary)">$' + (d.btc.price || '--') + '</span>' +
+          '<span style="font-size:12px;color:' + (d.btc.chg_24h >= 0 ? '#1D9E75' : '#E24B4A') + ';margin-left:6px">' +
+            (d.btc.chg_24h >= 0 ? '+' : '') + (d.btc.chg_24h || 0).toFixed(2) + '% 24h' +
+          '</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;align-items:center">' +
+          '<span style="font-size:13px;font-weight:500;color:' + btcCol + '">' + d.btc.sentiment + '</span>' +
+          '<span style="font-size:11px;color:var(--color-text-secondary)">D1:' + d.btc.d1_trend + ' H4:' + d.btc.h4_trend + '</span>' +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--color-text-secondary)">' +
+          'H1 slope: <span style="color:' + (d.btc.h1_slope >= 0 ? '#1D9E75' : '#E24B4A') + '">' +
+          (d.btc.h1_slope >= 0 ? '+' : '') + (d.btc.h1_slope || 0).toFixed(3) + '% / 4h</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:4px">' + candlesHtml + '</div>' +
+      '</div>' +
+      (d.btc.note ? '<div style="font-size:11px;color:var(--color-text-secondary);margin-top:6px">' + d.btc.note + '</div>' : '') +
+    '</div>' +
+
+    // Signals
+    (sigHtml ? '<div style="margin-bottom:14px">' + sigHtml + '</div>' : '') +
+
+    // Position stats
+    '<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--color-text-secondary)">' +
+      'Fibo base: <span style="color:var(--color-text-primary);font-weight:500">' + (d.base_note||'--') + '</span>' +
+      (d.sl_implied ? ' &nbsp;·&nbsp; SL gợi ý: <span style="color:#E24B4A;font-weight:500">$' + fmt(d.sl_implied) + '</span>' : '') +
+      (d.atr_value ? ' &nbsp;·&nbsp; ATR H1: <span style="color:#BA7517">$' + fmt(d.atr_value) + '</span>' : '') +
+    '</div>' +
+
+    '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:16px">' +
+      '<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px">' +
+        '<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:3px">Direction</div>' +
+        '<div style="font-size:15px;font-weight:500;color:' + dirColor + '">' + d.direction + ' ' + d.leverage + 'x</div>' +
+      '</div>' +
+      '<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px">' +
+        '<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:3px">Position size</div>' +
+        '<div style="font-size:15px;font-weight:500;color:var(--color-text-primary)">$' + (d.pos_size || '--') + '</div>' +
+      '</div>' +
+      '<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px">' +
+        '<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:3px">Rủi ro ước tính</div>' +
+        '<div style="font-size:15px;font-weight:500;color:#E24B4A">-$' + (d.risk_usd || '--') + '</div>' +
+      '</div>' +
+      '<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px">' +
+        '<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:3px">Liquidation ~</div>' +
+        '<div style="font-size:15px;font-weight:500;color:#E24B4A">$' + fmt(d.liq_approx) + '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // TP levels
+    '<div style="font-size:12px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">Fibonacci TP levels</div>' +
+    tpHtml +
+
+    // Refresh btn
+    '<button onclick="posAnalyze()" style="width:100%;margin-top:8px;padding:10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);font-size:13px;cursor:pointer">' +
+      '&#8635; Refresh BTC realtime' +
+    '</button>';
+}
+
+
+// ═══════════════════════════════════════════
+// POSITION SAVED LIST — persistent DB
+// ═══════════════════════════════════════════
+var posSavedList = [];
+var posDir = 'LONG';
+var posBaseMode = 'pct';
+
+// ── Load từ server khi vào tab ──
+function loadPositions() {
+  fetch('/api/positions').then(function(r){ return r.json(); }).then(function(data) {
+    posSavedList = Array.isArray(data) ? data : [];
+    renderPosSaved();
+  }).catch(function(){ posSavedList = []; });
+}
+
+// ── Lưu 1 position lên server ──
+function posSaveToServer(entry, baseVal, margin, lev, sym, dir, bmode) {
+  fetch('/api/positions', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      direction: dir, entry: entry, base_mode: bmode||'pct',
+      base_value: baseVal, margin: margin, leverage: lev, symbol: sym
+    })
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if (d.id) {
+      // Reload list từ server để đồng bộ
+      loadPositions();
+    }
+  });
+}
+
+// ── Xóa 1 position ──
+function posDeleteSaved(id) {
+  fetch('/api/positions/' + id, { method: 'DELETE' })
+    .then(function(){ posSavedList = posSavedList.filter(function(p){ return p.id !== id; }); renderPosSaved(); });
+}
+
+// ── Xóa tất cả ──
+function posClearAll() {
+  if (!confirm('Xóa toàn bộ lịch sử position?')) return;
+  fetch('/api/positions/clear', { method: 'POST' })
+    .then(function(){ posSavedList = []; renderPosSaved(); });
+}
+
+function posSetDir(d) {
+  posDir = d;
+  var btnL = document.getElementById('posBtnLong');
+  var btnS = document.getElementById('posBtnShort');
+  if (d === 'LONG') {
+    btnL.style.cssText = 'flex:1;padding:10px;border-radius:var(--border-radius-md);border:0.5px solid #3B6D11;background:#EAF3DE;color:#27500A;font-size:14px;font-weight:500;cursor:pointer';
+    btnS.style.cssText = 'flex:1;padding:10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);font-size:14px;font-weight:500;cursor:pointer';
+  } else {
+    btnS.style.cssText = 'flex:1;padding:10px;border-radius:var(--border-radius-md);border:0.5px solid #A32D2D;background:#FCEBEB;color:#791F1F;font-size:14px;font-weight:500;cursor:pointer';
+    btnL.style.cssText = 'flex:1;padding:10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);font-size:14px;font-weight:500;cursor:pointer';
+  }
+}
+
+function posSetMode(m) {
+  posBaseMode = m;
+  ['Pct','Atr','Sl'].forEach(function(x){
+    var btn = document.getElementById('posMode'+x);
+    var inp = document.getElementById('posInput'+x);
+    if (!btn || !inp) return;
+    var active = x.toLowerCase() === m;
+    btn.style.background  = active ? '#E6F1FB' : 'transparent';
+    btn.style.color       = active ? '#0C447C' : 'var(--color-text-secondary)';
+    btn.style.borderColor = active ? '#185FA5' : 'var(--color-border-secondary)';
+    inp.style.display     = active ? '' : 'none';
+  });
+}
+
+function renderPosSaved() {
+  var wrap = document.getElementById('posSavedWrap');
+  var list = document.getElementById('posSavedList');
+  if (!wrap || !list) return;
+  if (!posSavedList.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+
+  var fmt = function(v) {
+    if (v === null || v === undefined) return '--';
+    var n = Math.abs(parseFloat(v));
+    return n < 0.0001 ? parseFloat(v).toFixed(6) : n < 0.01 ? parseFloat(v).toFixed(5) : n < 1 ? parseFloat(v).toFixed(4) : parseFloat(v).toFixed(2);
+  };
+
+  list.innerHTML = posSavedList.map(function(p) {
+    var isLong   = p.direction === 'LONG';
+    var dirColor = isLong ? '#1D9E75' : '#E24B4A';
+    var dirBg    = isLong ? 'rgba(29,158,117,.1)' : 'rgba(226,75,74,.1)';
+    var bmode    = p.base_mode || 'pct';
+    var baseStr  = bmode === 'atr' ? 'ATR H1' : bmode === 'sl' ? 'SL $'+fmt(p.base_value) : (p.base_value||2)+'%';
+
+    // Parse saved_at để hiện ngắn gọn
+    var savedAt = p.saved_at || '';
+    try {
+      var d = new Date(savedAt);
+      if (!isNaN(d.getTime())) {
+        savedAt = d.toLocaleDateString('vi-VN', {day:'2-digit',month:'2-digit'}) + ' ' +
+                  d.toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'});
+      }
+    } catch(e){}
+
+    return '<div style="background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px">' +
+      '<div style="background:'+dirBg+';border-radius:4px;padding:4px 8px;font-size:12px;font-weight:500;color:'+dirColor+';white-space:nowrap">'+p.direction+'</div>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:13px;font-weight:500;color:var(--color-text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+          (p.symbol || '—') + ' &nbsp;·&nbsp; Entry $' + fmt(p.entry) + ' &nbsp;·&nbsp; Base: ' + baseStr +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--color-text-secondary);margin-top:2px">' +
+          '$'+(p.margin||0)+' × '+(p.leverage||1)+'x &nbsp;·&nbsp; ' + savedAt +
+        '</div>' +
+      '</div>' +
+      '<button onclick="posReanalyze('+p.id+')" style="font-size:12px;padding:6px 12px;border-radius:var(--border-radius-md);background:#1D9E75;border:none;color:#EAF3DE;cursor:pointer;white-space:nowrap;flex-shrink:0">&#8635; Phân tích lại</button>' +
+      '<button onclick="posDeleteSaved('+p.id+')" style="font-size:11px;padding:6px 8px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);cursor:pointer;flex-shrink:0">&#10005;</button>' +
+    '</div>';
+  }).join('');
+}
+
+function posReanalyze(id) {
+  var p = posSavedList.find(function(x){ return x.id === id; });
+  if (!p) return;
+  document.getElementById('posEntry').value  = p.entry || '';
+  document.getElementById('posMargin').value = p.margin || '';
+  document.getElementById('posLev').value    = p.leverage || '';
+  document.getElementById('posSymbol').value = p.symbol || '';
+  posSetDir(p.direction || 'LONG');
+  posDir = p.direction || 'LONG';
+  var bm = p.base_mode || 'pct';
+  posBaseMode = bm;
+  posSetMode(bm);
+  if (bm === 'pct') { var el = document.getElementById('posBasePct'); if(el) el.value = p.base_value || 2; }
+  if (bm === 'sl')  { var el2 = document.getElementById('posSlPrice'); if(el2) el2.value = p.base_value || ''; }
+  posAnalyze();
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+function posAnalyze() {
+  var entry  = parseFloat(document.getElementById('posEntry').value);
+  var margin = parseFloat(document.getElementById('posMargin').value) || 0;
+  var lev    = parseFloat(document.getElementById('posLev').value) || 1;
+  var sym    = (document.getElementById('posSymbol').value || '').trim().toUpperCase();
+
+  if (!entry) { alert('Nhập entry price trước'); return; }
+
+  var baseVal = 2.0;
+  if (posBaseMode === 'pct') {
+    baseVal = parseFloat(document.getElementById('posBasePct').value) || 2.0;
+  } else if (posBaseMode === 'sl') {
+    baseVal = parseFloat(document.getElementById('posSlPrice').value) || 0;
+    if (!baseVal) { alert('Nhập SL price'); return; }
+  }
+
+  var btn = document.getElementById('posAnalyzeBtn');
+  btn.disabled = true; btn.textContent = 'Đang phân tích...';
+  document.getElementById('posResults').style.display = '';
+  document.getElementById('posResults').innerHTML =
+    '<div style="text-align:center;padding:24px;color:var(--color-text-secondary);font-size:13px">Đang fetch BTC realtime...</div>';
+
+  fetch('/api/position/analyze', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({direction:posDir, entry:entry, margin:margin, leverage:lev, symbol:sym,
+                          base_mode:posBaseMode, base_value:baseVal})
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    btn.disabled = false; btn.textContent = '▶ Phân tích ngay (BTC realtime)';
+    if (d.error) {
+      document.getElementById('posResults').innerHTML =
+        '<div style="color:#E24B4A;padding:14px;background:rgba(226,75,74,.1);border-radius:var(--border-radius-md)"><b>Lỗi:</b> '+d.error+'</div>';
+      return;
+    }
+    renderPosResults(d);
+    // Lưu lên server (tránh duplicate cùng entry+direction+symbol)
+    posSaveToServer(entry, baseVal, margin, lev, sym, posDir, posBaseMode);
+  }).catch(function(e) {
+    btn.disabled = false; btn.textContent = '▶ Phân tích ngay (BTC realtime)';
+    document.getElementById('posResults').innerHTML =
+      '<div style="color:#E24B4A;padding:14px">Lỗi kết nối: '+e.message+'</div>';
+  });
+}
+
+// ═══════════════════════════════════════════
+// BTC TREND PANEL
+// ═══════════════════════════════════════════
+var btcTrendVisible = false;
+var btcTrendCache = null;
+
+function toggleBtcTrend() {
+  var panel = document.getElementById('btcTrendPanel');
+  btcTrendVisible = !btcTrendVisible;
+  panel.style.display = btcTrendVisible ? '' : 'none';
+  if (btcTrendVisible && !btcTrendCache) loadBtcTrend();
+}
+
+function loadBtcTrend() {
+  fetch('/api/btc/trend').then(function(r){ return r.json(); }).then(function(d) {
+    btcTrendCache = d;
+    renderBtcTrend(d);
+  }).catch(function(e){
+    console.error('BTC trend error:', e);
+  });
+}
+
+function renderBtcTrend(d) {
+  if (!d || d.error) return;
+
+  // Price
+  var chgColor = d.chg_1d >= 0 ? '#1D9E75' : '#E24B4A';
+  document.getElementById('btcPriceVal').textContent = '$' + (d.btc_price||'--').toLocaleString();
+  document.getElementById('btcChgVal').innerHTML =
+    '<span style="color:'+chgColor+'">' + (d.chg_1d >= 0 ? '+' : '') + d.chg_1d + '% 24h</span>' +
+    ' <span style="color:var(--color-text-secondary)">/ ' + (d.chg_7d >= 0 ? '+' : '') + d.chg_7d + '% 7d</span>';
+
+  // Bias boxes
+  ['short','medium','long'].forEach(function(key, i) {
+    var box = document.getElementById(['btcShort','btcMedium','btcLong2'][i]);
+    var t = d[key];
+    if (!t || !box) return;
+    var colors = {
+      'UPTREND':'#1D9E75','BULLISH':'#0F6E56',
+      'DOWNTREND':'#E24B4A','BEARISH':'#A32D2D','NEUTRAL':'#BA7517'
+    };
+    var col = colors[t.bias] || 'var(--color-text-primary)';
+    box.innerHTML =
+      '<div class="tf-label">' + t.label + '</div>' +
+      '<div class="bias-val" style="color:' + col + '">' + t.emoji + ' ' + t.bias + '</div>' +
+      '<div class="bias-signs">' + (t.signs||[]).slice(0,2).join(' · ') + '</div>';
+  });
+
+  // Overall
+  var ov = d.overall || '--';
+  var ovColor = ov.includes('LONG') ? '#1D9E75' : ov.includes('SHORT') ? '#E24B4A' : '#BA7517';
+  document.getElementById('btcOverallVal').innerHTML =
+    '<span style="color:' + ovColor + '">' + ov + '</span>';
+}
+
+// Auto-refresh BTC trend mỗi 5 phút nếu panel đang mở
+setInterval(function(){
+  if (btcTrendVisible) loadBtcTrend();
+}, 300000);
 
 // ═══════════════════════════════════════════════
 // DASHBOARD
@@ -3688,6 +4845,35 @@ function buildRangePanel(d, symbol) {
     // SL/TP
     slTpHtml +
 
+    // Fibo TP levels
+    (d.fibo ? (function(f){
+      var fmt6 = function(v){ return v < 0.01 ? v.toFixed(6) : v < 1 ? v.toFixed(4) : v.toFixed(2); };
+      var c1 = d.direction==='LONG'?'#1D9E75':'#E24B4A';
+      return '<div style="margin-top:10px;padding:10px;background:var(--color-background-secondary);border-radius:6px">' +
+        '<div style="font-size:10px;color:var(--muted2);margin-bottom:7px;font-weight:500">📐 Fibonacci TP levels (SL→Entry làm base)</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
+          '<div style="padding:6px 10px;border-radius:4px;background:rgba(29,158,117,.1)">' +
+            '<div style="font-size:10px;color:var(--muted2)">TP1 — Fibo 1.0 (an toàn)</div>' +
+            '<div style="font-size:13px;font-weight:500;color:'+c1+'">$' + fmt6(f.tp_fibo_100) + '</div>' +
+            '<div style="font-size:10px;color:var(--muted2)">R:R 1:' + (f.rr_fibo_100||'?') + '</div>' +
+          '</div>' +
+          '<div style="padding:6px 10px;border-radius:4px;background:rgba(83,74,183,.1)">' +
+            '<div style="font-size:10px;color:var(--muted2)">TP2 — Fibo 1.618 (lý tưởng)</div>' +
+            '<div style="font-size:13px;font-weight:500;color:#7F77DD">$' + fmt6(f.tp_fibo_1618) + '</div>' +
+            '<div style="font-size:10px;color:var(--muted2)">R:R 1:' + (f.rr_fibo_1618||'?') + '</div>' +
+          '</div>' +
+          '<div style="padding:6px 10px;border-radius:4px;background:rgba(186,117,23,.1)">' +
+            '<div style="font-size:10px;color:var(--muted2)">TP3 — Fibo 2.618 (breakout)</div>' +
+            '<div style="font-size:13px;font-weight:500;color:#BA7517">$' + fmt6(f.tp_fibo_2618) + '</div>' +
+          '</div>' +
+          '<div style="padding:6px 10px;border-radius:4px;background:rgba(99,102,241,.1)">' +
+            '<div style="font-size:10px;color:var(--muted2)">Range target</div>' +
+            '<div style="font-size:13px;font-weight:500;color:#6366f1">$' + fmt6(f.tp_range) + '</div>' +
+            '<div style="font-size:10px;color:var(--muted2)">R:R 1:' + (f.rr_range||'?') + '</div>' +
+          '</div>' +
+        '</div></div>';
+    })(d.fibo) : '') +
+
     // Override
     buildRangeOverrideRow(symbol, rh, rl) +
   '</div>';
@@ -3743,170 +4929,5 @@ function clearRangeOverride(symbol) {
 
 
 </script>
-
-<!-- ═══════════════════════════════════════════════
-     POSITION SIZING MODAL — Thu vao lenh
-     ═══════════════════════════════════════════════ -->
-<div class="ps-overlay" id="psOverlay">
-  <div class="ps-modal">
-
-    <div class="ps-header">
-      <div class="ps-header-left">
-        <div class="ps-title" id="psTitle">---</div>
-        <div class="ps-dir" id="psDirBadge">LONG</div>
-        <div class="ps-price" id="psCurrentPrice"></div>
-      </div>
-      <button class="ps-close" id="psCloseBtn">&#10005;</button>
-    </div>
-
-    <div class="ps-body">
-
-      <!-- 1. Von & Risk -->
-      <div class="ps-section">Vốn &amp; Rủi ro</div>
-      <div class="ps-grid2">
-        <div class="ps-field">
-          <div class="ps-label">Margin bỏ vào lệnh này <em>USDT</em></div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psCapital" type="number" placeholder="300" min="0">
-            <span class="ps-unit">$</span>
-          </div>
-          <div class="ps-hint" id="psCapHint">Tiền ký quỹ thực tế · Notional = Margin × Đòn bẩy</div>
-        </div>
-        <div class="ps-field">
-          <div class="ps-label">Tổng tài khoản <em>để tính % risk</em></div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psAccount" type="number" placeholder="10000" min="0">
-            <span class="ps-unit">$</span>
-          </div>
-          <div class="ps-hint" id="psRiskHint">Nhập để xem lệnh này chiếm % tài khoản</div>
-        </div>
-      </div>
-
-      <!-- 2. Don bay -->
-      <div class="ps-section">Đòn bẩy</div>
-      <div class="ps-lev-grid" id="psLevGrid"></div>
-      <div class="ps-grid2" style="margin-top:10px">
-        <div class="ps-field">
-          <div class="ps-label">Đòn bẩy tùy chỉnh</div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psLevCustom" type="number" min="1" max="125" placeholder="Tự nhập...">
-            <span class="ps-unit">x</span>
-          </div>
-          <div class="ps-hint" id="psNotionalHint">Notional = Margin × Đòn bẩy</div>
-        </div>
-        <div class="ps-field">
-          <div class="ps-label">Số lệnh DCA <em>1–5 lệnh</em></div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psDCA" type="number" value="1" min="1" max="5">
-            <span class="ps-unit">lệnh</span>
-          </div>
-          <div class="ps-hint">Chia nhỏ để giảm slippage &amp; rủi ro entry</div>
-        </div>
-      </div>
-
-      <!-- 3. Entry / SL / TP -->
-      <div class="ps-section">Entry · SL · TP <span style="font-size:9px;color:var(--accent);text-transform:none;letter-spacing:0;margin-left:4px;font-weight:400">✎ có thể sửa</span></div>
-
-      <!-- Entry selector: Now vs Optimal -->
-      <div id="psEntrySelector" style="display:none;gap:8px;margin-bottom:12px"></div>
-
-      <div class="ps-grid4">
-        <div class="ps-field">
-          <div class="ps-label" id="psEntryLabel">Entry</div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psEntry" type="number" step="any">
-            <span class="ps-unit">$</span>
-          </div>
-          <div class="ps-hint" id="psEntryHint"></div>
-        </div>
-        <div class="ps-field">
-          <div class="ps-label">Stop Loss</div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psSL" type="number" step="any">
-            <span class="ps-unit">$</span>
-          </div>
-          <div class="ps-hint" id="psSLHint" style="color:var(--short)"></div>
-        </div>
-        <div class="ps-field">
-          <div class="ps-label">Take Profit 1</div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psTP1" type="number" step="any">
-            <span class="ps-unit">$</span>
-          </div>
-          <div class="ps-hint" id="psTP1Hint" style="color:var(--long)"></div>
-        </div>
-        <div class="ps-field">
-          <div class="ps-label">Take Profit 2</div>
-          <div class="ps-input-wrap">
-            <input class="ps-input" id="psTP2" type="number" step="any">
-            <span class="ps-unit">$</span>
-          </div>
-          <div class="ps-hint" id="psTP2Hint" style="color:rgba(0,230,118,.6)"></div>
-        </div>
-      </div>
-
-      <!-- 4. Ke hoach lenh -->
-      <div class="ps-section">Kế hoạch vào lệnh</div>
-      <div>
-        <div class="ps-order-header">
-          <div>#</div><div>Entry</div><div>% Vốn</div><div>Margin ($)</div><div>Size (coin)</div><div>Notional</div>
-        </div>
-        <div id="psOrderRows" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
-          <div style="padding:14px;text-align:center;color:var(--muted);font-size:12px">Nhập vốn và SL để hiển thị kế hoạch</div>
-        </div>
-        <div class="ps-hint" style="text-align:center;margin-top:6px" id="psAvgNote"></div>
-      </div>
-
-      <!-- 5. Risk meter -->
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
-          <div class="ps-label">Risk Meter</div>
-          <div style="font-size:11px;font-weight:700" id="psRiskMeterLabel"></div>
-        </div>
-        <div class="ps-risk-bar"><div class="ps-risk-fill" id="psRiskFill" style="width:0%"></div></div>
-        <div class="ps-risk-labels"><span>Thấp (0%)</span><span>Vừa (2%)</span><span>Cao (5%+)</span></div>
-      </div>
-
-      <!-- 6. PnL du kien -->
-      <div class="ps-section">Dự kiến kết quả</div>
-      <div class="ps-pnl-grid">
-        <div class="ps-pnl-card">
-          <div class="ps-pnl-label">Margin (ký quỹ)</div>
-          <div class="ps-pnl-val" id="psTotalMargin">--</div>
-          <div class="ps-pnl-sub" id="psNotionalSub">notional: --</div>
-        </div>
-        <div class="ps-pnl-card">
-          <div class="ps-pnl-label">Lãi nếu hit TP1</div>
-          <div class="ps-pnl-val" style="color:var(--long)" id="psProfit">--</div>
-          <div class="ps-pnl-sub" id="psProfitR"></div>
-        </div>
-        <div class="ps-pnl-card">
-          <div class="ps-pnl-label">Lỗ nếu hit SL</div>
-          <div class="ps-pnl-val" style="color:var(--short)" id="psLoss">--</div>
-          <div class="ps-pnl-sub" id="psLossPct"></div>
-        </div>
-        <div class="ps-pnl-card">
-          <div class="ps-pnl-label">R:R thực tế</div>
-          <div class="ps-pnl-val" id="psRRActual">--</div>
-          <div class="ps-pnl-sub" id="psRRQual"></div>
-        </div>
-      </div>
-
-      <!-- 7. Liq warning -->
-      <div id="psLiqBox"></div>
-
-      <!-- 8. Tips -->
-      <div class="ps-tips" id="psTips">Nhập thông tin để nhận gợi ý cụ thể...</div>
-
-    </div><!-- /.ps-body -->
-
-    <div class="ps-footer">
-      <button class="btn" id="psFootClose">Đóng</button>
-      <button class="btn primary" id="psCopyBtn">📋 Copy kế hoạch</button>
-    </div>
-
-  </div><!-- /.ps-modal -->
-</div><!-- /.ps-overlay -->
-
 </body>
 </html>

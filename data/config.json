@@ -1,15 +1,13 @@
 {
   "symbols": [
-    "PTBUSDT",
     "BTCUSDT",
     "ETHUSDT",
     "ARBUSDT",
-    "CYSUSDT",
-    "HUMAUSDT"
+    "BNBUSDT"
   ],
   "watchlist_algos": {
-    "DYDXUSDT": "RANGE_SCALP",
-    "BTRUSDT": "TREND"
+    "BTRUSDT": "TREND",
+    "DYDXUSDT": "RANGE_SCALP"
   },
   "scan_modes": [
     "TREND",

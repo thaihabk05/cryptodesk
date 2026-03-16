@@ -117,12 +117,13 @@ def _is_bimodal(closes, n_bins=10, max_gap_pct=3.0):
     return gap_pct > max_gap_pct, round(gap_pct, 2)
 
 
-def _detect_range(df_h1, df_m15, df_h4, lookback_h1=24, lookback_m15=32):
+def _detect_range(df_h1, df_m15, df_h4, lookback_h1=120, lookback_m15=32):
     """
-    Detect range THẬT — coin phải sideway với biên lặp đi lặp lại.
+    Detect range THẬT — dùng H1 5 ngày (120 nến) để thấy range tích lũy dài hạn.
     Phân biệt:
-      ✅ ARB range: giá đảo giữa 0.1015–0.1055 nhiều lần trong 2 ngày
-      ❌ PTB bounce: giá downtrend rồi bounce 1 lần, không lặp lại
+      ✅ ARB range 12%: 0.098–0.110, touch 6+ lần trong 2 tuần → PASS
+      ❌ PTB bounce: dump 1 chiều, drift lớn → BLOCK
+      ❌ BTR dump: bimodal 2 regime → BLOCK
     """
     # ── H4 ATR spike check ──
     h4_recent    = df_h4.iloc[-20:]
@@ -131,7 +132,7 @@ def _detect_range(df_h1, df_m15, df_h4, lookback_h1=24, lookback_m15=32):
     h4_atr_ratio = h4_atr_last / h4_atr_mean if h4_atr_mean > 0 else 1
 
     if h4_atr_ratio > 1.8:
-        return 0, 0, 0, False, h4_atr_ratio, 0, 0
+        return 0, 0, 0, False, h4_atr_ratio, 0, 0, False, 0.0
 
     # ── Range biên từ H1 (24 nến = 1 ngày) ──
     h1_recent = df_h1.iloc[-lookback_h1:]
@@ -150,8 +151,24 @@ def _detect_range(df_h1, df_m15, df_h4, lookback_h1=24, lookback_m15=32):
     h1_atr_last = float(df_h1["atr"].iloc[-1])   if "atr" in df_h1.columns else 0
     atr_ratio   = h1_atr_last / h1_atr_mean if h1_atr_mean > 0 else 1
 
-    # ── Drift check: close đầu vs cuối không trending ──
-    drift_pct = abs(float(h1_closes.iloc[-1]) - float(h1_closes.iloc[0])) / float(h1_closes.iloc[0]) * 100
+    # ── Drift check: linear regression slope để detect downtrend kéo dài ──
+    # Ví dụ KITE: 0.223 → 0.201 trong 5 ngày — close[0] vs close[-1] có thể miss
+    # Linear regression slope cho kết quả chính xác hơn
+    import numpy as _np
+    closes_arr  = _np.array([float(x) for x in h1_closes])
+    n_pts       = len(closes_arr)
+    x_arr       = _np.arange(n_pts)
+    slope_coef  = _np.polyfit(x_arr, closes_arr, 1)[0]       # USD/nến
+    slope_pct   = abs(slope_coef) / closes_arr.mean() * 100  # % mỗi nến
+    total_drift = slope_pct * n_pts                           # tổng drift % ước tính
+
+    # drift_pct: tổng % dịch chuyển ước tính theo linear regression
+    drift_pct   = total_drift
+
+    # Cũng tính H1 MA34 slope (10 nến vs 35 nến trước) để phát hiện downtrend kéo dài
+    h1_ma34_now  = float(h1_closes.iloc[-10:].mean())   # MA gần nhất (approx)
+    h1_ma34_prev = float(h1_closes.iloc[-44:-10].mean()) if n_pts >= 44 else float(h1_closes.iloc[:max(1,n_pts//3)].mean())
+    ma34_slope_pct = (h1_ma34_now - h1_ma34_prev) / h1_ma34_prev * 100 if h1_ma34_prev > 0 else 0
 
     # ── Bimodal check: loại trường hợp có 2 price regime khác nhau ──
     # BTR: dump từ 0.18 → 0.15 tạo 2 cụm tách biệt → BLOCK
@@ -166,19 +183,27 @@ def _detect_range(df_h1, df_m15, df_h4, lookback_h1=24, lookback_m15=32):
 
     price_in_range = range_low <= price <= range_high
 
+    # Range rộng >= 10% (kiểu ARB): tích lũy dài hạn, chỉ cần touch >= 1
+    # Range hẹp  <  10%: tích lũy ngắn hạn, cần touch >= 2
+    min_touches = 1 if range_pct >= 10.0 else 2
+
+    # MA34 H1 đang dốc mạnh → coin đang trend, không phải range
+    ma34_trending = abs(ma34_slope_pct) > 4.0   # > 4% drift MA34 trong lookback = trend rõ
+
     is_ranging = (
         range_pct >= 1.5            # đủ rộng để có lãi
-        and range_pct <= 8.0        # không phải swing lớn (BTR 26% bị block ở đây)
-        and atr_ratio < 1.6         # H1 ATR không spike
-        and drift_pct < 4.0         # không có momentum rõ (PTB 18% bị block ở đây)
+        and range_pct <= 15.0       # nới lên 15% để bắt ARB-type range (~12%)
+        and atr_ratio < 1.8         # H1 ATR không spike quá mạnh
+        and drift_pct < 5.0         # linear regression drift < 5%
+        and not ma34_trending       # MA34 H1 không đang trend mạnh (KITE bị catch ở đây)
         and price_in_range
         and h4_atr_ratio < 1.8
-        and not is_bimodal          # không có 2 price regime riêng biệt (BTR bị block ở đây)
-        and top_touches >= 2        # đã chạm đỉnh range >= 2 lần
-        and bottom_touches >= 2     # đã chạm đáy range >= 2 lần
+        and not is_bimodal          # không có 2 price regime riêng biệt
+        and top_touches >= min_touches
+        and bottom_touches >= min_touches
     )
 
-    return range_high, range_low, round(range_pct, 2), is_ranging, round(atr_ratio, 2), top_touches, bottom_touches
+    return range_high, range_low, round(range_pct, 2), is_ranging, round(atr_ratio, 2), top_touches, bottom_touches, is_bimodal, bimodal_gap
 
 
 def _candle_reversal(df_h1, direction):
@@ -234,6 +259,47 @@ def _btc_allows(btc_ctx, direction):
 # Main
 # ─────────────────────────────────────────────
 
+
+def _fibo_levels(entry, sl, direction, range_high, range_low):
+    """
+    Tính các mức TP dựa trên Fibonacci Extension + Range target.
+    Dùng swing (SL → Entry) làm base leg để project extension.
+
+    Levels:
+      TP1 = Fibo 1.0  (100% của move SL→Entry)  — an toàn
+      TP2 = Fibo 1.618 (Golden ratio extension)  — target lý tưởng
+      TP3 = Fibo 2.618 (nếu breakout range)       — aggressive
+      Range TP = đỉnh/đáy range × 0.985          — target trong range
+    """
+    base = abs(entry - sl)   # khoảng cách SL→Entry = 1 leg
+
+    if direction == "LONG":
+        tp_f100  = round(entry + base * 1.0,   8)
+        tp_f1618 = round(entry + base * 1.618, 8)
+        tp_f2618 = round(entry + base * 2.618, 8)
+        tp_range = round(range_high * 0.985,   8)   # sát đỉnh range
+        tp_range2= round(range_high,            8)   # đỉnh range (aggressive)
+    else:
+        tp_f100  = round(entry - base * 1.0,   8)
+        tp_f1618 = round(entry - base * 1.618, 8)
+        tp_f2618 = round(entry - base * 2.618, 8)
+        tp_range = round(range_low * 1.015,    8)   # sát đáy range
+        tp_range2= round(range_low,             8)
+
+    sl_pct  = round(abs(entry - sl)   / entry * 100, 2)
+    rr100   = round(abs(tp_f100 - entry) / abs(entry - sl), 2) if sl > 0 else 0
+    rr1618  = round(abs(tp_f1618- entry) / abs(entry - sl), 2) if sl > 0 else 0
+    rr_range= round(abs(tp_range- entry) / abs(entry - sl), 2) if sl > 0 else 0
+
+    return {
+        "tp_fibo_100":  tp_f100,   "rr_fibo_100":  rr100,
+        "tp_fibo_1618": tp_f1618,  "rr_fibo_1618": rr1618,
+        "tp_fibo_2618": tp_f2618,
+        "tp_range":     tp_range,  "rr_range":     rr_range,
+        "tp_range_full":tp_range2,
+        "fibo_note":    "TP1=Fibo1.0 (an toàn) | TP2=Fibo1.618 (lý tưởng) | TP3=Fibo2.618 (breakout)",
+    }
+
 def range_analyze(symbol: str, cfg: dict) -> dict:
     ff = bool(cfg.get("force_futures", False))
 
@@ -261,7 +327,6 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
     trend_block_msg = ""
 
     if d1_bias == "DOWNTREND" and h4_bias == "DOWNTREND":
-        # Cả D1 và H4 đều downtrend → chỉ cho SHORT, block LONG hoàn toàn
         trend_block     = True
         trend_block_dir = "LONG"
         trend_block_msg = "D1+H4 đều DOWNTREND — chỉ xem xét SHORT tại đỉnh range"
@@ -269,10 +334,19 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         trend_block     = True
         trend_block_dir = "LONG"
         trend_block_msg = "D1 DOWNTREND — không Long range (countertrend)"
+    elif h4_bias == "DOWNTREND":
+        # H4 downtrend đủ để block LONG range (KITE case)
+        trend_block     = True
+        trend_block_dir = "LONG"
+        trend_block_msg = "H4 DOWNTREND — không Long range, chỉ Short tại đỉnh"
     elif d1_bias == "UPTREND" and h4_bias == "UPTREND":
         trend_block     = True
         trend_block_dir = "SHORT"
         trend_block_msg = "D1+H4 UPTREND — không Short range"
+    elif h4_bias == "UPTREND":
+        trend_block     = True
+        trend_block_dir = "SHORT"
+        trend_block_msg = "H4 UPTREND — không Short range"
 
     # ══════════════════════════════════════════
     # FILTER 2: Override range tay
@@ -287,8 +361,10 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         range_source   = "manual"
         top_touches    = 99  # manual override — assume valid
         bottom_touches = 99
+        is_bimodal     = False  # manual = user đã xác nhận range
+        bimodal_gap    = 0.0
     else:
-        range_high, range_low, range_pct, is_ranging, atr_ratio, top_touches, bottom_touches = _detect_range(df_h1, df_m15, df_h4)
+        range_high, range_low, range_pct, is_ranging, atr_ratio, top_touches, bottom_touches, is_bimodal, bimodal_gap = _detect_range(df_h1, df_m15, df_h4)
         range_source = "auto"
 
     # ══════════════════════════════════════════
@@ -477,7 +553,8 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         "top_zone":        smart_round(top_zone),
         "m15_entry_long":  smart_round(m15_entry_long),
         "m15_entry_short": smart_round(m15_entry_short),
-        "timeframe_note":  "Range: H1 (1 ngày) | Entry: M15 (4h) | Trend: D1+H4",
+        "timeframe_note":  "Range: H1 (5 ngày) | Entry: M15 (4h) | Trend: D1+H4",
+        "fibo": _fibo_levels(smart_round(price), sl, direction, range_high, range_low),
         "top_touches":    top_touches,
         "bottom_touches": bottom_touches,
         "is_bimodal":     is_bimodal,

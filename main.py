@@ -31,9 +31,10 @@ def no_cache(r):
     return r
 
 # ── Config ────────────────────────────────────
-DATA_DIR     = Path("data")
-CONFIG_FILE  = DATA_DIR / "config.json"
-HISTORY_FILE = DATA_DIR / "history.json"
+DATA_DIR       = Path("data")
+CONFIG_FILE    = DATA_DIR / "config.json"
+HISTORY_FILE   = DATA_DIR / "history.json"
+POSITIONS_FILE = DATA_DIR / "positions.json"
 
 # ── Algorithm Version — tăng mỗi khi thay đổi filter/threshold ──
 ALGO_VERSION = "v2.0"   # v2.0: PATCH A-I + RR≥1.5 + SL 2% (2026-03-05)
@@ -71,6 +72,19 @@ def load_config():
 
 def save_config(cfg):
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+
+def load_positions():
+    """Load danh sách position đã phân tích từ file."""
+    if POSITIONS_FILE.exists():
+        try:
+            return json.loads(POSITIONS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+def save_positions(positions: list):
+    """Lưu tối đa 50 positions gần nhất."""
+    POSITIONS_FILE.write_text(json.dumps(positions[:50], indent=2))
 
 def load_history():
     if HISTORY_FILE.exists():
@@ -520,6 +534,11 @@ def backtest_signal(signal: dict) -> dict:
 
     symbol    = signal["symbol"]
     direction = signal["direction"]
+
+    # Bug fix 1: Skip WAIT signal — không có entry thực tế
+    if direction == "WAIT":
+        return {**signal, "bt_result": "SKIP", "bt_note": "Direction=WAIT — không có lệnh thực tế",
+                "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
     entry     = float(signal["entry"])
     sl        = float(signal["sl"])
     tp1       = float(signal["tp1"])
@@ -550,6 +569,10 @@ def backtest_signal(signal: dict) -> dict:
 
         # Chỉ xét nến SAU thời điểm signal
         df_after = df[df["ts"] > sig_ts].reset_index(drop=True)
+
+        # Khai báo sớm để dùng trong mọi nhánh (bao gồm fallback)
+        sl_pct  = float(signal.get("sl_pct", 2))
+        tp1_pct = float(signal.get("tp1_pct", 3))
 
         if len(df_after) == 0:
             # Fallback: thử dùng nến mới nhất để tính unrealized
@@ -596,9 +619,6 @@ def backtest_signal(signal: dict) -> dict:
                     "bt_unrealized_pct": unrealized,
                     "bt_unrealized_r":   unrealized_r,
                     "bt_exit_price": round(last_price, 6)}
-
-        sl_pct  = float(signal.get("sl_pct", 2))
-        tp1_pct = float(signal.get("tp1_pct", 3))
 
         # ── Bước 1: Kiểm tra lệnh có được khớp không ──
         # Signal entry thường là giá thị trường lúc phát, nhưng có thể là Limit
@@ -724,6 +744,378 @@ def backtest_signal(signal: dict) -> dict:
                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
 
 
+
+
+
+@app.route("/api/positions", methods=["GET"])
+def get_positions():
+    """Lấy danh sách positions đã lưu."""
+    return jsonify(load_positions())
+
+@app.route("/api/positions", methods=["POST"])
+def save_position_entry():
+    """Lưu 1 position vào DB sau khi phân tích."""
+    data = request.json or {}
+    if not data.get("entry"):
+        return jsonify({"error": "Thiếu entry"}), 400
+
+    positions = load_positions()
+
+    # Tránh duplicate: cùng entry + direction + symbol
+    dup = next((p for p in positions
+                if p.get("entry") == data.get("entry")
+                and p.get("direction") == data.get("direction")
+                and p.get("symbol") == data.get("symbol")), None)
+    if dup:
+        # Update timestamp nếu đã tồn tại
+        dup["saved_at"] = _local_isoformat()
+        save_positions(positions)
+        return jsonify({"status": "updated", "id": dup["id"]})
+
+    # Thêm mới
+    import time as _t
+    new_pos = {
+        "id":         int(_t.time() * 1000),
+        "saved_at":   _local_isoformat(),
+        "direction":  data.get("direction", "LONG"),
+        "entry":      data.get("entry"),
+        "base_mode":  data.get("base_mode", "pct"),
+        "base_value": data.get("base_value", 2.0),
+        "margin":     data.get("margin", 0),
+        "leverage":   data.get("leverage", 1),
+        "symbol":     data.get("symbol", ""),
+    }
+    positions.insert(0, new_pos)
+    save_positions(positions)
+    return jsonify({"status": "saved", "id": new_pos["id"]})
+
+@app.route("/api/positions/<int:pos_id>", methods=["DELETE"])
+def delete_position(pos_id):
+    """Xóa 1 position khỏi DB."""
+    positions = load_positions()
+    positions = [p for p in positions if p.get("id") != pos_id]
+    save_positions(positions)
+    return jsonify({"status": "deleted"})
+
+@app.route("/api/positions/clear", methods=["POST"])
+def clear_positions():
+    """Xóa toàn bộ positions."""
+    save_positions([])
+    return jsonify({"status": "cleared"})
+
+@app.route("/api/position/analyze", methods=["POST"])
+def position_analyze():
+    """
+    Real-time position monitor: Fibo TP + BTC context.
+    Input: { direction, entry, margin, leverage, symbol, base_mode, base_value }
+    base_mode: 'pct' (% tự nhập), 'atr' (ATR H1 tự động), 'sl' (nhập SL thủ công)
+    """
+    try:
+        from core.binance import fetch_btc_context, fetch_klines, fetch_funding_rate
+        from core.indicators import prepare
+
+        def _fmt(v):
+            if v is None: return None
+            n = abs(v)
+            d = 8 if n < 0.000001 else 6 if n < 0.0001 else 5 if n < 0.01 else 4 if n < 1 else 2
+            return round(v, d)
+
+        data       = request.json or {}
+        direction  = data.get("direction", "LONG").upper()
+        entry      = float(data.get("entry", 0))
+        margin     = float(data.get("margin", 0))
+        leverage   = float(data.get("leverage", 1))
+        symbol     = data.get("symbol", "").upper().strip()
+        base_mode  = data.get("base_mode", "pct")   # 'pct' | 'atr' | 'sl'
+        base_value = data.get("base_value", 2.0)     # % hoặc SL price
+
+        if not entry:
+            return jsonify({"error": "Thiếu entry price"}), 400
+
+        is_long  = direction == "LONG"
+        pos_size = margin * leverage
+
+        # ── Tính base leg cho Fibo ──
+        base_leg = 0
+        base_note = ""
+        atr_value = None
+
+        if base_mode == "sl":
+            sl = float(base_value)
+            if is_long and sl >= entry:
+                return jsonify({"error": f"LONG: SL ({sl}) phải nhỏ hơn Entry ({entry})"}), 400
+            if not is_long and sl <= entry:
+                return jsonify({"error": f"SHORT: SL ({sl}) phải lớn hơn Entry ({entry})"}), 400
+            base_leg  = abs(entry - sl)
+            base_note = f"SL = ${_fmt(sl)} ({round(base_leg/entry*100,2)}% từ entry)"
+
+        elif base_mode == "atr":
+            # Fetch ATR H1 của symbol hoặc BTC
+            try:
+                sym_for_atr = symbol if symbol else "BTCUSDT"
+                df_atr = prepare(fetch_klines(sym_for_atr, "1h", 30, force_futures=True))
+                atr_value = float(df_atr["atr"].iloc[-1]) if "atr" in df_atr.columns else None
+                if atr_value and atr_value > 0:
+                    base_leg  = atr_value
+                    atr_pct   = round(atr_value / entry * 100, 2)
+                    base_note = f"ATR H1 = ${_fmt(atr_value)} ({atr_pct}% từ entry)"
+                else:
+                    base_leg  = entry * 0.02
+                    base_note = "ATR không lấy được, dùng 2% mặc định"
+            except Exception as e:
+                base_leg  = entry * 0.02
+                base_note = f"ATR lỗi ({str(e)[:40]}), dùng 2%"
+
+        else:  # pct
+            pct = float(base_value)
+            if pct <= 0 or pct > 30:
+                return jsonify({"error": "% base phải từ 0.1 đến 30"}), 400
+            base_leg  = entry * pct / 100
+            base_note = f"Base {pct}% từ entry"
+
+        sl_implied = (entry - base_leg) if is_long else (entry + base_leg)
+        sl_pct     = round(base_leg / entry * 100, 4)
+        risk_usd   = round(pos_size * sl_pct / 100, 2)
+        liq        = round(entry * (1 - 0.9/leverage), 6) if is_long else round(entry * (1 + 0.9/leverage), 6)
+
+        # ── Fibo TP levels ──
+        mults  = [0.618, 1.0, 1.618, 2.618, 4.236]
+        labels = ["TP0 — Fibo 0.618", "TP1 — Fibo 1.0", "TP2 — Fibo 1.618", "TP3 — Fibo 2.618", "TP4 — Fibo 4.236"]
+        hints  = ["scalp nhanh (30%)", "an toàn (40–60%)", "lý tưởng (30%)", "aggressive (10%)", "nếu breakout mạnh"]
+        tps = []
+        for idx, mult in enumerate(mults):
+            tp_price = entry + base_leg * mult if is_long else entry - base_leg * mult
+            pct_v    = round(base_leg * mult / entry * 100, 4)
+            pnl      = round(pos_size * pct_v / 100, 2) if margin > 0 else None
+            tps.append({
+                "label": labels[idx], "hint": hints[idx],
+                "price": _fmt(tp_price),
+                "pct":   pct_v, "rr": round(mult, 3), "pnl": pnl, "fibo": mult,
+            })
+
+        # ── BTC context real-time ──
+        btc           = fetch_btc_context()
+        btc_sentiment = btc.get("sentiment", "UNKNOWN")
+        btc_price     = btc.get("price")
+        btc_chg_24h   = btc.get("chg_24h", 0) or 0
+        btc_d1        = btc.get("d1_trend", "N/A")
+        btc_h4        = btc.get("h4_trend", "N/A")
+
+        # BTC H1 slope
+        try:
+            df_h1      = fetch_klines("BTCUSDT", "1h", 12)
+            h1_now     = float(df_h1["close"].iloc[-1])
+            h1_4h_ago  = float(df_h1["close"].iloc[-4])
+            btc_h1_slope = round((h1_now - h1_4h_ago) / h1_4h_ago * 100, 3)
+            btc_h1_candles = []
+            for _, row in df_h1.tail(4).iterrows():
+                o, cl = float(row["open"]), float(row["close"])
+                btc_h1_candles.append({"dir": "green" if cl >= o else "red",
+                                        "pct": round((cl - o) / o * 100, 3)})
+        except Exception:
+            btc_h1_slope   = 0
+            btc_h1_candles = []
+
+        # Funding
+        funding = None
+        if symbol:
+            try:
+                funding = fetch_funding_rate(symbol)
+            except Exception:
+                pass
+
+        # ── Risk score & signals ──
+        signals    = []
+        risk_score = 0
+
+        if is_long:
+            if btc_sentiment in ("PUMP", "RISK_ON"):
+                signals.append({"type":"ok",   "msg":f"BTC {btc_sentiment} — thuận LONG, có thể hold đến TP2"})
+                risk_score -= 1
+            elif btc_sentiment in ("DUMP", "RISK_OFF"):
+                signals.append({"type":"warn", "msg":f"BTC {btc_sentiment} — nguy hiểm LONG, cân nhắc chốt sớm"})
+                risk_score += 2
+            else:
+                signals.append({"type":"info", "msg":"BTC sideways — chốt tại TP1 là an toàn"})
+            if btc_h1_slope < -0.5:
+                signals.append({"type":"warn", "msg":f"BTC H1 giảm {btc_h1_slope}%/4h — áp lực bán"})
+                risk_score += 1
+            elif btc_h1_slope > 0.5:
+                signals.append({"type":"ok",   "msg":f"BTC H1 tăng +{btc_h1_slope}%/4h — hỗ trợ LONG"})
+                risk_score -= 1
+        else:
+            if btc_sentiment in ("DUMP", "RISK_OFF"):
+                signals.append({"type":"ok",   "msg":f"BTC {btc_sentiment} — thuận SHORT, có thể hold đến TP2"})
+                risk_score -= 1
+            elif btc_sentiment in ("PUMP", "RISK_ON"):
+                signals.append({"type":"warn", "msg":f"BTC {btc_sentiment} — nguy hiểm SHORT, cân nhắc chốt sớm"})
+                risk_score += 2
+            if btc_h1_slope > 0.5:
+                signals.append({"type":"warn", "msg":f"BTC H1 tăng +{btc_h1_slope}%/4h — áp lực SHORT"})
+                risk_score += 1
+            elif btc_h1_slope < -0.5:
+                signals.append({"type":"ok",   "msg":f"BTC H1 giảm {btc_h1_slope}%/4h — hỗ trợ SHORT"})
+                risk_score -= 1
+
+        if funding is not None:
+            if is_long and funding > 0.05:
+                signals.append({"type":"warn", "msg":f"Funding +{funding:.4f}% cao — Long đang trả phí"})
+                risk_score += 1
+            elif is_long and funding < -0.02:
+                signals.append({"type":"ok",   "msg":f"Funding {funding:.4f}% âm — Long được nhận phí"})
+                risk_score -= 1
+            elif not is_long and funding < -0.05:
+                signals.append({"type":"warn", "msg":f"Funding {funding:.4f}% âm — Short đang trả phí"})
+                risk_score += 1
+
+        if abs(btc_chg_24h) > 5:
+            lbl = "tăng mạnh" if btc_chg_24h > 0 else "giảm mạnh"
+            signals.append({"type":"info", "msg":f"BTC {lbl} {btc_chg_24h:+.2f}%/24h — volatility cao"})
+
+        if risk_score >= 2:
+            rec, rec_detail, rec_color = "CHỐT SỚM",       "Rủi ro cao — nên chốt tại TP1 hoặc thoát một phần ngay", "danger"
+        elif risk_score == 1:
+            rec, rec_detail, rec_color = "THẬN TRỌNG",     "Chốt 60–70% tại TP1, dời SL về break-even",              "warning"
+        elif risk_score <= -1:
+            rec, rec_detail, rec_color = "HOLD ĐƯỢC",      "Momentum thuận lợi — có thể hold đến TP2 (Fibo 1.618)",  "success"
+        else:
+            rec, rec_detail, rec_color = "THEO KẾ HOẠCH", "Chốt 60% TP1, dời SL về break-even, giữ 40% đến TP2",   "info"
+
+        return jsonify({
+            "direction": direction, "entry": entry,
+            "sl_implied": _fmt(sl_implied), "sl_pct": sl_pct,
+            "margin": margin, "leverage": leverage,
+            "pos_size": round(pos_size, 2), "risk_usd": risk_usd,
+            "liq_approx": _fmt(liq), "symbol": symbol,
+            "base_mode": base_mode, "base_note": base_note,
+            "atr_value": _fmt(atr_value),
+            "tps": tps,
+            "btc": {
+                "price": btc_price, "chg_24h": btc_chg_24h,
+                "sentiment": btc_sentiment, "note": btc.get("note",""),
+                "d1_trend": btc_d1, "h4_trend": btc_h4,
+                "h1_slope": btc_h1_slope, "h1_candles": btc_h1_candles,
+            },
+            "funding": funding,
+            "signals": signals,
+            "recommendation": rec, "rec_detail": rec_detail, "rec_color": rec_color,
+            "generated_at": _local_isoformat(),
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()[-600:]}), 500
+
+
+
+@app.route("/api/btc/trend")
+def btc_trend():
+    """
+    Phân tích trend BTC 3 khung: ngắn hạn (H1/H4), trung hạn (D1), dài hạn (W1).
+    Dùng MA34/89/200 + slope để xác định bias Long/Short cho altcoin.
+    """
+    from core.binance import fetch_klines
+    from core.indicators import prepare
+    import numpy as np
+
+    def _bias(df, label):
+        if len(df) < 10:
+            return {"bias": "NEUTRAL", "detail": "Không đủ data"}
+        r    = df.iloc[-1]
+        prev = df.iloc[-5]
+        price  = float(r["close"])
+        ma34   = float(r.get("ma34",  0) or 0)
+        ma89   = float(r.get("ma89",  0) or 0)
+        ma200  = float(r.get("ma200", 0) or 0)
+        ma34_p = float(prev.get("ma34", ma34) or ma34)
+        slope34 = (ma34 - ma34_p) / ma34_p * 100 if ma34_p > 0 else 0
+
+        # ATR ratio
+        atr_mean = float(df.iloc[-20:]["atr"].mean()) if "atr" in df.columns else 0
+        atr_last = float(r.get("atr", 0) or 0)
+        atr_r    = round(atr_last / atr_mean, 2) if atr_mean > 0 else 1
+
+        score = 0
+        signs = []
+        if ma34 > 0 and price > ma34:   score += 1; signs.append("Giá > MA34")
+        else:                             score -= 1; signs.append("Giá < MA34")
+        if ma89 > 0 and ma34 > ma89:    score += 1; signs.append("MA34 > MA89")
+        else:                             score -= 1; signs.append("MA34 < MA89")
+        if ma200 > 0 and price > ma200:  score += 1; signs.append("Giá > MA200")
+        else:                             score -= 1; signs.append("Giá < MA200")
+        if slope34 > 0.2:               score += 1; signs.append(f"MA34 dốc lên +{slope34:.2f}%")
+        elif slope34 < -0.2:             score -= 1; signs.append(f"MA34 dốc xuống {slope34:.2f}%")
+
+        if score >= 3:    bias = "UPTREND"
+        elif score >= 1:  bias = "BULLISH"
+        elif score <= -3: bias = "DOWNTREND"
+        elif score <= -1: bias = "BEARISH"
+        else:             bias = "NEUTRAL"
+
+        # Chốt lời gợi ý
+        if bias in ("UPTREND","BULLISH"):
+            alt_action = "LONG altcoin"
+            emoji = "🟢"
+        elif bias in ("DOWNTREND","BEARISH"):
+            alt_action = "SHORT altcoin hoặc đứng ngoài"
+            emoji = "🔴"
+        else:
+            alt_action = "Range scalp, tránh trend"
+            emoji = "🟡"
+
+        return {
+            "label":      label,
+            "bias":       bias,
+            "emoji":      emoji,
+            "score":      score,
+            "price":      round(price, 2),
+            "ma34":       round(ma34, 2) if ma34 else None,
+            "ma89":       round(ma89, 2) if ma89 else None,
+            "ma200":      round(ma200, 2) if ma200 else None,
+            "slope34":    round(slope34, 3),
+            "atr_ratio":  atr_r,
+            "signs":      signs,
+            "alt_action": alt_action,
+        }
+
+    try:
+        ff   = False
+        d_h1  = prepare(fetch_klines("BTCUSDT", "1h",  60, force_futures=ff))
+        d_h4  = prepare(fetch_klines("BTCUSDT", "4h",  60, force_futures=ff))
+        d_d1  = prepare(fetch_klines("BTCUSDT", "1d",  60, force_futures=ff))
+        d_w1  = prepare(fetch_klines("BTCUSDT", "1w",  30, force_futures=ff))
+
+        short   = _bias(d_h4,  "Ngắn hạn (H4)")
+        medium  = _bias(d_d1,  "Trung hạn (D1)")
+        longterm= _bias(d_w1,  "Dài hạn (W1)")
+
+        # Tổng hợp: dùng để gợi ý bias altcoin
+        scores = [short["score"], medium["score"], longterm["score"]]
+        avg_score = sum(scores) / len(scores)
+        if avg_score >= 2:    overall = "LONG altcoin mạnh"
+        elif avg_score >= 0.5:overall = "Ưu tiên LONG, cẩn thận SHORT"
+        elif avg_score <= -2: overall = "SHORT altcoin / đứng ngoài"
+        elif avg_score <= -0.5:overall = "Cẩn thận LONG, có thể SHORT"
+        else:                  overall = "Range scalp — tránh trend mạnh"
+
+        # BTC price change
+        btc_price = short["price"]
+        chg_1d = round((float(d_d1.iloc[-1]["close"]) - float(d_d1.iloc[-2]["close"])) / float(d_d1.iloc[-2]["close"]) * 100, 2) if len(d_d1) >= 2 else 0
+        chg_7d = round((float(d_d1.iloc[-1]["close"]) - float(d_d1.iloc[-8]["close"])) / float(d_d1.iloc[-8]["close"]) * 100, 2) if len(d_d1) >= 8 else 0
+
+        return jsonify({
+            "btc_price": btc_price,
+            "chg_1d":    chg_1d,
+            "chg_7d":    chg_7d,
+            "short":     short,
+            "medium":    medium,
+            "long":      longterm,
+            "overall":   overall,
+            "generated_at": _local_isoformat(),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/backtest", methods=["POST"])
 def run_backtest():
     """Backtest signals trong history, hỗ trợ filter theo khoảng thời gian."""
@@ -786,6 +1178,7 @@ def run_backtest():
     opens   = [r for r in results if r["bt_result"] == "OPEN"]
     pendings= [r for r in results if r["bt_result"] == "PENDING"]
     errors  = [r for r in results if r["bt_result"] == "ERROR"]
+    skips   = [r for r in results if r["bt_result"] == "SKIP"]
 
     closed = wins + losses
     win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0

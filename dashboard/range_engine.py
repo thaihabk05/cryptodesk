@@ -300,6 +300,189 @@ def _fibo_levels(entry, sl, direction, range_high, range_low):
         "fibo_note":    "TP1=Fibo1.0 (an toàn) | TP2=Fibo1.618 (lý tưởng) | TP3=Fibo2.618 (breakout)",
     }
 
+
+def _market_structure(df_h1, df_h4, df_d1, symbol, force_futures=False):
+    """
+    Phân tích cấu trúc thị trường để xác định Range vs Breakout/Trend.
+    Trả về dict với EMA alignment, pullback depth, higher/lower highs.
+    """
+    # ── EMA alignment từ H1 ──
+    row_h1   = df_h1.iloc[-1]
+    price    = float(row_h1["close"])
+    ema7     = float(df_h1["close"].rolling(7,  min_periods=1).mean().iloc[-1])
+    ema34    = float(df_h1["close"].rolling(34, min_periods=1).mean().iloc[-1])
+    ema89    = float(df_h1["close"].rolling(89, min_periods=1).mean().iloc[-1])
+    ema200   = float(df_h1["close"].rolling(200,min_periods=1).mean().iloc[-1])
+
+    # EMA slopes (% change trong 5 nến)
+    ema7_prev  = float(df_h1["close"].rolling(7,  min_periods=1).mean().iloc[-6]) if len(df_h1) >= 7  else ema7
+    ema34_prev = float(df_h1["close"].rolling(34, min_periods=1).mean().iloc[-6]) if len(df_h1) >= 35 else ema34
+    ema7_slope  = round((ema7  - ema7_prev)  / ema7_prev  * 100, 3) if ema7_prev  > 0 else 0
+    ema34_slope = round((ema34 - ema34_prev) / ema34_prev * 100, 3) if ema34_prev > 0 else 0
+
+    # EMA alignment score
+    # Bullish: price > ema7 > ema34 > ema89
+    # Bearish: price < ema7 < ema34 < ema89
+    bull_pts = sum([price > ema7, ema7 > ema34, ema34 > ema89, ema7_slope > 0.1, ema34_slope > 0.05])
+    bear_pts = sum([price < ema7, ema7 < ema34, ema34 < ema89, ema7_slope < -0.1, ema34_slope < -0.05])
+
+    if bull_pts >= 4:
+        ema_align = "BULLISH"
+        ema_note  = "EMA7>EMA34>EMA89 dốc lên — uptrend, tránh Short"
+    elif bear_pts >= 4:
+        ema_align = "BEARISH"
+        ema_note  = "EMA7<EMA34<EMA89 dốc xuống — downtrend, tránh Long"
+    elif bull_pts >= 2 and ema7_slope > 0:
+        ema_align = "WEAK_BULL"
+        ema_note  = "EMAs đang sắp xếp tăng nhẹ — range chuyển sang uptrend"
+    elif bear_pts >= 2 and ema7_slope < 0:
+        ema_align = "WEAK_BEAR"
+        ema_note  = "EMAs đang sắp xếp giảm nhẹ — range chuyển sang downtrend"
+    else:
+        ema_align = "FLAT"
+        ema_note  = "EMA7≈EMA34 flat — sideway range thật, Long/Short đều xét được"
+
+    # ── Pullback depth: đo pullback từ đỉnh gần nhất (20 nến) ──
+    recent_20   = df_h1.iloc[-20:]
+    swing_high  = float(recent_20["high"].max())
+    swing_low   = float(recent_20["low"].min())
+    current_low = float(df_h1["low"].iloc[-1])
+
+    # Pullback từ đỉnh = (swing_high - current_price) / swing_high
+    pullback_from_high = round((swing_high - price) / swing_high * 100, 2)
+
+    # Kiểm tra EMA34 có bị phá không trong pullback
+    ema34_breached = price < ema34
+
+    # ── Higher High / Lower High (10 nến vs 10 nến trước) ──
+    prev_10_high = float(df_h1.iloc[-20:-10]["high"].max()) if len(df_h1) >= 20 else swing_high
+    curr_10_high = float(df_h1.iloc[-10:]["high"].max())
+    prev_10_low  = float(df_h1.iloc[-20:-10]["low"].min())  if len(df_h1) >= 20 else swing_low
+    curr_10_low  = float(df_h1.iloc[-10:]["low"].min())
+
+    hh = curr_10_high > prev_10_high * 1.005   # Higher High (tăng > 0.5%)
+    lh = curr_10_high < prev_10_high * 0.995   # Lower High (giảm > 0.5%)
+    hl = curr_10_low  > prev_10_low  * 1.005   # Higher Low
+    ll = curr_10_low  < prev_10_low  * 0.995   # Lower Low
+
+    if hh and hl:
+        hh_pattern = "HH+HL"
+        hh_note    = "Higher High + Higher Low — uptrend rõ, Short nguy hiểm"
+    elif lh and ll:
+        hh_pattern = "LH+LL"
+        hh_note    = "Lower High + Lower Low — downtrend rõ, Long nguy hiểm"
+    elif hh:
+        hh_pattern = "HH"
+        hh_note    = "Higher High — áp lực mua mạnh"
+    elif lh:
+        hh_pattern = "LH"
+        hh_note    = "Lower High — áp lực bán"
+    else:
+        hh_pattern = "EQUAL"
+        hh_note    = "Đỉnh ngang — sideway range"
+
+    # ── Tổng hợp verdict: nên LONG, SHORT hay Range cả 2 ──
+    short_risks = 0
+    long_risks  = 0
+
+    if ema_align in ("BULLISH", "WEAK_BULL"):   short_risks += 2
+    if ema_align in ("BEARISH", "WEAK_BEAR"):   long_risks  += 2
+    if hh_pattern in ("HH+HL", "HH"):           short_risks += 1
+    if hh_pattern in ("LH+LL", "LH"):           long_risks  += 1
+    if pullback_from_high < 2.0:                short_risks += 1  # đang gần đỉnh, dễ reversal
+    if not ema34_breached and ema_align == "BULLISH": short_risks += 1  # giá vẫn trên EMA34
+
+    if short_risks >= 3:
+        verdict     = "LONG_ONLY"
+        verdict_note= "Cấu trúc UPTREND — chỉ Long pullback, KHÔNG Short đỉnh"
+        verdict_col = "ok"
+    elif long_risks >= 3:
+        verdict     = "SHORT_ONLY"
+        verdict_note= "Cấu trúc DOWNTREND — chỉ Short hồi, KHÔNG Long đáy"
+        verdict_col = "danger"
+    else:
+        verdict     = "BOTH_OK"
+        verdict_note= "Cấu trúc RANGE — có thể Long đáy + Short đỉnh"
+        verdict_col = "info"
+
+    return {
+        "ema7":    round(ema7,  8),
+        "ema34":   round(ema34, 8),
+        "ema89":   round(ema89, 8),
+        "ema200":  round(ema200,8),
+        "ema7_slope":    ema7_slope,
+        "ema34_slope":   ema34_slope,
+        "ema_align":     ema_align,
+        "ema_note":      ema_note,
+        "pullback_from_high": pullback_from_high,
+        "swing_high":    round(swing_high, 8),
+        "ema34_breached":ema34_breached,
+        "hh_pattern":    hh_pattern,
+        "hh_note":       hh_note,
+        "bull_pts":      bull_pts,
+        "bear_pts":      bear_pts,
+        "verdict":       verdict,
+        "verdict_note":  verdict_note,
+        "verdict_col":   verdict_col,
+    }
+
+
+def _btc_volume_trend(n_candles=8):
+    """
+    Phân tích BTC volume H1 để xác định trend momentum.
+    So sánh volume nến xanh vs đỏ trong n nến gần nhất.
+    """
+    try:
+        df = fetch_klines("BTCUSDT", "1h", n_candles + 4, force_futures=False)
+        recent = df.iloc[-n_candles:]
+        closes = recent["close"].astype(float)
+        opens  = recent["open"].astype(float)
+        vols   = recent["volume"].astype(float)
+
+        bull_vol = float(vols[closes >= opens].sum())
+        bear_vol = float(vols[closes <  opens].sum())
+        total    = bull_vol + bear_vol
+        bull_pct = round(bull_vol / total * 100, 1) if total > 0 else 50
+
+        # Volume trend: so nửa đầu vs nửa sau
+        half = n_candles // 2
+        vol_early = float(vols.iloc[:half].mean())
+        vol_late  = float(vols.iloc[half:].mean())
+        vol_slope = round((vol_late - vol_early) / vol_early * 100, 1) if vol_early > 0 else 0
+
+        # BTC price change trong n nến
+        btc_chg = round((float(closes.iloc[-1]) - float(closes.iloc[0])) / float(closes.iloc[0]) * 100, 2)
+
+        if bull_pct >= 65 and btc_chg > 0.5:
+            vol_bias  = "BULL_DOMINANT"
+            vol_note  = f"BTC volume xanh {bull_pct}% — momentum mua, tránh Short altcoin"
+        elif bull_pct <= 35 and btc_chg < -0.5:
+            vol_bias  = "BEAR_DOMINANT"
+            vol_note  = f"BTC volume đỏ {100-bull_pct:.0f}% — momentum bán, tránh Long altcoin"
+        elif vol_slope > 20 and btc_chg > 0:
+            vol_bias  = "RISING_BULL"
+            vol_note  = f"BTC volume tăng +{vol_slope}% & giá tăng — breakout đang xảy ra"
+        elif vol_slope > 20 and btc_chg < 0:
+            vol_bias  = "RISING_BEAR"
+            vol_note  = f"BTC volume tăng +{vol_slope}% & giá giảm — selling pressure mạnh"
+        else:
+            vol_bias  = "NEUTRAL"
+            vol_note  = f"BTC volume cân bằng ({bull_pct}% xanh) — không có bias rõ"
+
+        return {
+            "bull_vol_pct":  bull_pct,
+            "bear_vol_pct":  round(100 - bull_pct, 1),
+            "vol_slope":     vol_slope,
+            "btc_chg_8h":    btc_chg,
+            "vol_bias":      vol_bias,
+            "vol_note":      vol_note,
+            "n_candles":     n_candles,
+        }
+    except Exception as e:
+        return {"vol_bias": "UNKNOWN", "vol_note": str(e)[:60],
+                "bull_vol_pct": 50, "bear_vol_pct": 50, "vol_slope": 0, "btc_chg_8h": 0}
+
+
 def range_analyze(symbol: str, cfg: dict) -> dict:
     ff = bool(cfg.get("force_futures", False))
 
@@ -316,6 +499,10 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
     funding   = fetch_funding_rate(symbol)
     oi_change = fetch_oi_change(symbol)
     btc_ctx   = fetch_btc_context()
+
+    # ── Market structure + BTC volume analysis ──
+    ms        = _market_structure(df_h1, df_h4, df_d1, symbol)
+    btc_vol   = _btc_volume_trend(n_candles=8)
 
     # ══════════════════════════════════════════
     # FILTER 1: D1 trend — không Long khi D1 downtrend
@@ -381,6 +568,8 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
             "d1_bias": d1_bias, "h4_bias": h4_bias,
             "top_touches": top_touches, "bottom_touches": bottom_touches,
             "is_bimodal": is_bimodal, "bimodal_gap": bimodal_gap,
+            "market_structure": ms if "ms" in dir() else None,
+            "btc_volume": btc_vol if "btc_vol" in dir() else None,
             "warnings": [warn], "conditions": [],
         }
 
@@ -437,6 +626,8 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
             "range_high": smart_round(range_high), "range_low": smart_round(range_low),
             "range_pct": range_pct, "range_source": range_source,
             "d1_bias": d1_bias, "h4_bias": h4_bias,
+            "market_structure": ms if "ms" in dir() else None,
+            "btc_volume": btc_vol if "btc_vol" in dir() else None,
             "warnings": warnings, "conditions": [],
         }
     elif trend_block and trend_block_dir != direction:
@@ -454,6 +645,8 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
             "range_high": smart_round(range_high), "range_low": smart_round(range_low),
             "range_pct": range_pct, "range_source": range_source,
             "d1_bias": d1_bias, "h4_bias": h4_bias,
+            "market_structure": ms if "ms" in dir() else None,
+            "btc_volume": btc_vol if "btc_vol" in dir() else None,
             "warnings": [btc_warn], "conditions": [],
         }
 
@@ -566,5 +759,7 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
             "oi_str":      "{:+.2f}%".format(oi_change) if oi_change is not None else "N/A",
             "atr_ratio":   atr_ratio,
         },
-        "btc_context": btc_ctx,
+        "btc_context":    btc_ctx,
+        "market_structure": ms,
+        "btc_volume":    btc_vol,
     }

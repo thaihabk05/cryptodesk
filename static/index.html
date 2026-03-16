@@ -4845,6 +4845,113 @@ function buildRangePanel(d, symbol) {
     // SL/TP
     slTpHtml +
 
+    // ── Market Structure + BTC Volume Section ──
+    (function(){
+      var ms  = d.market_structure;
+      var bv  = d.btc_volume;
+      if (!ms && !bv) return '';
+
+      var alignColors = {
+        'BULLISH':   ['#EAF3DE','#3B6D11','#1D9E75'],
+        'WEAK_BULL': ['#FAEEDA','#633806','#BA7517'],
+        'FLAT':      ['rgba(99,102,241,.1)','#3C3489','#534AB7'],
+        'WEAK_BEAR': ['#FAEEDA','#633806','#BA7517'],
+        'BEARISH':   ['#FCEBEB','#A32D2D','#E24B4A'],
+      };
+      var verdictColors = {
+        'LONG_ONLY':  ['rgba(29,158,117,.12)','#1D9E75','#0F6E56'],
+        'SHORT_ONLY': ['rgba(226,75,74,.12)','#E24B4A','#A32D2D'],
+        'BOTH_OK':    ['rgba(99,102,241,.1)','#534AB7','#3C3489'],
+      };
+      var volColors = {
+        'BULL_DOMINANT':'#1D9E75','RISING_BULL':'#1D9E75',
+        'BEAR_DOMINANT':'#E24B4A','RISING_BEAR':'#E24B4A',
+        'NEUTRAL':'#BA7517','UNKNOWN':'#888780',
+      };
+      var fmt2 = function(v){
+        var n=Math.abs(parseFloat(v)||0);
+        return n<0.0001?parseFloat(v).toFixed(6):n<0.01?parseFloat(v).toFixed(5):n<1?parseFloat(v).toFixed(4):parseFloat(v).toFixed(2);
+      };
+
+      var html = '<div style="margin-top:12px;border-top:0.5px solid var(--color-border-tertiary);padding-top:12px">';
+      html += '<div style="font-size:10px;font-weight:500;color:var(--color-text-secondary);letter-spacing:.05em;margin-bottom:8px;text-transform:uppercase">Cấu trúc thị trường</div>';
+
+      // Verdict banner
+      if (ms && ms.verdict) {
+        var vc = verdictColors[ms.verdict] || verdictColors['BOTH_OK'];
+        html += '<div style="background:'+vc[0]+';border:1px solid '+vc[1]+'44;border-radius:6px;padding:9px 12px;margin-bottom:10px">' +
+          '<div style="font-size:13px;font-weight:500;color:'+vc[2]+'">'+ms.verdict.replace(/_/g,' ')+'</div>' +
+          '<div style="font-size:11px;color:var(--color-text-secondary);margin-top:2px">'+ms.verdict_note+'</div>' +
+          '</div>';
+      }
+
+      // EMA alignment + values
+      if (ms && ms.ema_align) {
+        var ac = alignColors[ms.ema_align] || alignColors['FLAT'];
+        html += '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">';
+        html += '<div style="flex:1;min-width:130px;background:'+ac[0]+';border-radius:5px;padding:7px 10px">' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:3px">EMA Alignment H1</div>' +
+          '<div style="font-size:12px;font-weight:500;color:'+ac[2]+'">'+ms.ema_align+'</div>' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-top:2px">'+ms.ema_note+'</div>' +
+          '</div>';
+        html += '<div style="flex:1;min-width:130px;background:var(--color-background-secondary);border-radius:5px;padding:7px 10px">' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:4px">EMA Values</div>';
+        [[ms.ema7,'EMA7',ms.ema7_slope],[ms.ema34,'EMA34',ms.ema34_slope],[ms.ema89,'EMA89',null]].forEach(function(e){
+          var sc = e[2]===null?'var(--color-text-secondary)':e[2]>0.05?'#1D9E75':e[2]<-0.05?'#E24B4A':'var(--color-text-secondary)';
+          var arr = e[2]===null?'':e[2]>0.05?' ↑':e[2]<-0.05?' ↓':'';
+          html += '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:1px">' +
+            '<span style="color:var(--color-text-secondary)">'+e[1]+'</span>' +
+            '<span style="color:'+sc+'">$'+fmt2(e[0])+arr+'</span></div>';
+        });
+        html += '</div></div>';
+      }
+
+      // HH pattern + Pullback depth
+      if (ms && ms.hh_pattern) {
+        var hhCol = ms.hh_pattern.indexOf('HH')===0?'#1D9E75':ms.hh_pattern.indexOf('LH')===0?'#E24B4A':'#BA7517';
+        var pbPct = ms.pullback_from_high || 0;
+        var pbCol = pbPct>4?'#1D9E75':pbPct<2?'#E24B4A':'#BA7517';
+        html += '<div style="display:flex;gap:8px;margin-bottom:8px">';
+        html += '<div style="flex:1;background:var(--color-background-secondary);border-radius:5px;padding:7px 10px">' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:3px">Cấu trúc đỉnh/đáy (10 nến)</div>' +
+          '<div style="font-size:13px;font-weight:500;color:'+hhCol+'">'+ms.hh_pattern+'</div>' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-top:2px">'+ms.hh_note+'</div>' +
+          '</div>';
+        html += '<div style="flex:1;background:var(--color-background-secondary);border-radius:5px;padding:7px 10px">' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:3px">Pullback từ đỉnh</div>' +
+          '<div style="font-size:16px;font-weight:500;color:'+pbCol+'">'+pbPct.toFixed(2)+'%</div>' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-top:2px">' +
+            (pbPct<2?'Gần đỉnh — Short rủi ro nếu uptrend':pbPct>4?'Đủ sâu — Long điểm tốt':'Trung bình') +
+          '</div></div>';
+        html += '</div>';
+      }
+
+      // BTC Volume bar
+      if (bv && bv.vol_bias) {
+        var bvc = volColors[bv.vol_bias] || '#888780';
+        var bp = bv.bull_vol_pct || 50;
+        html += '<div style="background:var(--color-background-secondary);border-radius:5px;padding:8px 10px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">' +
+            '<div style="font-size:10px;color:var(--color-text-secondary)">BTC Volume H1 (8 nến gần nhất)</div>' +
+            '<div style="font-size:11px;font-weight:500;color:'+bvc+'">'+bv.vol_bias.replace(/_/g,' ')+'</div>' +
+          '</div>' +
+          '<div style="display:flex;height:8px;border-radius:3px;overflow:hidden;margin-bottom:5px">' +
+            '<div style="width:'+bp+'%;background:#1D9E75;transition:width .3s"></div>' +
+            '<div style="width:'+(100-bp)+'%;background:#E24B4A;transition:width .3s"></div>' +
+          '</div>' +
+          '<div style="display:flex;justify-content:space-between;font-size:10px">' +
+            '<span style="color:#1D9E75">Xanh '+bp+'%</span>' +
+            '<span style="color:var(--color-text-secondary)">BTC '+(bv.btc_chg_8h>=0?'+':'')+bv.btc_chg_8h+'% / 8h</span>' +
+            '<span style="color:#E24B4A">Đỏ '+(100-bp)+'%</span>' +
+          '</div>' +
+          '<div style="font-size:10px;color:var(--color-text-secondary);margin-top:5px;border-top:0.5px solid var(--color-border-tertiary);padding-top:5px">'+bv.vol_note+'</div>' +
+          '</div>';
+      }
+
+      html += '</div>';
+      return html;
+    })() +
+
     // Fibo TP levels
     (d.fibo ? (function(f){
       var fmt6 = function(v){ return v < 0.01 ? v.toFixed(6) : v < 1 ? v.toFixed(4) : v.toFixed(2); };

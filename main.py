@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
     "watchlist_algos":  {},
     "scan_modes":       ["TREND"],
     "range_override":   {},
-    "interval_minutes": 30,
+    "interval_minutes": 5,   # mặc định 5 phút — có thể đổi trong config
     "telegram_token":   os.getenv("TELEGRAM_BOT_TOKEN", ""),
     "telegram_chat":    os.getenv("TELEGRAM_CHAT_ID", ""),
     "alert_confidence": "MEDIUM",   # MEDIUM | HIGH | ALL
@@ -394,8 +394,10 @@ def dashboard_scanner_loop():
         try:
             cfg = load_config()
             interval_sec = cfg.get("interval_minutes", 30) * 60
+            scan_start_ts = time.time()
+
             scanner_status["is_scanning"] = True
-            scanner_status["last_scan"]   = _local_isoformat()
+            scanner_status["scan_start"]  = _local_isoformat()  # khi BẮT ĐẦU
 
             # 1. Scan watchlist Dashboard (symbols cụ thể)
             try:
@@ -409,10 +411,14 @@ def dashboard_scanner_loop():
             except Exception as e:
                 print(f"[MARKET SCAN ERROR] {e}")
 
-            scanner_status["is_scanning"] = False
-            scanner_status["scan_count"] += 1
-            scanner_status["next_scan"]   = datetime.fromtimestamp(
+            scan_duration = round(time.time() - scan_start_ts)
+            scanner_status["is_scanning"]  = False
+            scanner_status["scan_count"]  += 1
+            scanner_status["last_scan"]    = _local_isoformat()  # khi HOÀN THÀNH
+            scanner_status["scan_duration"] = scan_duration      # thời gian scan thực tế (giây)
+            scanner_status["next_scan"]     = datetime.fromtimestamp(
                 time.time() + interval_sec).isoformat()
+
             elapsed = 0
             while elapsed < interval_sec and scanner_running:
                 time.sleep(5); elapsed += 5

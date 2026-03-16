@@ -1,176 +1,5 @@
 [
   {
-    "time": "2026-03-07T01:44:20.771302",
-    "symbol": "VETUSDT",
-    "direction": "LONG",
-    "confidence": "HIGH",
-    "price": 0.007056,
-    "entry": 0.007056,
-    "sl": 0.006946,
-    "sl_pct": 1.56,
-    "tp1": 0.007463,
-    "tp1_pct": 5.77,
-    "tp2": 0.007613,
-    "rr": 3.7,
-    "d1_bias": "",
-    "h4_bias": "",
-    "score": 7,
-    "verdict": "GO",
-    "entry_verdict": "GO",
-    "volume_24h": 8417771.007603,
-    "strategy": "RANGE_SCALP",
-    "conditions": [
-      "Bullish Engulfing H1",
-      "R:R 3.7",
-      "Range 7.7%",
-      "OI \u1ed5n \u0111\u1ecbnh",
-      "Funding neutral"
-    ],
-    "warnings": [],
-    "entry_checklist": [],
-    "market": {
-      "funding": -0.0126,
-      "funding_pct": "-0.0126%",
-      "oi_change": -0.24,
-      "oi_str": "-0.24%",
-      "atr_ratio": 0.92
-    },
-    "btc_context": {
-      "price": 68318.2,
-      "chg_24h": -3.61,
-      "d1_trend": "BEAR",
-      "h4_trend": "NEUTRAL",
-      "sentiment": "NEUTRAL",
-      "note": "BTC sideways \u2014 x\u00e9t t\u00edn hi\u1ec7u t\u1eebng m\u00e3 ri\u00eang"
-    },
-    "d1": {},
-    "h4": {},
-    "h1": {},
-    "oi_change": -0.24,
-    "funding": -0.0126,
-    "atr_x": null,
-    "btc_sentiment": "NEUTRAL",
-    "btc_d1_trend": "BEAR",
-    "num_conditions": 5,
-    "num_warnings": 0,
-    "algo_version": "v2.0",
-    "algo_date": "2026-03-05"
-  },
-  {
-    "time": "2026-03-07T01:44:25.443470",
-    "symbol": "MONUSDT",
-    "direction": "LONG",
-    "confidence": "HIGH",
-    "price": 0.02152,
-    "entry": 0.02152,
-    "sl": 0.02112,
-    "sl_pct": 1.86,
-    "tp1": 0.02293,
-    "tp1_pct": 6.55,
-    "tp2": 0.0234,
-    "rr": 3.52,
-    "d1_bias": "",
-    "h4_bias": "",
-    "score": 7,
-    "verdict": "GO",
-    "entry_verdict": "GO",
-    "volume_24h": 11233859.43876,
-    "strategy": "RANGE_SCALP",
-    "conditions": [
-      "N\u1ebfn xanh H1 body 41%",
-      "R:R 3.5",
-      "Range 8.8%",
-      "OI \u1ed5n \u0111\u1ecbnh",
-      "Funding neutral"
-    ],
-    "warnings": [],
-    "entry_checklist": [],
-    "market": {
-      "funding": 0.005,
-      "funding_pct": "+0.0050%",
-      "oi_change": -1.8,
-      "oi_str": "-1.80%",
-      "atr_ratio": 0.96
-    },
-    "btc_context": {
-      "price": 68303.6,
-      "chg_24h": -3.63,
-      "d1_trend": "BEAR",
-      "h4_trend": "NEUTRAL",
-      "sentiment": "NEUTRAL",
-      "note": "BTC sideways \u2014 x\u00e9t t\u00edn hi\u1ec7u t\u1eebng m\u00e3 ri\u00eang"
-    },
-    "d1": {},
-    "h4": {},
-    "h1": {},
-    "oi_change": -1.8,
-    "funding": 0.005,
-    "atr_x": null,
-    "btc_sentiment": "NEUTRAL",
-    "btc_d1_trend": "BEAR",
-    "num_conditions": 5,
-    "num_warnings": 0,
-    "algo_version": "v2.0",
-    "algo_date": "2026-03-05"
-  },
-  {
-    "time": "2026-03-07T01:44:26.736792",
-    "symbol": "PEOPLEUSDT",
-    "direction": "LONG",
-    "confidence": "HIGH",
-    "price": 0.00699,
-    "entry": 0.00699,
-    "sl": 0.006884,
-    "sl_pct": 1.52,
-    "tp1": 0.007362,
-    "tp1_pct": 5.32,
-    "tp2": 0.00751,
-    "rr": 3.5,
-    "d1_bias": "",
-    "h4_bias": "",
-    "score": 7,
-    "verdict": "GO",
-    "entry_verdict": "GO",
-    "volume_24h": 5179195.01485,
-    "strategy": "RANGE_SCALP",
-    "conditions": [
-      "N\u1ebfn xanh H1 body 71%",
-      "R:R 3.5",
-      "Range 7.2%",
-      "OI \u1ed5n \u0111\u1ecbnh",
-      "Funding neutral"
-    ],
-    "warnings": [],
-    "entry_checklist": [],
-    "market": {
-      "funding": -0.0034,
-      "funding_pct": "-0.0034%",
-      "oi_change": -4.99,
-      "oi_str": "-4.99%",
-      "atr_ratio": 0.88
-    },
-    "btc_context": {
-      "price": 68384.6,
-      "chg_24h": -3.51,
-      "d1_trend": "BEAR",
-      "h4_trend": "NEUTRAL",
-      "sentiment": "NEUTRAL",
-      "note": "BTC sideways \u2014 x\u00e9t t\u00edn hi\u1ec7u t\u1eebng m\u00e3 ri\u00eang"
-    },
-    "d1": {},
-    "h4": {},
-    "h1": {},
-    "oi_change": -4.99,
-    "funding": -0.0034,
-    "atr_x": null,
-    "btc_sentiment": "NEUTRAL",
-    "btc_d1_trend": "BEAR",
-    "num_conditions": 5,
-    "num_warnings": 0,
-    "algo_version": "v2.0",
-    "algo_date": "2026-03-05"
-  },
-  {
     "time": "2026-03-07T01:44:28.022986",
     "symbol": "RUNEUSDT",
     "direction": "LONG",
@@ -11350,6 +11179,349 @@
     "atr_x": null,
     "btc_sentiment": "NEUTRAL",
     "btc_d1_trend": "BEAR",
+    "num_conditions": 5,
+    "num_warnings": 1,
+    "algo_version": "v2.0",
+    "algo_date": "2026-03-05"
+  },
+  {
+    "time": "2026-03-08T18:08:23.603253",
+    "symbol": "RESOLVUSDT",
+    "direction": "SHORT",
+    "confidence": "HIGH",
+    "price": 0.07995,
+    "entry": 0.07995,
+    "sl": 0.08235,
+    "sl_pct": 3.0,
+    "tp1": 0.0731,
+    "tp1_pct": 8.57,
+    "tp2": 0.06625,
+    "rr": 2.86,
+    "d1_bias": "SHORT",
+    "h4_bias": "SHORT",
+    "score": 6,
+    "verdict": "GO",
+    "entry_verdict": "GO",
+    "volume_24h": 192894552.37936,
+    "strategy": "SCALP",
+    "conditions": [
+      "H1 EMA9 < EMA21 \u2014 bias SHORT",
+      "KEY: EMA9 v\u1eeba cross EMA21 H1 \u2193",
+      "EMA9 H1 slope \u2193 \u2014 momentum gi\u1ea3m",
+      "M15 EMA9 < EMA21 \u2014 x\u00e1c nh\u1eadn SHORT",
+      "KEY: EMA9 v\u1eeba cross EMA21 M15 \u2193",
+      "RSI M15 39 \u2014 v\u00f9ng an to\u00e0n (30\u201360)"
+    ],
+    "warnings": [
+      "\u26a0\ufe0f GI\u00c1 C\u00c1CH EMA21 M15 -6.6% \u2014 entry ngay kh\u00f4ng t\u1ed1i \u01b0u. Ch\u1edd rebound v\u1ec1 ~0.085298 (v\u00f9ng EMA21 M15) \u0111\u1ec3 R:R t\u1ed1t h\u01a1n"
+    ],
+    "entry_checklist": [
+      {
+        "ok": true,
+        "text": "Confidence HIGH \u2014 H1+M15+M5 \u0111\u1ed3ng thu\u1eadn"
+      },
+      {
+        "ok": true,
+        "text": "M5 x\u00e1c nh\u1eadn entry \u2014 v\u00e0o \u0111\u01b0\u1ee3c ngay"
+      },
+      {
+        "ok": true,
+        "text": "RSI M15 39 \u2014 v\u00f9ng an to\u00e0n cho SHORT"
+      },
+      {
+        "ok": true,
+        "text": "R:R 1:2.86 \u2265 1:2 \u2014 t\u1ed1t"
+      },
+      {
+        "ok": null,
+        "text": "Funding -0.0190% trung t\u00ednh"
+      },
+      {
+        "ok": true,
+        "text": "BTC gi\u1ea3m (-0.7%) \u2014 SHORT theo th\u1ecb tr\u01b0\u1eddng"
+      }
+    ],
+    "market": {
+      "funding": -0.019,
+      "funding_pct": "-0.0190%",
+      "oi_change": -8.1,
+      "oi_str": "-8.10%",
+      "atr_ratio": 2.0,
+      "atr_state": "NORMAL",
+      "atr_note": ""
+    },
+    "btc_context": {
+      "price": 67502.8,
+      "chg_24h": -0.66,
+      "d1_trend": "BEAR",
+      "h4_trend": "BEAR",
+      "sentiment": "RISK_OFF",
+      "note": "BTC trend BEAR D1+H4 \u2014 thu\u1eadn SHORT, th\u1eadn tr\u1ecdng LONG"
+    },
+    "d1": {
+      "bias": "SHORT",
+      "structure": "",
+      "notes": [
+        "H1 EMA9 < EMA21 \u2014 BEAR",
+        "RSI H1: 41"
+      ]
+    },
+    "h4": {
+      "bias": "SHORT",
+      "above_ma34": false,
+      "above_ma89": false,
+      "crossed_ma34": true,
+      "slope_ma34": "DOWN",
+      "slope_ma89": "\u2014",
+      "slope_ma200": "\u2014",
+      "ma34": 0.08444,
+      "ma89": 0.08506,
+      "ma200": 0.08506,
+      "structure": "SIDEWAYS",
+      "notes": []
+    },
+    "h1": {
+      "fib_zone": "0.382-0.618",
+      "fib_zone_price": "0.08587 \u2013 0.09042",
+      "vol_ratio": 1.31,
+      "h1_bullish": false,
+      "breakout": false,
+      "rsi_m15": 39.2,
+      "rsi_m5": 4.8
+    },
+    "oi_change": -8.1,
+    "funding": -0.019,
+    "atr_x": null,
+    "btc_sentiment": "RISK_OFF",
+    "btc_d1_trend": "BEAR",
+    "num_conditions": 6,
+    "num_warnings": 1,
+    "algo_version": "v2.0",
+    "algo_date": "2026-03-05"
+  },
+  {
+    "time": "2026-03-12T01:19:48.271564",
+    "symbol": "POWERUSDT",
+    "direction": "SHORT",
+    "confidence": "HIGH",
+    "price": 0.11861,
+    "entry": 0.11861,
+    "sl": 0.12217,
+    "sl_pct": 3.0,
+    "tp1": 0.11321,
+    "tp1_pct": 4.55,
+    "tp2": 0.10695,
+    "rr": 1.52,
+    "d1_bias": "SHORT",
+    "h4_bias": "SHORT",
+    "score": 5,
+    "verdict": "GO",
+    "entry_verdict": "GO",
+    "volume_24h": 32180073.04103,
+    "strategy": "SCALP",
+    "conditions": [
+      "H1 EMA9 < EMA21 \u2014 bias SHORT",
+      "EMA9 H1 slope \u2193 \u2014 momentum gi\u1ea3m",
+      "M15 EMA9 < EMA21 \u2014 x\u00e1c nh\u1eadn SHORT",
+      "RSI M15 44 \u2014 v\u00f9ng an to\u00e0n (30\u201360)",
+      "M15 trong Fib 0.382\u20130.618 \u2014 v\u00f9ng retest t\u1ed1t"
+    ],
+    "warnings": [
+      "\u2705 Funding +0.0433% \u2014 c\u00f3 l\u1ee3i SHORT"
+    ],
+    "entry_checklist": [
+      {
+        "ok": true,
+        "text": "Confidence HIGH \u2014 H1+M15+M5 \u0111\u1ed3ng thu\u1eadn"
+      },
+      {
+        "ok": null,
+        "text": "M5 EMA ch\u01b0a s\u1eb5n \u2014 ch\u1edd n\u1ebfn M5 ti\u1ebfp theo"
+      },
+      {
+        "ok": true,
+        "text": "RSI M15 44 \u2014 v\u00f9ng an to\u00e0n cho SHORT"
+      },
+      {
+        "ok": true,
+        "text": "R:R 1:1.52 \u2265 1:1.5 \u2014 ch\u1ea5p nh\u1eadn"
+      },
+      {
+        "ok": true,
+        "text": "Funding +0.0433% d\u01b0\u01a1ng \u2014 t\u1ed1t cho SHORT"
+      },
+      {
+        "ok": null,
+        "text": "BTC sideways (+0.9%) \u2014 x\u00e9t t\u00edn hi\u1ec7u m\u00e3 ri\u00eang"
+      }
+    ],
+    "market": {
+      "funding": 0.0433,
+      "funding_pct": "+0.0433%",
+      "oi_change": -5.54,
+      "oi_str": "-5.54%",
+      "atr_ratio": 1.31,
+      "atr_state": "NORMAL",
+      "atr_note": ""
+    },
+    "btc_context": {
+      "price": 70656.7,
+      "chg_24h": 0.93,
+      "d1_trend": "NEUTRAL",
+      "h4_trend": "BULL",
+      "sentiment": "NEUTRAL",
+      "note": "BTC sideways \u2014 x\u00e9t t\u00edn hi\u1ec7u t\u1eebng m\u00e3 ri\u00eang"
+    },
+    "d1": {
+      "bias": "SHORT",
+      "structure": "",
+      "notes": [
+        "H1 EMA9 < EMA21 \u2014 BEAR",
+        "RSI H1: 34"
+      ]
+    },
+    "h4": {
+      "bias": "SHORT",
+      "above_ma34": false,
+      "above_ma89": false,
+      "crossed_ma34": false,
+      "slope_ma34": "DOWN",
+      "slope_ma89": "\u2014",
+      "slope_ma200": "\u2014",
+      "ma34": 0.11939,
+      "ma89": 0.12037,
+      "ma200": 0.12037,
+      "structure": "SIDEWAYS",
+      "notes": []
+    },
+    "h1": {
+      "fib_zone": "0.382-0.618",
+      "fib_zone_price": "0.11671 \u2013 0.11888",
+      "vol_ratio": 0.17,
+      "h1_bullish": false,
+      "breakout": false,
+      "rsi_m15": 44.2,
+      "rsi_m5": 53.3
+    },
+    "oi_change": -5.54,
+    "funding": 0.0433,
+    "atr_x": null,
+    "btc_sentiment": "NEUTRAL",
+    "btc_d1_trend": "NEUTRAL",
+    "num_conditions": 5,
+    "num_warnings": 1,
+    "algo_version": "v2.0",
+    "algo_date": "2026-03-05"
+  },
+  {
+    "time": "2026-03-13T12:09:26.660182",
+    "symbol": "\u9f99\u867eUSDT",
+    "direction": "LONG",
+    "confidence": "HIGH",
+    "price": 0.02396,
+    "entry": 0.02396,
+    "sl": 0.02324,
+    "sl_pct": 3.01,
+    "tp1": 0.02529,
+    "tp1_pct": 5.55,
+    "tp2": 0.02662,
+    "rr": 1.84,
+    "d1_bias": "LONG",
+    "h4_bias": "LONG",
+    "score": 5,
+    "verdict": "GO",
+    "entry_verdict": "GO",
+    "volume_24h": 100467310.790368,
+    "strategy": "SCALP",
+    "conditions": [
+      "H1 EMA9 > EMA21 \u2014 bias LONG",
+      "EMA9 H1 slope \u2191 \u2014 momentum t\u0103ng",
+      "M15 EMA9 > EMA21 \u2014 x\u00e1c nh\u1eadn LONG",
+      "M15 n\u1ebfn xanh vol 2.0x \u2014 breakout m\u1ea1nh",
+      "RSI M15 62 \u2014 v\u00f9ng an to\u00e0n (40\u201370)"
+    ],
+    "warnings": [
+      "\u26a0\ufe0f GI\u00c1 C\u00c1CH EMA21 M15 +5.1% \u2014 entry ngay kh\u00f4ng t\u1ed1i \u01b0u. Ch\u1edd pullback v\u1ec1 ~0.022873 (v\u00f9ng EMA21 M15) \u0111\u1ec3 R:R t\u1ed1t h\u01a1n"
+    ],
+    "entry_checklist": [
+      {
+        "ok": true,
+        "text": "Confidence HIGH \u2014 H1+M15+M5 \u0111\u1ed3ng thu\u1eadn"
+      },
+      {
+        "ok": true,
+        "text": "M5 x\u00e1c nh\u1eadn entry \u2014 v\u00e0o \u0111\u01b0\u1ee3c ngay"
+      },
+      {
+        "ok": true,
+        "text": "RSI M15 62 \u2014 v\u00f9ng an to\u00e0n cho LONG"
+      },
+      {
+        "ok": true,
+        "text": "R:R 1:1.84 \u2265 1:1.5 \u2014 ch\u1ea5p nh\u1eadn"
+      },
+      {
+        "ok": null,
+        "text": "Funding +0.0200% trung t\u00ednh"
+      },
+      {
+        "ok": null,
+        "text": "BTC sideways (+2.7%) \u2014 x\u00e9t t\u00edn hi\u1ec7u m\u00e3 ri\u00eang"
+      }
+    ],
+    "market": {
+      "funding": 0.02,
+      "funding_pct": "+0.0200%",
+      "oi_change": 19.28,
+      "oi_str": "+19.28%",
+      "atr_ratio": 0.87,
+      "atr_state": "NORMAL",
+      "atr_note": ""
+    },
+    "btc_context": {
+      "price": 71355.1,
+      "chg_24h": 2.73,
+      "d1_trend": "NEUTRAL",
+      "h4_trend": "BULL",
+      "sentiment": "NEUTRAL",
+      "note": "BTC sideways \u2014 x\u00e9t t\u00edn hi\u1ec7u t\u1eebng m\u00e3 ri\u00eang"
+    },
+    "d1": {
+      "bias": "LONG",
+      "structure": "",
+      "notes": [
+        "H1 EMA9 > EMA21 \u2014 BULL",
+        "RSI H1: 71"
+      ]
+    },
+    "h4": {
+      "bias": "LONG",
+      "above_ma34": true,
+      "above_ma89": true,
+      "crossed_ma34": false,
+      "slope_ma34": "UP",
+      "slope_ma89": "\u2014",
+      "slope_ma200": "\u2014",
+      "ma34": 0.02285,
+      "ma89": 0.02221,
+      "ma200": 0.02221,
+      "structure": "SIDEWAYS",
+      "notes": []
+    },
+    "h1": {
+      "fib_zone": "0.382-0.618",
+      "fib_zone_price": "0.02253 \u2013 0.02344",
+      "vol_ratio": 1.98,
+      "h1_bullish": true,
+      "breakout": false,
+      "rsi_m15": 62.5,
+      "rsi_m5": 74.2
+    },
+    "oi_change": 19.28,
+    "funding": 0.02,
+    "atr_x": null,
+    "btc_sentiment": "NEUTRAL",
+    "btc_d1_trend": "NEUTRAL",
     "num_conditions": 5,
     "num_warnings": 1,
     "algo_version": "v2.0",

@@ -952,11 +952,14 @@ function loadScanOnTabSwitch() {
       // Hiển thị label "Kết quả cũ"
       var pl = document.getElementById('progLabel');
       if (pl && !st.running) {
-        var ft = st.finished_at ? new Date(st.finished_at) : null;
+        // Ưu tiên last_scan (thời điểm scan HOÀN THÀNH), fallback finished_at
+        var rawTs = st.last_scan || st.finished_at;
+        var ft = rawTs ? new Date(rawTs) : null;
         var timeStr = (ft && !isNaN(ft.getTime()))
           ? ft.toLocaleDateString('vi-VN')+' '+ft.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})
           : '--';
-        pl.textContent = 'Kết quả lần quét: ' + timeStr;
+        var durStr = st.scan_duration ? ' (' + st.scan_duration + 's)' : '';
+        pl.textContent = 'Kết quả lần quét: ' + timeStr + durStr;
         document.getElementById('scanProgress').style.display = '';
         document.getElementById('progFound').textContent = data.length + ' signals';
       }
@@ -1510,14 +1513,17 @@ function startDashPolling() {
           var diff = Math.round((new Date(st.next_scan) - new Date()) / 1000);
           var diffAbs = Math.abs(diff);
           var diffLabel = diffAbs >= 60 ? Math.round(diffAbs/60)+'m' : diffAbs+'s';
-          document.getElementById('statusLabel').textContent = diff < 0 ? 'Scanning soon...' : 'Next: '+diffLabel;
+          document.getElementById('statusLabel').textContent = diff < 0 ? '🔄 Scanning soon...' : '⏱ Next scan: '+diffLabel;
         }
         if (st.last_scan && st.last_scan !== lastScanTS) {
           lastScanTS = st.last_scan;
           fetch('/api/results').then(function(r){return r.json();}).then(function(data) {
             data.forEach(function(d){ signalCache[d.symbol] = d; });
             renderCards();
-            document.getElementById('lastScanTime').textContent = 'Last scan: '+new Date(st.last_scan).toLocaleTimeString();
+            var _ls = st.last_scan ? new Date(st.last_scan) : null;
+            var _lsStr = (_ls && !isNaN(_ls.getTime())) ? _ls.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '--';
+            var _dur = st.scan_duration ? ' · ' + st.scan_duration + 's' : '';
+            document.getElementById('lastScanTime').textContent = 'Last scan: ' + _lsStr + _dur;
           });
         }
       }

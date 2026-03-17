@@ -854,19 +854,20 @@ def position_analyze():
 
         elif base_mode == "atr":
             try:
-                sym_for_atr = symbol if symbol else "BTCUSDT"
-                df_atr = prepare(fetch_klines(sym_for_atr, "1h", 30, force_futures=True))
+                if not symbol:
+                    return jsonify({"error": "ATR mode cần nhập Symbol (ví dụ: ARBUSDT)"}), 400
+                df_atr    = prepare(fetch_klines(symbol, "1h", 30, force_futures=True))
                 atr_value = float(df_atr["atr"].iloc[-1]) if "atr" in df_atr.columns else None
-                if atr_value and atr_value > 0:
-                    base_leg  = atr_value
-                    atr_pct   = round(atr_value / entry * 100, 2)
-                    base_note = f"ATR H1 = ${_fmt(atr_value)} ({atr_pct}% từ entry)"
-                else:
-                    base_leg  = entry * 0.02
-                    base_note = "ATR không lấy được, dùng 2% mặc định"
+                if not atr_value or atr_value <= 0:
+                    return jsonify({"error": f"Không tính được ATR H1 cho {symbol}"}), 400
+                # Sanity: ATR không được vượt quá 20% của entry
+                if atr_value > entry * 0.20:
+                    return jsonify({"error": f"ATR H1 ({_fmt(atr_value)}) quá lớn so với entry ({_fmt(entry)}). Kiểm tra lại Symbol"}), 400
+                base_leg  = atr_value
+                atr_pct   = round(atr_value / entry * 100, 2)
+                base_note = f"ATR H1 {symbol} = ${_fmt(atr_value)} ({atr_pct}% từ entry)"
             except Exception as e:
-                base_leg  = entry * 0.02
-                base_note = f"ATR lỗi ({str(e)[:40]}), dùng 2%"
+                return jsonify({"error": f"Lỗi fetch ATR {symbol}: {str(e)[:80]}"}), 500
 
         else:  # pct
             pct = float(base_value)

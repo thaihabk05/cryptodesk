@@ -1000,6 +1000,170 @@ def position_analyze():
         else:
             rec, rec_detail, rec_color = "THEO KẾ HOẠCH", "Chốt 60% TP1, dời SL về break-even, giữ 40% đến TP2",   "info"
 
+        # ── Phân tích coin realtime + gợi ý hành động cụ thể ──
+        coin_price   = None
+        coin_chg_1h  = None
+        coin_ema_note= ""
+        action_now   = None   # Gợi ý hành động ngay tại thời điểm phân tích
+
+        if symbol:
+            try:
+                df_coin = fetch_klines(symbol, "1h", 10, force_futures=True)
+                coin_price  = float(df_coin["close"].iloc[-1])
+                coin_prev   = float(df_coin["close"].iloc[-2])
+                coin_chg_1h = round((coin_price - coin_prev) / coin_prev * 100, 3)
+
+                # EMA9 và EMA34 của coin
+                coin_ema9  = float(df_coin["close"].rolling(min(9,  len(df_coin)), min_periods=1).mean().iloc[-1])
+                coin_ema34 = float(df_coin["close"].rolling(min(34, len(df_coin)), min_periods=1).mean().iloc[-1])
+
+                if is_long:
+                    if coin_price < coin_ema9 and coin_chg_1h < -0.5:
+                        coin_ema_note = f"{symbol} đang yếu ({coin_chg_1h:+.2f}% / 1h) — cẩn thận Long"
+                    elif coin_price > coin_ema9 and coin_chg_1h > 0.3:
+                        coin_ema_note = f"{symbol} đang mạnh ({coin_chg_1h:+.2f}% / 1h) — hỗ trợ Long"
+                else:
+                    if coin_price > coin_ema9 and coin_chg_1h > 0.5:
+                        coin_ema_note = f"{symbol} đang hồi ({coin_chg_1h:+.2f}% / 1h) — cẩn thận Short"
+                    elif coin_price < coin_ema9 and coin_chg_1h < -0.3:
+                        coin_ema_note = f"{symbol} đang yếu ({coin_chg_1h:+.2f}% / 1h) — hỗ trợ Short"
+
+                # ── Gợi ý hành động dựa trên khoảng cách đến TP ──
+                if coin_price and tps:
+                    # Tính khoảng cách từ giá hiện tại đến từng TP
+                    tp_distances = []
+                    for tp in tps:
+                        tp_p = float(tp["price"]) if tp.get("price") else 0
+                        if tp_p <= 0: continue
+                        dist_pct = abs(coin_price - tp_p) / coin_price * 100
+                        tp_distances.append((tp["label"], tp_p, dist_pct))
+
+                    nearest_tp   = min(tp_distances, key=lambda x: x[2]) if tp_distances else None
+                    tp0_dist     = tp_distances[0][2] if tp_distances else 999
+                    tp1_dist     = tp_distances[1][2] if len(tp_distances) > 1 else 999
+
+                    # Kiểm tra đã qua TP0 chưa (coin_price < TP0 với SHORT, > TP0 với LONG)
+                    tp0_price   = float(tps[0]["price"]) if tps else 0
+                    tp1_price   = float(tps[1]["price"]) if len(tps) > 1 else 0
+                    tp2_price   = float(tps[2]["price"]) if len(tps) > 2 else 0
+
+                    passed_tp0  = (is_long  and coin_price >= tp0_price) or                                   (not is_long and coin_price <= tp0_price)
+                    passed_tp1  = (is_long  and coin_price >= tp1_price) or                                   (not is_long and coin_price <= tp1_price)
+                    near_tp0    = tp0_dist < 0.3   # trong vòng 0.3% của TP0
+                    near_tp1    = tp1_dist < 0.3
+
+                    # Tổng hợp momentum: BTC + coin
+                    btc_ok_for_dir = (is_long  and btc_sentiment in ("PUMP","RISK_ON")) or                                      (not is_long and btc_sentiment in ("DUMP","RISK_OFF"))
+                    btc_bad_for_dir= (is_long  and btc_sentiment in ("DUMP","RISK_OFF")) or                                      (not is_long and btc_sentiment in ("PUMP","RISK_ON"))
+
+                    coin_momentum_ok = (is_long and coin_chg_1h > 0) or                                        (not is_long and coin_chg_1h < 0)
+
+                    # Build action_now
+                    action_steps = []
+                    urgency      = "normal"   # normal | urgent | wait
+
+                    if passed_tp1:
+                        action_steps.append({
+                            "icon": "🎯",
+                            "text": f"Đã qua TP1 ({_fmt(tp1_price)}) — chốt 70% nếu chưa",
+                            "color": "success"
+                        })
+                        action_steps.append({
+                            "icon": "🔒",
+                            "text": f"Dời SL về TP0 ({_fmt(tp0_price)}) để bảo vệ lãi",
+                            "color": "info"
+                        })
+                        if len(tps) > 2:
+                            action_steps.append({
+                                "icon": "⏳",
+                                "text": f"Giữ 30% → TP2 ({_fmt(tp2_price)})" + (" — BTC hỗ trợ" if btc_ok_for_dir else ""),
+                                "color": "info"
+                            })
+                        urgency = "urgent"
+
+                    elif passed_tp0 or near_tp0:
+                        action_steps.append({
+                            "icon": "🎯",
+                            "text": f"Giá đang {'qua' if passed_tp0 else 'chạm'} TP0 ({_fmt(tp0_price)}) — chốt 30% ngay",
+                            "color": "success"
+                        })
+                        action_steps.append({
+                            "icon": "🔒",
+                            "text": "Dời SL về break-even (entry) cho phần còn lại",
+                            "color": "info"
+                        })
+                        if btc_ok_for_dir and coin_momentum_ok:
+                            action_steps.append({
+                                "icon": "✅",
+                                "text": f"Momentum thuận — giữ 70% → TP1 ({_fmt(tp1_price)})",
+                                "color": "ok"
+                            })
+                        elif btc_bad_for_dir:
+                            action_steps.append({
+                                "icon": "⚠️",
+                                "text": f"BTC ngược chiều — cân nhắc chốt thêm, chỉ giữ 30% → TP1",
+                                "color": "warning"
+                            })
+                        else:
+                            action_steps.append({
+                                "icon": "⏳",
+                                "text": f"Giữ 70% → TP1 ({_fmt(tp1_price)})",
+                                "color": "info"
+                            })
+                        urgency = "urgent"
+
+                    elif near_tp1:
+                        action_steps.append({
+                            "icon": "🔜",
+                            "text": f"Gần TP1 ({_fmt(tp1_price)}, còn {tp1_dist:.2f}%) — sẵn sàng chốt 50%",
+                            "color": "info"
+                        })
+                        urgency = "normal"
+
+                    else:
+                        # Chưa đến TP nào — check momentum
+                        if btc_bad_for_dir and not coin_momentum_ok:
+                            action_steps.append({
+                                "icon": "⚠️",
+                                "text": f"BTC và {symbol} đang ngược chiều lệnh — theo dõi kỹ",
+                                "color": "warning"
+                            })
+                            action_steps.append({
+                                "icon": "📌",
+                                "text": f"Nếu giá quay về entry, cân nhắc cắt lỗ bảo vệ vốn",
+                                "color": "warning"
+                            })
+                            urgency = "urgent"
+                        elif btc_ok_for_dir and coin_momentum_ok:
+                            action_steps.append({
+                                "icon": "✅",
+                                "text": f"Momentum thuận — giữ lệnh, TP0 tại {_fmt(tp0_price)} ({tp0_dist:.2f}% nữa)",
+                                "color": "ok"
+                            })
+                            urgency = "normal"
+                        else:
+                            action_steps.append({
+                                "icon": "⏳",
+                                "text": f"Chờ lệnh chạy — TP0 còn {tp0_dist:.2f}% ({_fmt(tp0_price)})",
+                                "color": "info"
+                            })
+                            urgency = "normal"
+
+                    action_now = {
+                        "coin_price":   _fmt(coin_price),
+                        "coin_chg_1h":  coin_chg_1h,
+                        "coin_ema_note":coin_ema_note,
+                        "steps":        action_steps,
+                        "urgency":      urgency,
+                        "tp0_dist":     round(tp0_dist, 2),
+                        "tp1_dist":     round(tp1_dist, 2) if len(tp_distances) > 1 else None,
+                        "passed_tp0":   passed_tp0,
+                        "passed_tp1":   passed_tp1,
+                    }
+
+            except Exception as _ce:
+                coin_ema_note = f"Không fetch được {symbol}: {str(_ce)[:50]}"
+
         return jsonify({
             "direction": direction, "entry": entry,
             "sl_implied": _fmt(sl_implied), "sl_pct": sl_pct,
@@ -1018,6 +1182,9 @@ def position_analyze():
             "funding": funding,
             "signals": signals,
             "recommendation": rec, "rec_detail": rec_detail, "rec_color": rec_color,
+            "action_now":   action_now,
+            "coin_price":   _fmt(coin_price) if coin_price else None,
+            "coin_chg_1h":  coin_chg_1h,
             "generated_at": _local_isoformat(),
         })
 

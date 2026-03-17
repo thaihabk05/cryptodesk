@@ -778,7 +778,7 @@ tbody td{padding:11px 12px;vertical-align:middle}
         <!-- Pct input -->
         <div id="posInputPct">
           <div style="display:flex;align-items:center;gap:8px">
-            <input type="number" id="posBasePct" value="2" min="0.1" max="30" step="0.1" style="width:80px">
+            <input type="number" id="posBasePct" value="2" min="0.1" max="20" step="0.1" style="width:80px" title="Nhập % — ví dụ 2 cho 2%">
             <span style="font-size:13px;color:var(--color-text-secondary)">% từ entry → Fibo base leg</span>
           </div>
         </div>
@@ -1780,18 +1780,37 @@ function renderPosResults(d) {
   }).join('');
 
   // TP cards
+  var tpColors = ['#1D9E75','#534AB7','#BA7517','#D85A30','#888780'];
+  var tpBg     = ['rgba(29,158,117,.08)','rgba(83,74,183,.08)','rgba(186,117,23,.08)','rgba(216,90,48,.08)','rgba(136,135,128,.08)'];
+
   var tpHtml = d.tps.map(function(tp, i) {
-    var tpColors = ['#1D9E75','#534AB7','#BA7517','#D85A30'];
-    var tpBg     = ['rgba(29,158,117,.08)','rgba(83,74,183,.08)','rgba(186,117,23,.08)','rgba(216,90,48,.08)'];
-    var pnlStr   = tp.pnl !== null ? '<span style="font-weight:500;color:' + tpColors[i] + '">+$' + tp.pnl.toFixed(2) + '</span>' : '';
-    return '<div style="background:' + tpBg[i] + ';border:0.5px solid ' + tpColors[i] + '44;border-radius:var(--border-radius-md);padding:12px 14px;margin-bottom:8px">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
-        '<span style="font-size:13px;font-weight:500;color:' + tpColors[i] + '">' + tp.label + '</span>' +
-        '<span style="font-size:11px;color:var(--color-text-secondary)">' + tp.hint + '</span>' +
+    var col = tpColors[Math.min(i, tpColors.length-1)];
+    var bg  = tpBg[Math.min(i, tpBg.length-1)];
+
+    // Giá TP — hiện to nhất, không thể nhầm
+    var priceStr = tp.is_valid === false
+      ? '<span style="color:#E24B4A;font-size:13px">⚠ Giá âm — SL/% không hợp lệ</span>'
+      : '<span style="font-size:22px;font-weight:500;color:' + col + '">$' + fmt(tp.price) + '</span>';
+
+    // % change — dùng pct_abs nếu có, fallback pct
+    var pctAbs  = (tp.pct_abs !== undefined ? tp.pct_abs : Math.abs(tp.pct || 0)).toFixed(2);
+    var pctSign = d.direction === 'LONG' ? '+' : '-';
+    var pctStr  = '<span style="font-size:13px;color:' + col + '">' + pctSign + pctAbs + '%</span>';
+
+    // P&L
+    var pnlStr = tp.pnl ? '<span style="font-size:13px;font-weight:500;color:' + col + '">+$' + tp.pnl.toFixed(2) + '</span>' : '';
+
+    return '<div style="background:' + bg + ';border:0.5px solid ' + col + '44;border-radius:var(--border-radius-md);padding:12px 16px;margin-bottom:8px">' +
+      // Header: label + hint
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<span style="font-size:12px;font-weight:500;color:' + col + '">' + tp.label + '</span>' +
+        '<span style="font-size:11px;color:var(--color-text-secondary);background:var(--color-background-secondary);padding:2px 7px;border-radius:10px">' + tp.hint + '</span>' +
       '</div>' +
-      '<div style="display:flex;align-items:baseline;gap:12px">' +
-        '<span style="font-size:18px;font-weight:500;color:' + tpColors[i] + '">$' + fmt(tp.price) + '</span>' +
-        '<span style="font-size:12px;color:' + tpColors[i] + '">' + (tp.pct >= 0 ? '+' : '') + tp.pct.toFixed(2) + '%</span>' +
+      // Price — số to nhất
+      '<div style="margin-bottom:6px">' + priceStr + '</div>' +
+      // Meta row: % | R:R | P&L
+      '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">' +
+        pctStr +
         '<span style="font-size:12px;color:var(--color-text-secondary)">R:R 1:' + tp.rr + '</span>' +
         pnlStr +
       '</div>' +
@@ -2031,6 +2050,10 @@ function posAnalyze() {
   var baseVal = 2.0;
   if (posBaseMode === 'pct') {
     baseVal = parseFloat(document.getElementById('posBasePct').value) || 2.0;
+    if (baseVal <= 0 || baseVal > 20) {
+      alert('% base phải từ 0.1 đến 20\nVí dụ: nhập 2 cho 2%\nKhông nhập giá hoặc margin vào ô này');
+      return;
+    }
   } else if (posBaseMode === 'sl') {
     baseVal = parseFloat(document.getElementById('posSlPrice').value) || 0;
     if (!baseVal) { alert('Nhập SL price'); return; }

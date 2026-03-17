@@ -836,21 +836,23 @@ def position_analyze():
         pos_size = margin * leverage
 
         # ── Tính base leg cho Fibo ──
-        base_leg = 0
+        base_leg  = 0
         base_note = ""
         atr_value = None
 
         if base_mode == "sl":
-            sl = float(base_value)
-            if is_long and sl >= entry:
-                return jsonify({"error": f"LONG: SL ({sl}) phải nhỏ hơn Entry ({entry})"}), 400
-            if not is_long and sl <= entry:
-                return jsonify({"error": f"SHORT: SL ({sl}) phải lớn hơn Entry ({entry})"}), 400
-            base_leg  = abs(entry - sl)
-            base_note = f"SL = ${_fmt(sl)} ({round(base_leg/entry*100,2)}% từ entry)"
+            sl_val = float(base_value)
+            if sl_val <= 0:
+                return jsonify({"error": "SL price không hợp lệ"}), 400
+            if is_long and sl_val >= entry:
+                return jsonify({"error": f"LONG: SL ({sl_val}) phải nhỏ hơn Entry ({entry})"}), 400
+            if not is_long and sl_val <= entry:
+                return jsonify({"error": f"SHORT: SL ({sl_val}) phải lớn hơn Entry ({entry})"}), 400
+            base_leg  = abs(entry - sl_val)
+            sl_pct_val = round(base_leg / entry * 100, 2)
+            base_note = f"SL = ${_fmt(sl_val)} ({sl_pct_val}% từ entry)"
 
         elif base_mode == "atr":
-            # Fetch ATR H1 của symbol hoặc BTC
             try:
                 sym_for_atr = symbol if symbol else "BTCUSDT"
                 df_atr = prepare(fetch_klines(sym_for_atr, "1h", 30, force_futures=True))
@@ -868,10 +870,16 @@ def position_analyze():
 
         else:  # pct
             pct = float(base_value)
-            if pct <= 0 or pct > 30:
-                return jsonify({"error": "% base phải từ 0.1 đến 30"}), 400
+            if pct <= 0 or pct > 20:
+                return jsonify({"error": f"% base phải từ 0.1 đến 20 (nhận được: {pct}). Nhập đúng % — ví dụ: 2 cho 2%"}), 400
             base_leg  = entry * pct / 100
             base_note = f"Base {pct}% từ entry"
+
+        # Sanity check: base_leg không được quá 50% của entry
+        if base_leg <= 0:
+            return jsonify({"error": "Base leg = 0, kiểm tra lại SL hoặc % nhập vào"}), 400
+        if base_leg > entry * 0.5:
+            return jsonify({"error": f"Base leg ({_fmt(base_leg)}) quá lớn so với entry ({_fmt(entry)}). Kiểm tra lại % hoặc SL"}), 400
 
         sl_implied = (entry - base_leg) if is_long else (entry + base_leg)
         sl_pct     = round(base_leg / entry * 100, 4)
@@ -884,13 +892,23 @@ def position_analyze():
         hints  = ["scalp nhanh (30%)", "an toàn (40–60%)", "lý tưởng (30%)", "aggressive (10%)", "nếu breakout mạnh"]
         tps = []
         for idx, mult in enumerate(mults):
-            tp_price = entry + base_leg * mult if is_long else entry - base_leg * mult
-            pct_v    = round(base_leg * mult / entry * 100, 4)
-            pnl      = round(pos_size * pct_v / 100, 2) if margin > 0 else None
+            if is_long:
+                tp_price = entry + base_leg * mult
+                pct_v    = round(base_leg * mult / entry * 100, 4)   # dương
+            else:
+                tp_price = entry - base_leg * mult
+                pct_v    = -round(base_leg * mult / entry * 100, 4)  # âm (SHORT đi xuống)
+            pnl = round(pos_size * abs(pct_v) / 100, 2) if margin > 0 else None  # P&L luôn dương (lãi)
             tps.append({
-                "label": labels[idx], "hint": hints[idx],
-                "price": _fmt(tp_price),
-                "pct":   pct_v, "rr": round(mult, 3), "pnl": pnl, "fibo": mult,
+                "label":      labels[idx],
+                "hint":       hints[idx],
+                "price":      _fmt(tp_price),
+                "pct":        pct_v,           # âm cho SHORT, dương cho LONG
+                "pct_abs":    round(abs(pct_v), 4),
+                "rr":         round(mult, 3),
+                "pnl":        pnl,
+                "fibo":       mult,
+                "is_valid":   tp_price > 0,
             })
 
         # ── BTC context real-time ──

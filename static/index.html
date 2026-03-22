@@ -4905,6 +4905,29 @@ function buildRangePanel(d, symbol) {
               (d.is_bimodal ? '⚠️ 2 regime (gap ' + d.bimodal_gap + '%)' : '✅ 1 vùng giá') +
               '</span>'
             : '') +
+          // Correlation badge
+          (d.corr_status && d.corr_status !== 'NEUTRAL'
+            ? (function(){
+                var corrColors = {
+                  'UNDERPERFORM_LONG':  ['rgba(226,75,74,.15)','#fca5a5'],
+                  'UNDERPERFORM_SHORT': ['rgba(226,75,74,.15)','#fca5a5'],
+                  'OUTPERFORM_BULL':    ['rgba(29,158,117,.15)','#34d399'],
+                  'OUTPERFORM_BEAR':    ['rgba(29,158,117,.15)','#34d399'],
+                };
+                var corrLabels = {
+                  'UNDERPERFORM_LONG':  '⚠ Coin yếu hơn BTC',
+                  'UNDERPERFORM_SHORT': '⚠ Coin mạnh hơn BTC dump',
+                  'OUTPERFORM_BULL':    '✅ Coin outperform BTC',
+                  'OUTPERFORM_BEAR':    '✅ Coin lead downside',
+                };
+                var cc = corrColors[d.corr_status] || ['rgba(128,128,128,.15)','#9ca3af'];
+                var cl = corrLabels[d.corr_status] || d.corr_status;
+                var pctStr = (d.coin_chg_4h !== undefined && d.btc_chg_4h !== undefined)
+                  ? ' (' + (d.coin_chg_4h >= 0 ? '+' : '') + d.coin_chg_4h + '% vs BTC ' + (d.btc_chg_4h >= 0 ? '+' : '') + d.btc_chg_4h + '%)'
+                  : '';
+                return '<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:' + cc[0] + ';color:' + cc[1] + '">' + cl + pctStr + '</span>';
+              })()
+            : '') +
         '</div>'
       : '') +
 

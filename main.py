@@ -142,7 +142,7 @@ def _save_signal_to_history(result: dict):
         print(f"[DEDUP] Skip {result.get('symbol')} {result.get('direction')} — duplicate trong 2h")
         return
     history.append({
-        "time":            result.get("timestamp", datetime.now().isoformat()),
+        "time":            result.get("timestamp", _local_isoformat()),
         "symbol":          result.get("symbol", ""),
         "direction":       result.get("direction", ""),
         "confidence":      result.get("confidence", ""),
@@ -222,9 +222,24 @@ def _send_high_alert(result: dict, token: str, chat_id: str):
     if algo_tag and algo_tag != strat_raw:
         strat_label = strat_map.get(algo_tag, algo_tag)
 
+    # Lấy trend bias
+    d1_b = str(result.get("d1_bias") or result.get("d1",{}).get("bias","?"))
+    h4_b = str(result.get("h4_bias") or result.get("h4",{}).get("bias","?"))
+
+    # Cảnh báo nếu trend ngược chiều signal
+    trend_warn = ""
+    if dirr == "LONG"  and any(x in d1_b+h4_b for x in ("DOWNTREND","BEARISH","SHORT","BEAR")):
+        trend_warn = "!! CANH BAO: D1/H4 dang DOWN — Long counter-trend, rui ro cao"
+    elif dirr == "SHORT" and any(x in d1_b+h4_b for x in ("UPTREND","BULLISH","LONG","BULL")):
+        trend_warn = "!! CANH BAO: D1/H4 dang UP — Short counter-trend, rui ro cao"
+
     lines = [
         dir_emoji + " " + sym + " — " + dirr + " | HIGH",
         verdict_line,
+    ]
+    if trend_warn:
+        lines.append(trend_warn)
+    lines += [
         "--------------------",
         "Chien luoc: " + strat_label,
         "Price: " + str(result.get("price","")) + " | R:R 1:" + str(result.get("rr","")),
@@ -232,15 +247,13 @@ def _send_high_alert(result: dict, token: str, chat_id: str):
         "SL: " + str(result.get("sl","")) + " (-" + str(result.get("sl_pct","")) + "%)",
         "TP1: " + str(result.get("tp1","")) + " (+" + str(result.get("tp1_pct","")) + "%) | TP2: " + str(result.get("tp2","")),
         "--------------------",
-        "D1: " + str(result.get("d1_bias") or result.get("d1",{}).get("bias","?")) +
-        " | H4: " + str(result.get("h4_bias") or result.get("h4",{}).get("bias","?")),
+        "D1: " + d1_b + " | H4: " + h4_b,
         "Funding: " + funding_str + " | OI: " + oi_str + " | ATR: " + atr_str,
         "--------------------",
         "Checklist:",
         check_lines.rstrip(),
     ]
-
-    # Thêm warnings nếu có (quan trọng để anh biết tại sao)
+    # Thêm warnings nếu có
     warns = result.get("warnings", [])
     if warns:
         lines.append("--------------------")
@@ -385,10 +398,30 @@ def market_scan_cycle(cfg):
         _time.sleep(2); elapsed += 2
 
     results = msc_state.get("results", [])
-    high_signals = [r for r in results if r.get("confidence") == "HIGH"
-                    and r.get("direction") in ("LONG","SHORT")
-                    and r.get("rr", 0) >= min_rr
-                    and r.get("entry_verdict") == "GO"]  # Chỉ gửi khi sẵn sàng vào lệnh
+    high_signals = []
+    for r in results:
+        if r.get("confidence") != "HIGH": continue
+        if r.get("direction") not in ("LONG","SHORT"): continue
+        if r.get("rr", 0) < min_rr: continue
+        if r.get("entry_verdict") != "GO": continue
+
+        # Block nếu D1 VÀ H4 đều ngược chiều signal
+        dirr = r.get("direction","")
+        d1_b = str(r.get("d1_bias") or r.get("d1",{}).get("bias","") or "")
+        h4_b = str(r.get("h4_bias") or r.get("h4",{}).get("bias","") or "")
+        d1_down = "DOWNTREND" in d1_b or d1_b in ("BEAR","SHORT","BEARISH")
+        h4_down = "DOWNTREND" in h4_b or h4_b in ("BEAR","SHORT","BEARISH")
+        d1_up   = "UPTREND"   in d1_b or d1_b in ("BULL","LONG","BULLISH")
+        h4_up   = "UPTREND"   in h4_b or h4_b in ("BULL","LONG","BULLISH")
+
+        if dirr == "LONG"  and d1_down and h4_down:
+            print(f"[TELEGRAM BLOCK] {r.get('symbol')} LONG blocked: D1={d1_b} H4={h4_b}")
+            continue
+        if dirr == "SHORT" and d1_up and h4_up:
+            print(f"[TELEGRAM BLOCK] {r.get('symbol')} SHORT blocked: D1={d1_b} H4={h4_b}")
+            continue
+
+        high_signals.append(r)
 
     print(f"[MARKET SCAN] Xong — {len(results)} signals, {len(high_signals)} HIGH")
 
@@ -575,6 +608,13 @@ def backtest_signal(signal: dict) -> dict:
         tp1_pct = float(signal.get("tp1_pct", 3))
 
         if len(df_after) == 0:
+            # Nếu signal mới < 2h → chưa đủ H1 candles để backtest — PENDING
+            hours_since_signal = (now_ts - sig_ts) / 3600
+            if hours_since_signal < 2:
+                return {**signal, "bt_result": "PENDING",
+                        "bt_note": f"Signal mới ({hours_since_signal:.1f}h trước) — chờ đủ H1 candles",
+                        "bt_candles": 0, "bt_pnl_r": None, "bt_exit_price": None}
+
             # Fallback: thử dùng nến mới nhất để tính unrealized
             last_price   = float(df["close"].iloc[-1])
 
@@ -1369,6 +1409,11 @@ def run_backtest():
     closed = wins + losses
     win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
 
+    # Warn nếu nhiều lệnh có bt_candles=0 (close check, không phải replay H1)
+    stale_count = sum(1 for r in closed if r.get("bt_candles") == 0 and
+                      "đã dưới SL" in (r.get("bt_note") or "") or
+                      "đã trên SL" in (r.get("bt_note") or ""))
+
     pnl_rs    = [r["bt_pnl_r"] for r in closed if r["bt_pnl_r"] is not None]
     total_r   = round(sum(pnl_rs), 2)
     avg_r     = round(sum(pnl_rs) / len(pnl_rs), 2) if pnl_rs else 0
@@ -1396,6 +1441,8 @@ def run_backtest():
         "expectancy":       expectancy,
         "avg_candles_win":  avg_candles_win,
         "avg_candles_loss": avg_candles_loss,
+        "stale_signals":    stale_count,
+        "stale_note":       f"{stale_count} lệnh close-check (giá đã qua SL/TP trước khi backtest chạy)" if stale_count > 0 else "",
     }
 
     return jsonify({"results": results, "summary": summary})

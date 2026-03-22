@@ -48,9 +48,11 @@ def _get_trend_bias(df, label=""):
     if slope34 < -0.3:  down_count += 1  # MA34 đang dốc xuống
     elif slope34 > 0.3: up_count   += 1
 
-    if down_count >= 3:
+    # Ngưỡng 2/4: nhạy hơn, bắt trend sớm hơn
+    # (3/4 trước đây bỏ sót KITE H4 chỉ có 2 điều kiện downtrend)
+    if down_count >= 2:
         return "DOWNTREND"
-    elif up_count >= 3:
+    elif up_count >= 2:
         return "UPTREND"
     return "NEUTRAL"
 
@@ -253,6 +255,71 @@ def _btc_allows(btc_ctx, direction):
     if direction == "SHORT" and sentiment in ("PUMP", "RISK_ON"):
         return False, "BTC {} — không Short range".format(sentiment)
     return True, ""
+
+
+def _btc_pump_blocks_range(btc_ctx, direction):
+    """
+    Fix #1: Block Range mode khi BTC đang pump/dump mạnh.
+    - BTC pump > 2%/24h → block LONG (altcoin chạy theo trend, không range)
+    - BTC dump > 2%/24h → block LONG (downtrend mạnh, đừng bắt đáy)
+    - SHORT khi BTC pump/dump mạnh vẫn OK (thuận trend ngắn hạn)
+    Case 18/3: BTC pump → 29 loss LONG → cần hard block.
+    """
+    if not btc_ctx:
+        return False, ""
+
+    chg_24h   = btc_ctx.get("chg_24h") or 0
+    sentiment = btc_ctx.get("sentiment", "NEUTRAL")
+
+    # Chỉ block LONG khi BTC pump mạnh
+    if direction == "LONG":
+        if chg_24h > 2.0:
+            return True, f"BTC pump +{chg_24h:.1f}% / 24h — thị trường trending, range LONG không hiệu quả"
+        if chg_24h < -2.0:
+            return True, f"BTC dump {chg_24h:.1f}% / 24h — tránh Long khi BTC đang downtrend"
+
+    # Block SHORT khi BTC dump quá mạnh (< -3%) + RISK_OFF — altcoin sẽ dump theo, không range
+    if direction == "SHORT" and chg_24h < -3.0 and sentiment in ("DUMP", "RISK_OFF"):
+        return True, f"BTC DUMP mạnh {chg_24h:.1f}% — altcoin dump tự do, range Short không có đáy"
+
+    return False, ""
+
+
+def _coin_btc_correlation(df_h4_coin, btc_ctx):
+    """
+    Fix #2: Check correlation coin vs BTC trong 4H gần nhất.
+    Nếu BTC tăng mạnh mà coin không tăng theo → coin underperform → không Long.
+    Case: BTC +2%/4h, BERA -0.5% → BERA yếu, Long sẽ thua.
+    """
+    if not btc_ctx or len(df_h4_coin) < 3:
+        return "NEUTRAL", 0, 0
+
+    # Coin chg 4h (so nến hiện tại vs nến 4 tiếng trước)
+    coin_now  = float(df_h4_coin["close"].iloc[-1])
+    coin_4h   = float(df_h4_coin["close"].iloc[-2]) if len(df_h4_coin) >= 2 else coin_now
+    coin_chg_4h = round((coin_now - coin_4h) / coin_4h * 100, 2) if coin_4h > 0 else 0
+
+    # BTC chg 4h từ context (dùng chg_24h / 6 để ước tính 4h)
+    btc_chg_24h = btc_ctx.get("chg_24h") or 0
+    btc_chg_4h  = round(btc_chg_24h / 6, 2)  # ước tính
+
+    # Tính relative strength: coin vs BTC
+    # Nếu btc_chg_4h > 1% mà coin_chg_4h < 0.3% → underperform
+    underperform_long  = btc_chg_4h >  1.0 and coin_chg_4h <  0.3
+    underperform_short = btc_chg_4h < -1.0 and coin_chg_4h > -0.3
+
+    if underperform_long:
+        return "UNDERPERFORM_LONG",  coin_chg_4h, btc_chg_4h
+    if underperform_short:
+        return "UNDERPERFORM_SHORT", coin_chg_4h, btc_chg_4h
+
+    # Coin mạnh hơn BTC đáng kể → có momentum riêng
+    if coin_chg_4h > btc_chg_4h + 1.5:
+        return "OUTPERFORM_BULL",    coin_chg_4h, btc_chg_4h
+    if coin_chg_4h < btc_chg_4h - 1.5:
+        return "OUTPERFORM_BEAR",    coin_chg_4h, btc_chg_4h
+
+    return "NEUTRAL", coin_chg_4h, btc_chg_4h
 
 
 # ─────────────────────────────────────────────
@@ -504,6 +571,12 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
     ms        = _market_structure(df_h1, df_h4, df_d1, symbol)
     btc_vol   = _btc_volume_trend(n_candles=8)
 
+    # ── Fix #1: BTC pump/dump mạnh → block Range mode ──
+    btc_pump_block, btc_pump_msg = _btc_pump_blocks_range(btc_ctx, "LONG")  # check cho LONG trước
+
+    # ── Fix #2: Coin correlation vs BTC ──
+    corr_status, coin_chg_4h, btc_chg_4h = _coin_btc_correlation(df_h4, btc_ctx)
+
     # ══════════════════════════════════════════
     # FILTER 1: D1 trend — không Long khi D1 downtrend
     # ══════════════════════════════════════════
@@ -612,6 +685,24 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         }
 
     # ══════════════════════════════════════════
+    # FILTER 2b: BTC pump block — thêm sau override, trước trend block
+    # ══════════════════════════════════════════
+    btc_pump_block_dir, btc_pump_msg_dir = _btc_pump_blocks_range(btc_ctx, direction)
+    if btc_pump_block_dir:
+        return {
+            "symbol": symbol, "strategy": "RANGE_SCALP", "direction": "WAIT",
+            "confidence": "LOW", "price": smart_round(price),
+            "range_high": smart_round(range_high), "range_low": smart_round(range_low),
+            "range_pct": range_pct, "range_source": range_source,
+            "d1_bias": d1_bias, "h4_bias": h4_bias,
+            "top_touches": top_touches, "bottom_touches": bottom_touches,
+            "is_bimodal": is_bimodal, "bimodal_gap": bimodal_gap,
+            "market_structure": ms, "btc_volume": btc_vol,
+            "warnings": [f"🚫 {btc_pump_msg_dir}"],
+            "conditions": [],
+        }
+
+    # ══════════════════════════════════════════
     # FILTER 3: Trend block
     # ══════════════════════════════════════════
     warnings   = []
@@ -660,6 +751,23 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
             warnings.append("⚠️ Funding {:.3f}% âm — Short cẩn thận".format(funding))
 
     # ══════════════════════════════════════════
+    # FILTER 5b: Coin correlation với BTC
+    # ══════════════════════════════════════════
+    if corr_status == "UNDERPERFORM_LONG" and direction == "LONG":
+        warnings.append(
+            f"⚠️ Coin yếu hơn BTC: coin {coin_chg_4h:+.1f}% vs BTC {btc_chg_4h:+.1f}%/4h — coin đang underperform"
+        )
+        # Không block cứng nhưng giảm score
+    elif corr_status == "UNDERPERFORM_SHORT" and direction == "SHORT":
+        warnings.append(
+            f"⚠️ Coin mạnh hơn BTC khi BTC dump: coin {coin_chg_4h:+.1f}% vs BTC {btc_chg_4h:+.1f}%/4h"
+        )
+    elif corr_status == "OUTPERFORM_BULL" and direction == "LONG":
+        conditions.append(f"Coin outperform BTC ({coin_chg_4h:+.1f}% vs {btc_chg_4h:+.1f}%)")
+    elif corr_status == "OUTPERFORM_BEAR" and direction == "SHORT":
+        conditions.append(f"Coin lead xuống ({coin_chg_4h:+.1f}% vs BTC {btc_chg_4h:+.1f}%)")
+
+    # ══════════════════════════════════════════
     # FILTER 6: 7-day pump exhaustion (chỉ block LONG)
     # ══════════════════════════════════════════
     pump_block = False
@@ -699,6 +807,11 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
     if h4_bias == "NEUTRAL":                 score += 1; conditions.append("H4 Neutral")
     if oi_change is not None and abs(oi_change) < 5: score += 1; conditions.append("OI ổn định")
     if funding is not None and abs(funding) < 0.02:  score += 1; conditions.append("Funding neutral")
+    # Bonus/penalty từ coin correlation
+    if corr_status in ("OUTPERFORM_BULL",) and direction == "LONG":   score += 1; conditions.append("Coin outperform BTC")
+    if corr_status in ("OUTPERFORM_BEAR",) and direction == "SHORT":  score += 1; conditions.append("Coin lead downside")
+    if corr_status == "UNDERPERFORM_LONG"  and direction == "LONG":   score -= 1  # penalty
+    if corr_status == "UNDERPERFORM_SHORT" and direction == "SHORT":  score -= 1
 
     if pump_block:
         direction  = "WAIT"
@@ -762,4 +875,7 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         "btc_context":    btc_ctx,
         "market_structure": ms,
         "btc_volume":    btc_vol,
+        "corr_status":   corr_status,
+        "coin_chg_4h":   coin_chg_4h,
+        "btc_chg_4h":    btc_chg_4h,
     }

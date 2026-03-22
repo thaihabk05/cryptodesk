@@ -4,7 +4,8 @@ Dùng chung engine với Dashboard — theo strategy được chọn (SWING_H4 h
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+_TZ_VN = timezone(timedelta(hours=7))
 from pathlib import Path
 
 from core.binance import fetch_all_futures_tickers
@@ -177,7 +178,7 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
         SCAN_CFG["min_vol"]    = min_vol
         SCAN_CFG["scan_modes"] = scan_modes or ["TREND"]
         scan_state.update({"running": True, "progress": 0, "results": [],
-                           "error": None, "started_at": datetime.now().isoformat(),
+                           "error": None, "started_at": datetime.now(_TZ_VN).isoformat(),
                            "finished_at": None, "strategy": strategy})
     try:
         print(f"[SCAN] Bắt đầu fetch tickers min_vol={min_vol:,.0f}...")
@@ -208,7 +209,7 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
             -x.get("rr", 0)
         ))
         scan_state["results"]     = results
-        scan_state["finished_at"] = datetime.now().isoformat()
+        scan_state["finished_at"] = datetime.now(_TZ_VN).isoformat()
         _persist_scan_state(scan_state)
         print(f"[SCAN] Lưu {len(results)} kết quả vào {SCAN_CACHE_FILE}")
     except Exception as e:

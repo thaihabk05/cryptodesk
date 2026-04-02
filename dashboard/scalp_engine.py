@@ -20,7 +20,9 @@ import math
 from datetime import datetime
 
 from core.binance import (fetch_klines, fetch_funding_rate,
-                           fetch_oi_change, fetch_btc_context)
+                           fetch_oi_change, fetch_btc_context,
+                           fetch_taker_ratio, fetch_long_short_ratio,
+                           fetch_order_book_imbalance)
 from core.indicators import (prepare, ma_slope, find_swing_points,
                               classify_structure, fib_retracement,
                               fib_extension, calc_atr_context)
@@ -55,6 +57,11 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     btc_ctx   = fetch_btc_context()
     atr_m15   = float(df_m15["atr"].iloc[-1])
     atr_m5    = float(df_m5["atr"].iloc[-1])
+
+    # ── Scalp-specific data (FAM Trading method) ──
+    taker     = fetch_taker_ratio(symbol, period="5m", limit=6)
+    ls_ratio  = fetch_long_short_ratio(symbol, period="5m", limit=6)
+    ob_data   = fetch_order_book_imbalance(symbol, limit=50)
 
     # ATR context dùng M15 làm base
     atr_avg_m15  = float(df_m15["atr"].iloc[-60:].mean()) if len(df_m15) >= 60 else atr_m15
@@ -209,6 +216,17 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             if rsi_ob:
                 conditions = [c for c in conditions if "RSI" not in c]
                 warnings.append(f"⚠️ RSI M15 {rsi_m15:.0f} — overbought, rủi ro reversal")
+            # ── Scalp data conditions (FAM Trading) ──
+            if taker and taker["trend"] in ("BUY_STRONG", "BUY_MILD"):
+                conditions.append(f"Lực mua mạnh (Taker {taker['buy_ratio']:.2f}x) — buyer aggressive")
+            if taker and taker["trend"] == "SELL_STRONG":
+                warnings.append(f"⚠️ Lực bán mạnh (Taker {taker['buy_ratio']:.2f}x) — ngược chiều LONG")
+            if ob_data and ob_data["imbalance"] > 1.3:
+                conditions.append(f"Sổ lệnh thiên mua ({ob_data['imbalance']:.1f}x) — hỗ trợ LONG")
+            if ls_ratio and ls_ratio["extreme"] == "SHORT_CROWDED":
+                conditions.append(f"Short crowded ({ls_ratio['short_pct']:.0f}%) — potential short squeeze")
+            elif ls_ratio and ls_ratio["extreme"] == "LONG_CROWDED":
+                warnings.append(f"⚠️ Long crowded ({ls_ratio['long_pct']:.0f}%) — rủi ro long squeeze khi LONG")
         else:  # SHORT
             if not h1_ema_bull:        conditions.append("H1 EMA9 < EMA21 — bias SHORT")
             if h1_ema_cross_dn:        conditions.append("KEY: EMA9 vừa cross EMA21 H1 ↓")
@@ -222,6 +240,17 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             if rsi_os:
                 conditions = [c for c in conditions if "RSI" not in c]
                 warnings.append(f"⚠️ RSI M15 {rsi_m15:.0f} — oversold, rủi ro bounce")
+            # ── Scalp data conditions (FAM Trading) ──
+            if taker and taker["trend"] in ("SELL_STRONG", "SELL_MILD"):
+                conditions.append(f"Lực bán mạnh (Taker {taker['buy_ratio']:.2f}x) — seller aggressive")
+            if taker and taker["trend"] == "BUY_STRONG":
+                warnings.append(f"⚠️ Lực mua mạnh (Taker {taker['buy_ratio']:.2f}x) — ngược chiều SHORT")
+            if ob_data and ob_data["imbalance"] < 0.77:
+                conditions.append(f"Sổ lệnh thiên bán ({ob_data['imbalance']:.1f}x) — hỗ trợ SHORT")
+            if ls_ratio and ls_ratio["extreme"] == "LONG_CROWDED":
+                conditions.append(f"Long crowded ({ls_ratio['long_pct']:.0f}%) — potential long squeeze")
+            elif ls_ratio and ls_ratio["extreme"] == "SHORT_CROWDED":
+                warnings.append(f"⚠️ Short crowded ({ls_ratio['short_pct']:.0f}%) — rủi ro short squeeze khi SHORT")
 
         score = len(conditions)
         confidence = "HIGH" if score >= 5 else "MEDIUM" if score >= 3 else "LOW"
@@ -271,39 +300,61 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến M15 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
-    # ── PATCH A: BTC Context — Scalp version ──
-    # Scalp không block theo D1 macro — FAM Trading vẫn scalp LONG BTC khi D1 BEAR
-    # Chỉ cảnh báo + giảm confidence, không block hoàn toàn
+    # ── PATCH A: BTC Context — Scalp version (taker-aware) ──
+    # FAM Trading scalp dựa vào lực mua/bán thực tế, không phải D1 macro
+    # Nếu BTC D1 BEAR nhưng taker BUY mạnh → vẫn cho LONG (FAM style)
+    # Nếu BTC DUMP + taker SELL mạnh → block
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
     btc_d1   = btc_ctx.get("d1_trend", "")
-    if direction == "LONG" and btc_sent == "DUMP":
-        # Chỉ block khi BTC đang DUMP thực sự (>3% trong 24h) — không block RISK_OFF thường
-        if confidence == "HIGH": confidence = "MEDIUM"
-        all_warnings.insert(0, f"⚠️ BTC đang dump — scalp LONG cẩn thận, SL chặt: {btc_ctx.get('note','')}")
-    elif direction == "LONG" and btc_sent == "RISK_OFF" and btc_d1 == "BEAR":
-        if confidence == "HIGH": confidence = "MEDIUM"
-        all_warnings.append(f"⚠️ BTC D1 BEAR — scalp LONG counter-trend, giữ SL chặt")
-    elif direction == "SHORT" and btc_sent == "PUMP":
-        if confidence == "HIGH": confidence = "MEDIUM"
-        all_warnings.insert(0, f"⚠️ BTC đang pump — scalp SHORT cẩn thận: {btc_ctx.get('note','')}")
+    _taker_override = taker and taker["trend"] in ("BUY_STRONG", "BUY_MILD")
+    _taker_sell     = taker and taker["trend"] in ("SELL_STRONG",)
 
-    # ── PATCH E: OI — Scalp version ──
-    # Scalp nới ngưỡng OI: 3% → 8% (OI biến động ngắn hạn không ảnh hưởng scalp nhiều)
-    # Chỉ block khi OI biến động cực đoan
-    if oi_change is not None and direction == "LONG" and oi_change < -8:
-        direction  = "WAIT"
-        confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK LONG — OI {oi_change:+.1f}%: vị thế đóng cực mạnh")
-    elif oi_change is not None and direction == "SHORT" and oi_change > 8:
-        direction  = "WAIT"
-        confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK SHORT — OI {oi_change:+.1f}%: tiền đổ vào LONG cực mạnh")
-    elif oi_change is not None:
-        # Soft warning cho mức vừa
-        if direction == "LONG" and oi_change < -3:
-            all_warnings.append(f"⚠️ OI giảm {oi_change:+.1f}% — lưu ý vị thế đang đóng")
-        elif direction == "SHORT" and oi_change > 3:
-            all_warnings.append(f"⚠️ OI tăng {oi_change:+.1f}% — lưu ý tiền đang vào LONG")
+    if direction == "LONG" and btc_sent == "DUMP":
+        if _taker_override:
+            # Taker BUY mạnh override DUMP → chỉ warning nhẹ
+            all_warnings.append(f"⚠️ BTC dump nhưng lực mua taker vẫn mạnh ({taker['buy_ratio']:.2f}x) — scalp LONG OK, SL chặt")
+        elif _taker_sell:
+            # DUMP + taker SELL → block thật
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BTC DUMP + lực bán mạnh (Taker {taker['buy_ratio']:.2f}x) — không LONG")
+        else:
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.insert(0, f"⚠️ BTC đang dump — scalp LONG cẩn thận, SL chặt")
+    elif direction == "LONG" and btc_sent == "RISK_OFF" and btc_d1 == "BEAR":
+        if not _taker_override:
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ BTC D1 BEAR — scalp LONG counter-trend, giữ SL chặt")
+    elif direction == "SHORT" and btc_sent == "PUMP":
+        _taker_short_ok = taker and taker["trend"] in ("SELL_STRONG", "SELL_MILD")
+        if _taker_short_ok:
+            all_warnings.append(f"⚠️ BTC pump nhưng lực bán taker vẫn mạnh — scalp SHORT OK, SL chặt")
+        else:
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.insert(0, f"⚠️ BTC đang pump — scalp SHORT cẩn thận")
+
+    # ── PATCH E: OI + Long/Short Ratio — Scalp version ──
+    # Kết hợp OI với LS ratio: OI giảm + crowded = nguy hiểm, OI giảm nhẹ + taker mạnh = OK
+    _ls_extreme = ls_ratio["extreme"] if ls_ratio else "BALANCED"
+    if oi_change is not None and direction == "LONG" and oi_change < -5:
+        if _ls_extreme == "LONG_CROWDED":
+            # OI giảm + quá đông LONG = long đang tháo chạy → block
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 OI giảm {oi_change:+.1f}% + Long crowded — long đang tháo chạy")
+        elif _taker_override:
+            # OI giảm nhưng taker BUY mạnh = chỉ cảnh báo
+            all_warnings.append(f"⚠️ OI giảm {oi_change:+.1f}% nhưng lực mua taker vẫn mạnh — theo dõi")
+        else:
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ OI giảm {oi_change:+.1f}% — vị thế đang đóng, cân nhắc")
+    elif oi_change is not None and direction == "SHORT" and oi_change > 5:
+        if _ls_extreme == "SHORT_CROWDED":
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 OI tăng {oi_change:+.1f}% + Short crowded — rủi ro short squeeze")
+        else:
+            all_warnings.append(f"⚠️ OI tăng {oi_change:+.1f}% — tiền đang vào, cân nhắc SHORT")
 
 
     total_adj = funding_adj + atr_adj
@@ -440,7 +491,8 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     # ────────────────────────────────────────
     # ENTRY CHECKLIST & VERDICT
     # ────────────────────────────────────────
-    def build_checklist(direction, m5_status, rr, rsi_m15, funding, oi_change, btc_ctx, confidence):
+    def build_checklist(direction, m5_status, rr, rsi_m15, funding, oi_change, btc_ctx, confidence,
+                         taker_data, ls_data, ob_data_inner):
         checks = []
 
         if confidence == "HIGH":
@@ -458,6 +510,45 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             checks.append({"ok": None,  "text": "M5 EMA chưa sẵn — chờ nến M5 tiếp theo"})
         else:
             checks.append({"ok": None,  "text": "M5 đang hình thành — theo dõi thêm"})
+
+        # ── Taker Buy/Sell ──
+        if taker_data:
+            tr = taker_data["buy_ratio"]
+            if direction == "LONG":
+                if tr > 1.2:    checks.append({"ok": True,  "text": f"Lực mua mạnh (Taker {tr:.2f}x) — buyer đang aggressive"})
+                elif tr < 0.8:  checks.append({"ok": False, "text": f"Lực bán mạnh (Taker {tr:.2f}x) — ngược chiều LONG"})
+                else:           checks.append({"ok": None,  "text": f"Taker ratio {tr:.2f}x — cân bằng"})
+            else:
+                if tr < 0.8:    checks.append({"ok": True,  "text": f"Lực bán mạnh (Taker {tr:.2f}x) — seller đang aggressive"})
+                elif tr > 1.2:  checks.append({"ok": False, "text": f"Lực mua mạnh (Taker {tr:.2f}x) — ngược chiều SHORT"})
+                else:           checks.append({"ok": None,  "text": f"Taker ratio {tr:.2f}x — cân bằng"})
+
+        # ── Long/Short Ratio ──
+        if ls_data:
+            if direction == "LONG" and ls_data["extreme"] == "LONG_CROWDED":
+                checks.append({"ok": False, "text": f"Long crowded ({ls_data['long_pct']:.0f}%) — rủi ro squeeze"})
+            elif direction == "SHORT" and ls_data["extreme"] == "SHORT_CROWDED":
+                checks.append({"ok": False, "text": f"Short crowded ({ls_data['short_pct']:.0f}%) — rủi ro squeeze"})
+            elif direction == "LONG" and ls_data["extreme"] == "SHORT_CROWDED":
+                checks.append({"ok": True,  "text": f"Short crowded ({ls_data['short_pct']:.0f}%) — LONG có lợi thế"})
+            elif direction == "SHORT" and ls_data["extreme"] == "LONG_CROWDED":
+                checks.append({"ok": True,  "text": f"Long crowded ({ls_data['long_pct']:.0f}%) — SHORT có lợi thế"})
+            else:
+                checks.append({"ok": None,  "text": f"L/S ratio: {ls_data['long_pct']:.0f}%/{ls_data['short_pct']:.0f}% — cân bằng"})
+
+        # ── Order Book ──
+        if ob_data_inner:
+            imb = ob_data_inner["imbalance"]
+            if direction == "LONG" and imb > 1.3:
+                checks.append({"ok": True,  "text": f"Sổ lệnh thiên mua ({imb:.1f}x) — hỗ trợ LONG"})
+            elif direction == "SHORT" and imb < 0.77:
+                checks.append({"ok": True,  "text": f"Sổ lệnh thiên bán ({imb:.1f}x) — hỗ trợ SHORT"})
+            elif direction == "LONG" and imb < 0.77:
+                checks.append({"ok": False, "text": f"Sổ lệnh thiên bán ({imb:.1f}x) — bất lợi cho LONG"})
+            elif direction == "SHORT" and imb > 1.3:
+                checks.append({"ok": False, "text": f"Sổ lệnh thiên mua ({imb:.1f}x) — bất lợi cho SHORT"})
+            else:
+                checks.append({"ok": None,  "text": f"Order book cân bằng ({imb:.1f}x)"})
 
         if direction == "LONG":
             if rsi_m15 > 70:   checks.append({"ok": False, "text": f"RSI M15 {rsi_m15:.0f} — overbought, chờ RSI hạ xuống 60–65"})
@@ -510,7 +601,8 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         return checks, verdict
 
     entry_checklist, entry_verdict = build_checklist(
-        direction, m5_status, rr, rsi_m15, funding, oi_change, btc_ctx, confidence
+        direction, m5_status, rr, rsi_m15, funding, oi_change, btc_ctx, confidence,
+        taker, ls_ratio, ob_data
     )
     if direction == "WAIT": entry_verdict = "WAIT"
 
@@ -557,6 +649,16 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             "atr_note":    atr_note,
         },
         "btc_context": btc_ctx,
+        "scalp_data": {
+            "taker":    taker,
+            "ls_ratio": ls_ratio,
+            "ob": {
+                "imbalance":        ob_data["imbalance"] if ob_data else None,
+                "spread_pct":       ob_data["spread_pct"] if ob_data else None,
+                "support_walls":    ob_data["support_walls"] if ob_data else [],
+                "resistance_walls": ob_data["resistance_walls"] if ob_data else [],
+            } if ob_data else None,
+        },
         "d1":  {"bias": h1_bias, "structure": "", "notes":
                 [f"H1 EMA9 {'>' if h1_ema_bull else '<'} EMA21 — {'BULL' if h1_ema_bull else 'BEAR'}",
                  f"RSI H1: {rsi_h1:.0f}"]},

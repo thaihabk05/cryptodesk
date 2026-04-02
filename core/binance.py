@@ -109,6 +109,155 @@ def fetch_oi_change(symbol: str, period: str = "1h", limit: int = 25):
     except: return None
 
 
+def fetch_taker_ratio(symbol: str, period: str = "5m", limit: int = 6) -> dict:
+    """Taker Buy/Sell Volume ratio — lực mua/bán thực tế (aggressive orders).
+    FAM Trading dùng để xác định lực mua/bán ngắn hạn cho scalp.
+
+    Returns: {buy_ratio, trend, buy_vol, sell_vol}
+      buy_ratio > 1.2 → lực mua mạnh (scalp LONG)
+      buy_ratio < 0.8 → lực bán mạnh (scalp SHORT)
+    """
+    try:
+        r = requests.get(FUTURES_BASE + "/futures/data/takerlongshortRatio",
+                         params={"symbol": symbol, "period": period, "limit": limit},
+                         timeout=5)
+        if r.status_code != 200: return None
+        data = r.json()
+        if not data or isinstance(data, dict): return None
+
+        # Lấy data gần nhất
+        latest   = data[-1]
+        buy_vol  = float(latest.get("buyVol", 0))
+        sell_vol = float(latest.get("sellVol", 0))
+        ratio    = float(latest.get("buySellRatio", 1.0))
+
+        # Trend: so sánh ratio hiện tại vs trung bình các period trước
+        ratios = [float(d.get("buySellRatio", 1.0)) for d in data]
+        avg_ratio = sum(ratios) / len(ratios) if ratios else 1.0
+
+        if ratio > 1.2:
+            trend = "BUY_STRONG"
+        elif ratio > 1.05:
+            trend = "BUY_MILD"
+        elif ratio < 0.8:
+            trend = "SELL_STRONG"
+        elif ratio < 0.95:
+            trend = "SELL_MILD"
+        else:
+            trend = "BALANCED"
+
+        return {
+            "buy_ratio":  round(ratio, 3),
+            "avg_ratio":  round(avg_ratio, 3),
+            "buy_vol":    round(buy_vol, 2),
+            "sell_vol":   round(sell_vol, 2),
+            "trend":      trend,
+        }
+    except Exception:
+        return None
+
+
+def fetch_long_short_ratio(symbol: str, period: str = "5m", limit: int = 6) -> dict:
+    """Global Long/Short Account Ratio — tỷ lệ long/short toàn thị trường.
+    FAM Trading dùng để phát hiện crowd positioning → contrarian signal.
+
+    Returns: {ratio, long_pct, short_pct, extreme}
+      long_pct > 70% → quá đông LONG, rủi ro long squeeze
+      short_pct > 70% → quá đông SHORT, rủi ro short squeeze
+    """
+    try:
+        r = requests.get(FUTURES_BASE + "/futures/data/globalLongShortAccountRatio",
+                         params={"symbol": symbol, "period": period, "limit": limit},
+                         timeout=5)
+        if r.status_code != 200: return None
+        data = r.json()
+        if not data or isinstance(data, dict): return None
+
+        latest   = data[-1]
+        ratio    = float(latest.get("longShortRatio", 1.0))
+        long_raw = float(latest.get("longAccount", 0.5))
+        short_raw = float(latest.get("shortAccount", 0.5))
+        # API trả decimal (0.66 = 66%), convert sang %
+        long_pct = long_raw * 100 if long_raw <= 1.0 else long_raw
+        short_pct = short_raw * 100 if short_raw <= 1.0 else short_raw
+
+        # Extreme detection
+        if long_pct >= 70:
+            extreme = "LONG_CROWDED"  # quá đông long → rủi ro dump
+        elif short_pct >= 70:
+            extreme = "SHORT_CROWDED"  # quá đông short → rủi ro squeeze
+        elif long_pct >= 60:
+            extreme = "LONG_HEAVY"
+        elif short_pct >= 60:
+            extreme = "SHORT_HEAVY"
+        else:
+            extreme = "BALANCED"
+
+        return {
+            "ratio":     round(ratio, 3),
+            "long_pct":  round(long_pct, 1),
+            "short_pct": round(short_pct, 1),
+            "extreme":   extreme,
+        }
+    except Exception:
+        return None
+
+
+def fetch_order_book_imbalance(symbol: str, limit: int = 50) -> dict:
+    """Order Book Depth — phát hiện kháng cự/hỗ trợ + vùng liquidation.
+    FAM Trading dùng để tìm các "tường" lệnh lớn (support/resistance walls).
+
+    Returns: {bid_vol, ask_vol, imbalance, support_walls, resistance_walls}
+      imbalance > 1.5 → sổ lệnh thiên mua (scalp LONG)
+      imbalance < 0.67 → sổ lệnh thiên bán (scalp SHORT)
+    """
+    try:
+        r = requests.get(FUTURES_BASE + "/fapi/v1/depth",
+                         params={"symbol": symbol, "limit": limit},
+                         timeout=5)
+        if r.status_code != 200: return None
+        data = r.json()
+
+        bids = data.get("bids", [])
+        asks = data.get("asks", [])
+        if not bids or not asks: return None
+
+        # Tổng volume bid vs ask
+        bid_vol = sum(float(b[1]) for b in bids)
+        ask_vol = sum(float(a[1]) for a in asks)
+        imbalance = round(bid_vol / ask_vol, 3) if ask_vol > 0 else 1.0
+
+        # Phát hiện tường lệnh lớn (> 5x average)
+        avg_bid = bid_vol / len(bids) if bids else 0
+        avg_ask = ask_vol / len(asks) if asks else 0
+
+        support_walls = []
+        for b in bids:
+            if float(b[1]) > avg_bid * 5:
+                support_walls.append({"price": float(b[0]), "qty": float(b[1])})
+
+        resistance_walls = []
+        for a in asks:
+            if float(a[1]) > avg_ask * 5:
+                resistance_walls.append({"price": float(a[0]), "qty": float(a[1])})
+
+        # Best bid/ask cho spread
+        best_bid = float(bids[0][0])
+        best_ask = float(asks[0][0])
+        spread_pct = round((best_ask - best_bid) / best_bid * 100, 4)
+
+        return {
+            "bid_vol":          round(bid_vol, 2),
+            "ask_vol":          round(ask_vol, 2),
+            "imbalance":        imbalance,
+            "spread_pct":       spread_pct,
+            "support_walls":    support_walls[:3],   # top 3 lớn nhất
+            "resistance_walls": resistance_walls[:3],
+        }
+    except Exception:
+        return None
+
+
 def fetch_btc_context() -> dict:
     """BTC market sentiment — dùng để warn khi LONG altcoin lúc BTC bear."""
     try:

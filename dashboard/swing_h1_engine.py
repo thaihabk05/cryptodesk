@@ -14,7 +14,9 @@ So với H4/D1: phát hiện setup nhanh hơn, R:R tương đương
 nhưng noise nhiều hơn → cần H1 confirm rõ.
 """
 import math
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+_TZ_VN = timezone(timedelta(hours=7))
 
 from core.binance import (fetch_klines, fetch_funding_rate,
                            fetch_oi_change, fetch_btc_context)
@@ -538,7 +540,7 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         "swing_high": smart_round(recent_h1_high),
         "swing_low":  smart_round(recent_h1_low),
         "candles":    candles,
-        "timestamp":  datetime.now().isoformat(),
+        "timestamp":  datetime.now(_TZ_VN).isoformat(),
         "h1_status":       m15_status,
         "h1_status_note":  m15_note,
         "entry_checklist": entry_checklist,

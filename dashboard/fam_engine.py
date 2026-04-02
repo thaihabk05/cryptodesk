@@ -1,6 +1,8 @@
 """dashboard/engine.py — FAM Signal Engine. Chỉ sửa file này khi thay đổi logic Dashboard."""
 import math
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+_TZ_VN = timezone(timedelta(hours=7))
 
 from core.binance import (fetch_klines, fetch_funding_rate,
                            fetch_oi_change, fetch_btc_context)
@@ -759,7 +761,7 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         "swing_high": smart_round(sh),
         "swing_low":  smart_round(sl_),
         "candles":    candles,
-        "timestamp":  datetime.now().isoformat(),
+        "timestamp":  datetime.now(_TZ_VN).isoformat(),
         "h1_status":        h1_status,
         "h1_status_note":   h1_status_note,
         "entry_checklist":  entry_checklist,

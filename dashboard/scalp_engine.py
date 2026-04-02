@@ -17,7 +17,9 @@ TP2: Fib Extension 1.272 sóng M15
 - Noise nhiều hơn H4/H1 → cần M15+M5 đồng thuận
 """
 import math
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+_TZ_VN = timezone(timedelta(hours=7))
 
 from core.binance import (fetch_klines, fetch_funding_rate,
                            fetch_oi_change, fetch_btc_context,
@@ -764,7 +766,7 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         "swing_high": smart_round(recent_m15_high),
         "swing_low":  smart_round(recent_m15_low),
         "candles":    candles,
-        "timestamp":  datetime.now().isoformat(),
+        "timestamp":  datetime.now(_TZ_VN).isoformat(),
         "h1_status":       m5_status,
         "h1_status_note":  m5_note,
         "entry_checklist": entry_checklist,

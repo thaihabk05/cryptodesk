@@ -2950,10 +2950,13 @@ function renderScanTable(data) {
         ((d.h1_note||d.h1_status_note) ? '<div style="font-size:10px;color:'+(d.h1_status==='CONFIRMED'?'var(--long)':d.h1_status==='PULLBACK'?'var(--wait)':'var(--muted2)')+'">'+
           (d.h1_status==='CONFIRMED'?'✅':d.h1_status==='PULLBACK'?'⏳':'🔍')+' '+(d.h1_note||d.h1_status_note)+'</div>' : '') +
       '</td>' +
-      '<td onclick="event.stopPropagation()" style="padding:4px 8px">' +
+      '<td onclick="event.stopPropagation()" style="padding:4px 8px;white-space:nowrap">' +
         '<button data-sym="'+d.symbol+'" data-algo="'+(d.algo||'TREND')+'" onclick="addScanToDash(this.dataset.sym,this.dataset.algo)" ' +
         'style="background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);' +
         'color:#818cf8;border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer;white-space:nowrap">+Dash</button>' +
+        '<button data-idx="'+i+'" onclick="addScanToHistory('+i+')" ' +
+        'style="background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.3);' +
+        'color:var(--long);border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer;white-space:nowrap;margin-left:4px">+History</button>' +
       '</td>' +
     '</tr>';
   }).join('');
@@ -3309,7 +3312,7 @@ function runBacktestWithSignals(signals, label) {
     signal: btSigCtrl.signal,
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({signals: signals})
-  }).then(function(r){ clearTimeout(btSigTimeout); return r.json(); }).then(function(r){ return r.json(); }).then(function(data) {
+  }).then(function(r){ clearTimeout(btSigTimeout); return r.json(); }).then(function(data) {
     if (data.error) {
       document.getElementById('btResults').innerHTML =
         '<div class="empty-state"><div class="empty-icon">&#128203;</div>' +
@@ -4765,6 +4768,60 @@ function addScanToDash(symbol, algo) {
     });
 
   showToast('✅ Đã thêm ' + sym.replace('USDT','') + ' [' + algoToSave + '] vào Dashboard');
+}
+
+function addScanToHistory(idx) {
+  var sorted = sortScanResults(applyScanFilters(allScanResults));
+  var d = sorted[idx];
+  if (!d) return;
+
+  var btn = document.querySelector('[data-idx="'+idx+'"][onclick*="addScanToHistory"]');
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+  var payload = {
+    symbol:     d.symbol,
+    time:       d.timestamp || new Date().toISOString(),
+    price:      d.price,
+    direction:  d.direction,
+    confidence: d.confidence,
+    entry:      d.entry,
+    sl:         d.sl,
+    tp1:        d.tp1,
+    tp2:        d.tp2,
+    sl_pct:     d.sl_pct,
+    tp1_pct:    d.tp1_pct,
+    rr:         d.rr,
+    score:      d.score,
+    entry_verdict: d.entry_verdict || d.verdict,
+    d1_bias:    (d.d1||{}).bias || d.d1_bias || '',
+    h4_bias:    (d.h4||{}).bias || d.h4_bias || '',
+    conditions: d.conditions || [],
+    strategy:   d.strategy || 'SWING_H4',
+    volume_24h: d.volume_24h,
+    market:     d.market || {},
+    btc_context: d.btc_context || {},
+    warnings:   d.warnings || [],
+    entry_checklist: d.entry_checklist || [],
+  };
+
+  fetch('/api/history/add', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(res) {
+    if (btn) {
+      if (res.ok) {
+        btn.textContent = '✅';
+        btn.style.background = 'rgba(0,230,118,.2)';
+        btn.style.borderColor = 'var(--long)';
+      } else {
+        btn.textContent = res.error === 'duplicate' ? '⚠️ Đã có' : '❌';
+        btn.disabled = false;
+      }
+    }
+  }).catch(function() {
+    if (btn) { btn.textContent = '❌'; btn.disabled = false; }
+  });
 }
 
 

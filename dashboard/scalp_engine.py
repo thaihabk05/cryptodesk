@@ -423,21 +423,53 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     # ────────────────────────────────────────
     # SL / TP — ATR M15, swing M15 gần nhất
     # ────────────────────────────────────────
-    def _tp1_long(entry, swings, ema9, ema21, atr):
-        mn, mx = entry * 1.008, entry * 1.06   # 0.8–6%
-        cands = [h for h in swings if mn < h < mx]
-        if cands: return smart_round(min(cands))
-        for ma in [ema9, ema21]:
-            if mn < ma < mx: return smart_round(ma)
-        return smart_round(entry + atr * 2.0)
+    def _tp1_long(entry, swings, ema9, ema21, atr, ob_walls=None, sl_price_ref=None):
+        mn, mx = entry * 1.005, entry * 1.03   # 0.5–3% (FAM scalp style)
+        tp = None
+        # 1. Order book resistance wall (target rõ nhất)
+        if ob_walls:
+            wall_cands = [w["price"] for w in ob_walls if mn < w["price"] < mx]
+            if wall_cands:
+                tp = smart_round(min(wall_cands) * 0.999)
+        # 2. Swing high gần
+        if tp is None:
+            cands = [h for h in swings if mn < h < mx]
+            if cands: tp = smart_round(min(cands))
+        # 3. EMA resistance
+        if tp is None:
+            for ma in [ema9, ema21]:
+                if mn < ma < mx: tp = smart_round(ma); break
+        # 4. ATR fallback
+        if tp is None:
+            tp = smart_round(entry + atr * 1.5)
+        # Đảm bảo TP >= SL distance (R:R >= 1.2)
+        if sl_price_ref and sl_price_ref < entry:
+            sl_dist = entry - sl_price_ref
+            min_tp = entry + sl_dist * 1.2
+            tp = smart_round(max(tp, min_tp))
+        return tp
 
-    def _tp1_short(entry, swings, ema9, ema21, atr):
-        mx, mn = entry * 0.992, entry * 0.94
-        cands = [l for l in swings if mn < l < mx]
-        if cands: return smart_round(max(cands))
-        for ma in [ema9, ema21]:
-            if mn < ma < mx: return smart_round(ma)
-        return smart_round(entry - atr * 2.0)
+    def _tp1_short(entry, swings, ema9, ema21, atr, ob_walls=None, sl_price_ref=None):
+        mx, mn = entry * 0.995, entry * 0.97   # 0.5–3%
+        tp = None
+        if ob_walls:
+            wall_cands = [w["price"] for w in ob_walls if mn < w["price"] < mx]
+            if wall_cands:
+                tp = smart_round(max(wall_cands) * 1.001)
+        if tp is None:
+            cands = [l for l in swings if mn < l < mx]
+            if cands: tp = smart_round(max(cands))
+        if tp is None:
+            for ma in [ema9, ema21]:
+                if mn < ma < mx: tp = smart_round(ma); break
+        if tp is None:
+            tp = smart_round(entry - atr * 1.5)
+        # Đảm bảo TP >= SL distance
+        if sl_price_ref and sl_price_ref > entry:
+            sl_dist = sl_price_ref - entry
+            min_tp = entry - sl_dist * 1.2
+            tp = smart_round(min(tp, min_tp))
+        return tp
 
     fib_ext_long  = fib_extension(recent_m15_low,  recent_m15_high, price)
     fib_ext_short = fib_extension(recent_m15_high, recent_m15_low,  price)
@@ -454,19 +486,74 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             if 0 < f162 < tp1 * 0.997 and f162 > entry * 0.75: return smart_round(f162)
             return smart_round(tp1 - (entry - tp1))
 
+    # ── SL candidates theo FAM scalp style ──
+    # FAM đặt SL ngay dưới/trên support/resistance gần nhất, SL chặt 0.5-1.2%
+    # Ưu tiên: Order book wall > EMA21 M15 > Swing M15 gần > ATR fallback
+    _ob_supports = [w["price"] for w in (ob_data or {}).get("support_walls", [])]
+    _ob_resists  = [w["price"] for w in (ob_data or {}).get("resistance_walls", [])]
+
+    # Swing M15 ngắn hơn — chỉ 10 nến gần nhất (2.5h) thay vì 30 nến
+    _recent_10_low  = float(df_m15["low"].iloc[-10:].min())
+    _recent_10_high = float(df_m15["high"].iloc[-10:].max())
+
     if direction == "LONG" or (direction == "WAIT" and h1_bias == "LONG"):
-        entry    = price
-        # SL: dưới swing low M15 gần nhất + buffer nhỏ, tối đa 1.5%
-        sl_struct = recent_m15_low - atr_m15 * 0.3
-        sl_price  = smart_round(min(entry * 0.980, max(sl_struct, entry * 0.970)))
-        tp1 = _tp1_long(entry, swing_highs_m15, ema9_m15, ema21_m15, atr_m15)
+        entry = price
+
+        # SL: tìm support gần nhất phía dưới
+        sl_candidates = []
+        # 1. Order book support wall (mạnh nhất)
+        for sp in _ob_supports:
+            if price * 0.995 > sp > price * 0.985:
+                sl_candidates.append(("OB wall", sp - atr_m15 * 0.1))
+        # 2. EMA21 M15 (support động)
+        if ema21_m15 < price * 0.998 and ema21_m15 > price * 0.985:
+            sl_candidates.append(("EMA21 M15", ema21_m15 - atr_m15 * 0.2))
+        # 3. Swing low M15 gần (10 nến)
+        if _recent_10_low < price * 0.998 and _recent_10_low > price * 0.985:
+            sl_candidates.append(("Swing M15", _recent_10_low - atr_m15 * 0.1))
+
+        if sl_candidates:
+            # Lấy SL gần nhất (xa nhất về phía dưới nhưng trong range 0.5-1.5%)
+            sl_candidates.sort(key=lambda x: x[1], reverse=True)  # gần nhất trước
+            sl_price = smart_round(sl_candidates[0][1])
+        else:
+            # Fallback: ATR-based, cap 1.2%
+            sl_price = smart_round(max(entry - atr_m15 * 1.2, entry * 0.988))
+
+        # Đảm bảo SL trong range hợp lý cho scalp: 0.3% - 1.5%
+        sl_price = smart_round(max(sl_price, entry * 0.985))   # tối đa 1.5%
+        sl_price = smart_round(min(sl_price, entry * 0.997))   # tối thiểu 0.3%
+
+        tp1 = _tp1_long(entry, swing_highs_m15, ema9_m15, ema21_m15, atr_m15,
+                        ob_data.get("resistance_walls") if ob_data else None,
+                        sl_price_ref=sl_price)
         tp2 = _tp2(entry, tp1, fib_ext_long, "LONG")
 
     elif direction == "SHORT" or (direction == "WAIT" and h1_bias == "SHORT"):
-        entry    = price
-        sl_struct = recent_m15_high + atr_m15 * 0.3
-        sl_price  = smart_round(max(entry * 1.020, min(sl_struct, entry * 1.030)))
-        tp1 = _tp1_short(entry, swing_lows_m15, ema9_m15, ema21_m15, atr_m15)
+        entry = price
+
+        # SL: tìm resistance gần nhất phía trên
+        sl_candidates = []
+        for rp in _ob_resists:
+            if price * 1.005 < rp < price * 1.015:
+                sl_candidates.append(("OB wall", rp + atr_m15 * 0.1))
+        if ema21_m15 > price * 1.002 and ema21_m15 < price * 1.015:
+            sl_candidates.append(("EMA21 M15", ema21_m15 + atr_m15 * 0.2))
+        if _recent_10_high > price * 1.002 and _recent_10_high < price * 1.015:
+            sl_candidates.append(("Swing M15", _recent_10_high + atr_m15 * 0.1))
+
+        if sl_candidates:
+            sl_candidates.sort(key=lambda x: x[1])  # gần nhất trước
+            sl_price = smart_round(sl_candidates[0][1])
+        else:
+            sl_price = smart_round(min(entry + atr_m15 * 1.2, entry * 1.012))
+
+        sl_price = smart_round(min(sl_price, entry * 1.015))
+        sl_price = smart_round(max(sl_price, entry * 1.003))
+
+        tp1 = _tp1_short(entry, swing_lows_m15, ema9_m15, ema21_m15, atr_m15,
+                         ob_data.get("support_walls") if ob_data else None,
+                         sl_price_ref=sl_price)
         tp2 = _tp2(entry, tp1, fib_ext_short, "SHORT")
 
     else:

@@ -163,7 +163,7 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             else:
                 return "FORMING", "⏳ M5 chưa rõ — theo dõi thêm 1–2 nến M5"
 
-    m5_status, m5_note = get_m5_status(h1_bias)
+    # m5_status sẽ được gọi lại sau khi xác định direction cuối cùng
 
     # ────────────────────────────────────────
     # DIRECTION & SCORING
@@ -171,10 +171,27 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     warnings = []
 
     if h1_bias == "NEUTRAL":
-        direction  = "WAIT"
-        confidence = "LOW"
-        conditions = ["H1 EMA9/21 chưa rõ hướng — chờ EMA cross"]
-        score = 0
+        # Scalp: H1 NEUTRAL không tự động block nếu M15+M5 đồng thuận
+        # FAM Trading scalp chủ yếu dựa vào M15, H1 chỉ là tham khảo
+        m15_m5_agree_long  = m15_ema_bull and m5_ema_bull and m5_bullish
+        m15_m5_agree_short = not m15_ema_bull and not m5_ema_bull and m5_bearish
+        if m15_m5_agree_long:
+            h1_bias = "LONG"  # override bằng M15+M5
+            direction  = "LONG"
+            confidence = "MEDIUM"  # giới hạn MEDIUM vì thiếu H1
+            conditions = ["H1 NEUTRAL — M15+M5 đồng thuận LONG override"]
+            score = 1
+        elif m15_m5_agree_short:
+            h1_bias = "SHORT"
+            direction  = "SHORT"
+            confidence = "MEDIUM"
+            conditions = ["H1 NEUTRAL — M15+M5 đồng thuận SHORT override"]
+            score = 1
+        else:
+            direction  = "WAIT"
+            confidence = "LOW"
+            conditions = ["H1 EMA9/21 chưa rõ hướng + M15/M5 không đồng thuận"]
+            score = 0
     else:
         direction  = h1_bias
         conditions = []
@@ -208,6 +225,9 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
 
         score = len(conditions)
         confidence = "HIGH" if score >= 5 else "MEDIUM" if score >= 3 else "LOW"
+
+    # Xác định M5 status dựa trên direction cuối cùng
+    m5_status, m5_note = get_m5_status(direction)
 
     # Funding / ATR adj
     def _interp_funding(funding, direction):
@@ -251,30 +271,39 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến M15 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
-    # ── PATCH A: BTC Hard Block ──
-    # Không ra signal ngược chiều BTC macro — đây là nguyên nhân chính loss
+    # ── PATCH A: BTC Context — Scalp version ──
+    # Scalp không block theo D1 macro — FAM Trading vẫn scalp LONG BTC khi D1 BEAR
+    # Chỉ cảnh báo + giảm confidence, không block hoàn toàn
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
     btc_d1   = btc_ctx.get("d1_trend", "")
-    if direction == "LONG" and btc_sent in ("RISK_OFF", "DUMP") and btc_d1 == "BEAR":
-        direction  = "WAIT"
-        confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK LONG — BTC D1 BEAR + {btc_sent}: {btc_ctx.get('note','')}")
-    elif direction == "SHORT" and btc_sent in ("RISK_ON",) and btc_d1 == "BULL":
-        direction  = "WAIT"
-        confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK SHORT — BTC D1 BULL + {btc_sent}: {btc_ctx.get('note','')}")
+    if direction == "LONG" and btc_sent == "DUMP":
+        # Chỉ block khi BTC đang DUMP thực sự (>3% trong 24h) — không block RISK_OFF thường
+        if confidence == "HIGH": confidence = "MEDIUM"
+        all_warnings.insert(0, f"⚠️ BTC đang dump — scalp LONG cẩn thận, SL chặt: {btc_ctx.get('note','')}")
+    elif direction == "LONG" and btc_sent == "RISK_OFF" and btc_d1 == "BEAR":
+        if confidence == "HIGH": confidence = "MEDIUM"
+        all_warnings.append(f"⚠️ BTC D1 BEAR — scalp LONG counter-trend, giữ SL chặt")
+    elif direction == "SHORT" and btc_sent == "PUMP":
+        if confidence == "HIGH": confidence = "MEDIUM"
+        all_warnings.insert(0, f"⚠️ BTC đang pump — scalp SHORT cẩn thận: {btc_ctx.get('note','')}")
 
-    # ── PATCH E: OI Hard Block ──
-    # OI giảm mạnh = vị thế đang đóng = không có buyer mới → block LONG
-    # OI tăng mạnh khi SHORT = short squeeze risk → block SHORT
-    if oi_change is not None and direction == "LONG" and oi_change < -3:
+    # ── PATCH E: OI — Scalp version ──
+    # Scalp nới ngưỡng OI: 3% → 8% (OI biến động ngắn hạn không ảnh hưởng scalp nhiều)
+    # Chỉ block khi OI biến động cực đoan
+    if oi_change is not None and direction == "LONG" and oi_change < -8:
         direction  = "WAIT"
         confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK LONG — OI {oi_change:+.1f}%: vị thế đang đóng, không có buyer mới")
-    elif oi_change is not None and direction == "SHORT" and oi_change > 3:
+        all_warnings.insert(0, f"🚫 BLOCK LONG — OI {oi_change:+.1f}%: vị thế đóng cực mạnh")
+    elif oi_change is not None and direction == "SHORT" and oi_change > 8:
         direction  = "WAIT"
         confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK SHORT — OI {oi_change:+.1f}%: tiền đang vào LONG, rủi ro squeeze")
+        all_warnings.insert(0, f"🚫 BLOCK SHORT — OI {oi_change:+.1f}%: tiền đổ vào LONG cực mạnh")
+    elif oi_change is not None:
+        # Soft warning cho mức vừa
+        if direction == "LONG" and oi_change < -3:
+            all_warnings.append(f"⚠️ OI giảm {oi_change:+.1f}% — lưu ý vị thế đang đóng")
+        elif direction == "SHORT" and oi_change > 3:
+            all_warnings.append(f"⚠️ OI tăng {oi_change:+.1f}% — lưu ý tiền đang vào LONG")
 
 
     total_adj = funding_adj + atr_adj
@@ -285,26 +314,27 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "MEDIUM"
 
 
-    # ── PATCH G: Price-OI Divergence Block ──
-    if oi_change is not None and direction == "LONG" and oi_change > 3:
+    # ── PATCH G: Price-OI Divergence — Scalp version ──
+    # Nới ngưỡng cho scalp: OI > 5% (vs 3%) và giá giảm > 2% (vs 1%)
+    if oi_change is not None and direction == "LONG" and oi_change > 5:
         _price_chg_m15 = (float(df_m15["close"].iloc[-1]) - float(df_m15["close"].iloc[-4])) / float(df_m15["close"].iloc[-4]) * 100
-        if _price_chg_m15 < -1.0:
+        if _price_chg_m15 < -2.0:
             direction  = "WAIT"
             confidence = "LOW"
-            all_warnings.insert(0, f"🚫 OI DIVERGENCE — OI +{oi_change:.1f}% nhưng giá giảm {_price_chg_m15:.1f}% — tiền đang vào SHORT, không LONG")
+            all_warnings.insert(0, f"🚫 OI DIVERGENCE — OI +{oi_change:.1f}% nhưng giá giảm {_price_chg_m15:.1f}% — tiền vào SHORT")
 
-    # ── PATCH H: EMA9 Price Position ──
+    # ── PATCH H: EMA9 Price Position — Scalp version ──
+    # Chuyển từ hard block → soft warning
+    # Scalp entry thường ngay tại EMA, block EMA9 = block mọi entry
     if "ema9" in df_m15.columns:
         _ema9_m15 = float(df_m15["ema9"].iloc[-1])
         _price_m15 = float(df_m15["close"].iloc[-1])
-        if direction == "LONG" and _price_m15 < _ema9_m15 * 0.999:
-            direction  = "WAIT"
-            confidence = "LOW"
-            all_warnings.insert(0, f"🚫 BLOCK LONG — Giá {_price_m15:.5f} dưới EMA9 M15 ({_ema9_m15:.5f}) — momentum đang bearish")
-        elif direction == "SHORT" and _price_m15 > _ema9_m15 * 1.001:
-            direction  = "WAIT"
-            confidence = "LOW"
-            all_warnings.insert(0, f"🚫 BLOCK SHORT — Giá {_price_m15:.5f} trên EMA9 M15 ({_ema9_m15:.5f}) — momentum đang bullish")
+        if direction == "LONG" and _price_m15 < _ema9_m15 * 0.995:
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ Giá dưới EMA9 M15 — momentum ngắn hạn yếu")
+        elif direction == "SHORT" and _price_m15 > _ema9_m15 * 1.005:
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ Giá trên EMA9 M15 — momentum ngắn hạn mạnh")
 
     # ── PATCH I: Far From EMA21 M15 — gợi ý chờ pullback ──
     if direction in ("LONG", "SHORT") and ema21_m15 > 0:
@@ -398,10 +428,14 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     tp1_pct = round(abs(tp1 - entry) / entry * 100, 2)      if entry != tp1 else 0
     rr      = round(tp1_pct / sl_pct, 2)                    if sl_pct > 0 else 0
 
-    if direction in ("LONG", "SHORT") and rr < 1.5:
-        all_warnings.append(f"❌ R:R {rr} < 1.5 — signal yếu, chờ M15 pullback về EMA")
+    # Scalp R:R minimum 1.2 (vs 1.5 cho swing)
+    # FAM Trading scalp thường R:R ~1.3-1.5, block 1.5 = bỏ lỡ nhiều setup tốt
+    if direction in ("LONG", "SHORT") and rr < 1.2:
+        all_warnings.append(f"❌ R:R {rr} < 1.2 — signal yếu, chờ M15 pullback về EMA")
         direction  = "WAIT"
         confidence = "LOW"
+    elif direction in ("LONG", "SHORT") and rr < 1.5:
+        all_warnings.append(f"⚠️ R:R {rr} (1.2-1.5) — chấp nhận cho scalp, giữ SL chặt")
 
     # ────────────────────────────────────────
     # ENTRY CHECKLIST & VERDICT

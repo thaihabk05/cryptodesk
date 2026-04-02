@@ -559,6 +559,23 @@ def history_add():
     _save_signal_to_history(sig)
     return jsonify({"ok": True})
 
+@app.route("/api/history/import", methods=["POST"])
+def history_import():
+    """Import nhiều signals vào history (merge, không xóa data cũ)."""
+    signals = (request.json or {}).get("signals", [])
+    if not signals:
+        return jsonify({"ok": False, "error": "Không có signals"})
+    history = load_history()
+    added = 0
+    for sig in signals:
+        if not sig.get("symbol"):
+            continue
+        if not _is_duplicate_signal(sig, history, window_hours=0):
+            history.append(sig)
+            added += 1
+    save_history(history)
+    return jsonify({"ok": True, "added": added, "total": len(history)})
+
 @app.route("/api/history/clear", methods=["POST"])
 def clear_history():
     save_history([])

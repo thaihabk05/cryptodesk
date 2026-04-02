@@ -31,7 +31,13 @@ def no_cache(r):
     return r
 
 # ── Config ────────────────────────────────────
-DATA_DIR       = Path("data")
+# ── Persistent storage ──────────────────────────────────────────
+# Railway Volume: mount volume vào /data trong Railway dashboard
+# Settings → Volumes → Add → Mount Path: /data
+# Local fallback: ./data (tự động tạo nếu không có volume)
+import os as _os
+_VOLUME_PATH = Path("/data") if Path("/data").exists() and _os.access("/data", _os.W_OK) else Path("data")
+DATA_DIR       = _VOLUME_PATH
 CONFIG_FILE    = DATA_DIR / "config.json"
 HISTORY_FILE   = DATA_DIR / "history.json"
 POSITIONS_FILE = DATA_DIR / "positions.json"
@@ -41,6 +47,9 @@ ALGO_VERSION = "v2.0"   # v2.0: PATCH A-I + RR≥1.5 + SL 2% (2026-03-05)
 ALGO_DATE    = "2026-03-05"
 
 DATA_DIR.mkdir(exist_ok=True)
+_storage_type = "Railway Volume (/data)" if str(DATA_DIR) == "/data" else f"Local fallback ({DATA_DIR.resolve()})"
+print(f"[STORAGE] Using: {_storage_type}")
+print(f"[STORAGE] Files: config={CONFIG_FILE.exists()}, history={HISTORY_FILE.exists()}, positions={POSITIONS_FILE.exists()}")
 
 DEFAULT_CONFIG = {
     "symbols":          ["BTCUSDT", "ETHUSDT", "SOLUSDT"],

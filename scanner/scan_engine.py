@@ -11,7 +11,10 @@ from pathlib import Path
 from core.binance import fetch_all_futures_tickers
 from core.utils import sanitize
 
-SCAN_CACHE_FILE = Path("data/last_scan.json")
+# Dùng cùng volume path với main.py
+import os as _os
+_SCAN_DATA_DIR  = Path("/data") if Path("/data").exists() and _os.access("/data", _os.W_OK) else Path("data")
+SCAN_CACHE_FILE = _SCAN_DATA_DIR / "last_scan.json"
 
 def _persist_scan_state(state: dict):
     """Lưu kết quả scan vào file để survive restart."""

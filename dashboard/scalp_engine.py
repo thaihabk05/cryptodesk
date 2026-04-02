@@ -498,6 +498,13 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     _recent_10_low  = float(df_m15["low"].iloc[-10:].min())
     _recent_10_high = float(df_m15["high"].iloc[-10:].max())
 
+    # OI cao → nới SL minimum (tiền đổ vào = volatility cao, SL sát dễ bị quét)
+    _sl_min_pct = 0.003  # default 0.3%
+    if oi_change is not None and abs(oi_change) > 5:
+        _sl_min_pct = 0.005  # nới lên 0.5% khi OI biến động mạnh
+    if oi_change is not None and abs(oi_change) > 8:
+        _sl_min_pct = 0.008  # 0.8% khi OI cực mạnh
+
     if direction == "LONG" or (direction == "WAIT" and h1_bias == "LONG"):
         entry = price
 
@@ -522,9 +529,9 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             # Fallback: ATR-based, cap 1.2%
             sl_price = smart_round(max(entry - atr_m15 * 1.2, entry * 0.988))
 
-        # Đảm bảo SL trong range hợp lý cho scalp: 0.3% - 1.5%
-        sl_price = smart_round(max(sl_price, entry * 0.985))   # tối đa 1.5%
-        sl_price = smart_round(min(sl_price, entry * 0.997))   # tối thiểu 0.3%
+        # Đảm bảo SL trong range hợp lý cho scalp: _sl_min_pct - 1.5%
+        sl_price = smart_round(max(sl_price, entry * 0.985))          # tối đa 1.5%
+        sl_price = smart_round(min(sl_price, entry * (1 - _sl_min_pct)))  # tối thiểu dynamic
 
         tp1 = _tp1_long(entry, swing_highs_m15, ema9_m15, ema21_m15, atr_m15,
                         ob_data.get("resistance_walls") if ob_data else None,
@@ -550,8 +557,8 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         else:
             sl_price = smart_round(min(entry + atr_m15 * 1.2, entry * 1.012))
 
-        sl_price = smart_round(min(sl_price, entry * 1.015))
-        sl_price = smart_round(max(sl_price, entry * 1.003))
+        sl_price = smart_round(min(sl_price, entry * 1.015))              # tối đa 1.5%
+        sl_price = smart_round(max(sl_price, entry * (1 + _sl_min_pct)))  # tối thiểu dynamic
 
         tp1 = _tp1_short(entry, swing_lows_m15, ema9_m15, ema21_m15, atr_m15,
                          ob_data.get("support_walls") if ob_data else None,
@@ -686,6 +693,18 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             if verdict == "GO": verdict = "WAIT"
         if m5_status in ("FORMING", "OVERBOUGHT", "OVERSOLD") and verdict == "GO":
             verdict = "WAIT"
+
+        # ── Taker ngược chiều mạnh → hạ verdict ──
+        # Scalp: taker là chỉ số real-time quan trọng nhất
+        # Nếu taker > 1.5x ngược chiều → không nên GO dù các điều kiện khác đủ
+        if taker_data and verdict == "GO":
+            tr = taker_data["buy_ratio"]
+            if direction == "LONG" and tr < 0.67:
+                verdict = "WAIT"
+                checks.append({"ok": False, "text": f"⚠️ Taker {tr:.2f}x bán rất mạnh — chờ lực bán giảm"})
+            elif direction == "SHORT" and tr > 1.5:
+                verdict = "WAIT"
+                checks.append({"ok": False, "text": f"⚠️ Taker {tr:.2f}x mua rất mạnh — chờ lực mua giảm"})
 
         return checks, verdict
 

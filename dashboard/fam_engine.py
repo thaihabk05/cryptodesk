@@ -6,7 +6,8 @@ from core.binance import (fetch_klines, fetch_funding_rate,
                            fetch_oi_change, fetch_btc_context)
 from core.indicators import (prepare, ma_slope, find_swing_points,
                               classify_structure, fib_retracement,
-                              fib_extension, is_no_trade_zone, calc_atr_context)
+                              fib_extension, is_no_trade_zone, calc_atr_context,
+                              weekly_macro_bias)
 from core.utils import sanitize, smart_round
 
 
@@ -31,6 +32,7 @@ def _interpret_funding(funding, oi_change, direction):
 def fam_analyze(symbol: str, cfg: dict) -> dict:
     # ── Fetch data ──
     ff = bool(cfg.get("force_futures", False))
+    df_w  = prepare(fetch_klines(symbol, "1w", 250, force_futures=ff))
     df_d1 = prepare(fetch_klines(symbol, "1d", 300, force_futures=ff))
     df_h4 = prepare(fetch_klines(symbol, "4h", 300, force_futures=ff))
     df_h1 = prepare(fetch_klines(symbol, "1h", 150, force_futures=ff))
@@ -38,6 +40,13 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     for df in [df_d1, df_h4, df_h1]:
         if len(df) < 10:
             raise ValueError(f"Không đủ data cho {symbol}")
+
+    # ── TẦNG 0 — Weekly Macro Bias (FAM Trading method) ──
+    w_bias = weekly_macro_bias(df_w) if len(df_w) >= 10 else {
+        "trend": "NEUTRAL", "death_cross": False, "golden_cross": False,
+        "near_death": False, "below_ma200": False, "notes": [], "score_adj": 0,
+        "ma34_slope": "FLAT", "ma89_slope": "FLAT", "ma34": None, "ma89": None, "ma200": None,
+    }
 
     price    = float(df_h1["close"].iloc[-1])
     row_d1   = df_d1.iloc[-1]
@@ -117,6 +126,8 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     fib_zone  = "0.5-0.618"
     in_fib    = min(f618, f05) * 0.998 <= price <= max(f618, f05) * 1.002
     fib_zone_price = f"{smart_round(f618)} – {smart_round(f05)}"
+
+    ma34_h1  = float(df_h1["ma34"].iloc[-1])
 
     h1_bullish      = bool(row_h1["close"] > row_h1["open"])
     h1_bearish      = bool(row_h1["close"] < row_h1["open"])
@@ -321,6 +332,35 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
             score = len(conditions)
             confidence = "HIGH" if score >= 5 else "MEDIUM" if score >= 3 else "LOW"
 
+    # ── Weekly macro bias adjustments ──
+    weekly_warnings = []
+    weekly_score_adj = w_bias["score_adj"]
+    for wnote in w_bias["notes"]:
+        weekly_warnings.append(wnote)
+
+    # Weekly death cross + LONG → cảnh báo mạnh (nhưng KHÔNG block hoàn toàn)
+    # FAM: death cross Weekly = tín hiệu tử thần, nhưng vẫn có thể có nhịp hồi ngắn hạn
+    if direction == "LONG" and (w_bias["death_cross"] or w_bias.get("near_death")):
+        if confidence == "HIGH":
+            confidence = "MEDIUM"
+        weekly_warnings.append("⚠️ WEEKLY downtrend — LONG chỉ là hồi ngắn hạn, giảm confidence")
+
+    # Weekly BEAR + dưới MA200 + LONG → giảm thêm
+    if direction == "LONG" and w_bias["trend"] == "BEAR" and w_bias["below_ma200"]:
+        if confidence == "HIGH":
+            confidence = "MEDIUM"
+        elif confidence == "MEDIUM" and score < 4:
+            confidence = "LOW"
+
+    # Weekly BULL + LONG → bonus
+    if direction == "LONG" and w_bias["trend"] == "BULL":
+        weekly_score_adj += 1
+
+    # Weekly BEAR + SHORT → thuận xu hướng, bonus
+    if direction == "SHORT" and w_bias["trend"] == "BEAR":
+        weekly_score_adj += 1
+        weekly_warnings.append("✅ WEEKLY BEAR — SHORT thuận xu hướng macro")
+
     # ── ATR & Funding adjustments ──
     atr_warnings = []
     if atr_ctx["atr_state"] == "COMPRESS":
@@ -330,7 +370,7 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     atr_score_adj = atr_ctx["score_adj"]
 
     funding_warnings, funding_score_adj = _interpret_funding(funding, oi_change, direction)
-    all_warnings = warnings + atr_warnings + funding_warnings
+    all_warnings = weekly_warnings + warnings + atr_warnings + funding_warnings
 
     # BTC context warning
     if direction == "LONG" and btc_ctx["sentiment"] in ("RISK_OFF", "DUMP"):
@@ -394,19 +434,21 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
             confidence = "LOW"
             all_warnings.insert(0, f"🚫 OI DIVERGENCE — OI +{oi_change:.1f}% nhưng giá giảm {_price_chg_h1:.1f}% (4h) — tiền đang vào SHORT, không LONG")
 
-    # ── PATCH H: EMA9 M15/H1 Price Position ──
-    # Giá đang dưới EMA9 H1 = momentum bearish → không LONG
-    # Giá đang trên EMA9 H1 = momentum bullish → không SHORT
+    # ── PATCH H: EMA9 H1 Price Position ──
+    # Chuyển từ hard block → soft warning + giảm confidence
+    # Lý do: EMA9 quá nhạy, block quá nhiều signal hợp lệ trong trending market
+    # FAM Trading: EMA9 chỉ là tham khảo, MA34 mới là chốt chặn chính
     if "ema9" in df_h1.columns:
         _ema9_h1 = float(df_h1["ema9"].iloc[-1])
-        if direction == "LONG" and price < _ema9_h1 * 0.999:
-            direction  = "WAIT"
-            confidence = "LOW"
-            all_warnings.insert(0, f"🚫 BLOCK LONG — Giá {price:.5f} dưới EMA9 H1 ({_ema9_h1:.5f}) — momentum đang bearish")
-        elif direction == "SHORT" and price > _ema9_h1 * 1.001:
-            direction  = "WAIT"
-            confidence = "LOW"
-            all_warnings.insert(0, f"🚫 BLOCK SHORT — Giá {price:.5f} trên EMA9 H1 ({_ema9_h1:.5f}) — momentum đang bullish")
+        if direction == "LONG" and price < _ema9_h1 * 0.997:
+            # Chỉ block nếu giá dưới EMA9 QUÁ XA (>0.3%) — tức momentum bearish rõ
+            if confidence == "HIGH":
+                confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ Giá dưới EMA9 H1 ({_ema9_h1:.5f}) — momentum ngắn hạn yếu, cân nhắc chờ pullback")
+        elif direction == "SHORT" and price > _ema9_h1 * 1.003:
+            if confidence == "HIGH":
+                confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ Giá trên EMA9 H1 ({_ema9_h1:.5f}) — momentum ngắn hạn mạnh, cân nhắc chờ rejection")
 
     # ── PATCH I: Far From EMA34 H1 — gợi ý chờ pullback ──
     # Nếu giá cách EMA34 H1 > 5% = đã pump/dump quá xa, entry ngay không tối ưu
@@ -448,7 +490,7 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
             )
 
 
-    total_adj = funding_score_adj + atr_score_adj
+    total_adj = funding_score_adj + atr_score_adj + weekly_score_adj
     if total_adj <= -2 and confidence != "LOW":
         confidence = "LOW"
         all_warnings.append("⚠️ Confidence hạ xuống LOW do funding/volatility bất lợi")
@@ -464,7 +506,6 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     ma34_h4  = float(row_h4["ma34"])
     ma89_h4  = float(row_h4["ma89"])
     ma200_h4 = float(row_h4["ma200"])
-    ma34_h1  = float(df_h1["ma34"].iloc[-1])
 
     # Swing H4 — chỉ lấy 30 nến gần đây (120h = 5 ngày) để tránh swing xa vô nghĩa
     df_h4_recent = df_h4.iloc[-30:]
@@ -688,6 +729,19 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
             "atr_note":    atr_ctx["atr_note"],
         },
         "btc_context": btc_ctx,
+        "weekly": {
+            "trend":       w_bias["trend"],
+            "death_cross": w_bias["death_cross"],
+            "near_death":  w_bias.get("near_death", False),
+            "golden_cross": w_bias["golden_cross"],
+            "below_ma200": w_bias["below_ma200"],
+            "ma34_slope":  w_bias["ma34_slope"],
+            "ma89_slope":  w_bias["ma89_slope"],
+            "ma34":        w_bias["ma34"],
+            "ma89":        w_bias["ma89"],
+            "ma200":       w_bias["ma200"],
+            "notes":       w_bias["notes"],
+        },
         "d1": {"bias": d1_bias, "structure": d1_structure, "notes": d1_notes,
                "dist_ma34": round(dist_ma34_d1, 2), "dist_ma89": round(dist_ma89_d1, 2)},
         "h4": {"bias": h4_bias, "structure": h4_structure, "notes": h4_notes,

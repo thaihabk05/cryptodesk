@@ -101,6 +101,94 @@ def is_no_trade_zone(price: float, row_h4) -> tuple:
     return True, f"Giá trong vùng MA34/89 (gap {gap_pct:.1f}%) — chờ thoát rõ hướng"
 
 
+def weekly_macro_bias(df_w: pd.DataFrame) -> dict:
+    """
+    Phân tích Weekly macro bias — detect Death Cross MA34/MA89 và MA200 position.
+    Nguồn: phương pháp FAM Trading.
+
+    Returns dict:
+      trend:       "BULL" | "BEAR" | "NEUTRAL"
+      death_cross: True nếu MA34 vừa cắt xuống MA89 (hoặc sắp cắt)
+      golden_cross: True nếu MA34 vừa cắt lên MA89
+      below_ma200: True nếu giá dưới MA200 Weekly
+      ma34_slope:  "UP" | "DOWN" | "FLAT"
+      ma89_slope:  "UP" | "DOWN" | "FLAT"
+      notes:       list cảnh báo
+    """
+    if len(df_w) < 10:
+        return {"trend": "NEUTRAL", "death_cross": False, "golden_cross": False,
+                "below_ma200": False, "ma34_slope": "FLAT", "ma89_slope": "FLAT",
+                "notes": [], "score_adj": 0}
+
+    row   = df_w.iloc[-1]
+    prev  = df_w.iloc[-2]
+    price = float(row["close"])
+
+    ma34  = float(row["ma34"])
+    ma89  = float(row["ma89"])
+    ma200_val = float(row["ma200"]) if "ma200" in df_w.columns and not pd.isna(row["ma200"]) else None
+
+    prev_ma34 = float(prev["ma34"])
+    prev_ma89 = float(prev["ma89"])
+
+    slope_34 = ma_slope(df_w["ma34"], n=3)
+    slope_89 = ma_slope(df_w["ma89"], n=3)
+
+    # Death cross: MA34 cắt xuống dưới MA89
+    death_cross  = prev_ma34 >= prev_ma89 and ma34 < ma89
+    golden_cross = prev_ma34 <= prev_ma89 and ma34 > ma89
+
+    # Sắp death cross: MA34 đang trên MA89 nhưng gap < 1% và MA34 slope DOWN
+    near_death_cross = (ma34 > ma89 and (ma34 - ma89) / ma89 * 100 < 1.0
+                        and slope_34 == "DOWN")
+
+    # Giá dưới MA200 Weekly
+    below_ma200 = ma200_val is not None and price < ma200_val
+
+    # Trend
+    if price > ma34 and price > ma89:
+        trend = "BULL"
+    elif price < ma34 and price < ma89:
+        trend = "BEAR"
+    else:
+        trend = "NEUTRAL"
+
+    notes = []
+    score_adj = 0
+
+    if death_cross:
+        notes.append("🚨 WEEKLY DEATH CROSS — MA34 cắt xuống MA89: xu hướng giảm dài hạn xác nhận")
+        score_adj -= 2
+    elif near_death_cross:
+        notes.append("⚠️ WEEKLY CẢNH BÁO — MA34/MA89 sắp death cross (gap < 1%)")
+        score_adj -= 1
+    elif golden_cross:
+        notes.append("✅ WEEKLY GOLDEN CROSS — MA34 cắt lên MA89: xu hướng tăng dài hạn")
+        score_adj += 1
+
+    if below_ma200:
+        notes.append(f"⚠️ WEEKLY dưới MA200 ({ma200_val:.2f}) — macro bearish")
+        score_adj -= 1
+
+    if trend == "BEAR" and slope_34 == "DOWN" and slope_89 == "DOWN":
+        notes.append("⚠️ WEEKLY cả MA34 và MA89 đang slope DOWN — áp lực bán mạnh")
+
+    return {
+        "trend":        trend,
+        "death_cross":  death_cross,
+        "golden_cross": golden_cross,
+        "near_death":   near_death_cross,
+        "below_ma200":  below_ma200,
+        "ma34_slope":   slope_34,
+        "ma89_slope":   slope_89,
+        "ma34":         round(ma34, 6),
+        "ma89":         round(ma89, 6),
+        "ma200":        round(ma200_val, 6) if ma200_val else None,
+        "notes":        notes,
+        "score_adj":    score_adj,
+    }
+
+
 def calc_atr_context(df_h4: pd.DataFrame, df_d1: pd.DataFrame) -> dict:
     atr_h4    = float(df_h4["atr"].iloc[-1])
     atr_avg   = float(df_h4["atr"].iloc[-60:].mean()) if len(df_h4) >= 60 else atr_h4

@@ -523,7 +523,8 @@ def get_results():
 
 @app.route("/api/history")
 def get_history():
-    from datetime import datetime
+    from datetime import datetime as _dt
+    import math
     history = load_history()
     # Optional filter theo algo_version
     ver_filter = request.args.get("algo_version")
@@ -532,11 +533,22 @@ def get_history():
     # Sort mới nhất lên đầu theo timestamp
     def _ts(h):
         try:
-            return datetime.fromisoformat(h.get("time","").replace("Z",""))
+            raw = h.get("time", "")
+            if not raw: return _dt.min
+            return _dt.fromisoformat(raw.replace("Z", "+00:00"))
         except Exception:
-            return datetime.min
+            return _dt.min
     history.sort(key=_ts, reverse=True)
-    return jsonify(history)
+    # Sanitize: replace NaN/Infinity with None (json không hỗ trợ)
+    def _sanitize(obj):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(v) for v in obj]
+        return obj
+    return jsonify(_sanitize(history))
 
 @app.route("/api/history/versions")
 def get_history_versions():

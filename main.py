@@ -548,13 +548,12 @@ def get_history():
     if ver_filter:
         history = [h for h in history if h.get("algo_version") == ver_filter]
     # Sort mới nhất lên đầu theo timestamp
+    # Dùng string sort để tránh lỗi naive vs aware datetime
     def _ts(h):
-        try:
-            raw = h.get("time", "")
-            if not raw: return _dt.min
-            return _dt.fromisoformat(raw.replace("Z", "+00:00"))
-        except Exception:
-            return _dt.min
+        raw = h.get("time", "")
+        if not raw: return ""
+        # Normalize: bỏ timezone suffix để sort string thuần
+        return raw[:19]  # "2026-03-07T15:20:37"
     history.sort(key=_ts, reverse=True)
     # Sanitize: replace NaN/Infinity with None (json không hỗ trợ)
     def _sanitize(obj):

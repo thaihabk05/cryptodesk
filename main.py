@@ -95,13 +95,30 @@ def save_positions(positions: list):
     """Lưu tối đa 50 positions gần nhất."""
     POSITIONS_FILE.write_text(json.dumps(positions[:50], indent=2))
 
+def _clean_for_json(obj):
+    """Recursively replace NaN/Infinity with None — json chuẩn không hỗ trợ."""
+    import math
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _clean_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_for_json(v) for v in obj]
+    return obj
+
 def load_history():
     if HISTORY_FILE.exists():
-        return json.loads(HISTORY_FILE.read_text())
+        try:
+            return json.loads(HISTORY_FILE.read_text())
+        except Exception:
+            return []
     return []
 
 def save_history(h):
-    HISTORY_FILE.write_text(json.dumps(h[-200:], indent=2))
+    cleaned = _clean_for_json(h[-500:])  # giữ 500 records (tăng từ 200)
+    HISTORY_FILE.write_text(json.dumps(cleaned, indent=2, allow_nan=False, default=str))
 
 # ── Background auto-scanner (Dashboard) ───────
 scan_results = {}
@@ -578,20 +595,26 @@ def history_add():
 
 @app.route("/api/history/import", methods=["POST"])
 def history_import():
-    """Import nhiều signals vào history (merge, không xóa data cũ)."""
+    """Import nhiều signals vào history (merge trực tiếp, không fetch thêm data)."""
     signals = (request.json or {}).get("signals", [])
     if not signals:
         return jsonify({"ok": False, "error": "Không có signals"})
     history = load_history()
+    existing_keys = set()
+    for h in history:
+        key = f"{h.get('symbol','')}|{h.get('direction','')}|{h.get('time','')}"
+        existing_keys.add(key)
     added = 0
     for sig in signals:
         if not sig.get("symbol"):
             continue
-        if not _is_duplicate_signal(sig, history, window_hours=0):
+        key = f"{sig.get('symbol','')}|{sig.get('direction','')}|{sig.get('time','')}"
+        if key not in existing_keys:
             history.append(sig)
+            existing_keys.add(key)
             added += 1
     save_history(history)
-    return jsonify({"ok": True, "added": added, "total": len(history)})
+    return jsonify({"ok": True, "added": added, "total": len(load_history())})
 
 @app.route("/api/history/clear", methods=["POST"])
 def clear_history():

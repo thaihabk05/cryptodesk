@@ -4814,13 +4814,18 @@ function addScanToHistory(idx) {
         btn.textContent = '✅';
         btn.style.background = 'rgba(0,230,118,.2)';
         btn.style.borderColor = 'var(--long)';
+        // Reload history data để History tab cập nhật
+        loadHistory();
+        showToast('✅ Đã thêm ' + d.symbol + ' vào History');
       } else {
         btn.textContent = res.error === 'duplicate' ? '⚠️ Đã có' : '❌';
         btn.disabled = false;
+        showToast('⚠️ ' + (res.error || 'Không thể thêm'));
       }
     }
-  }).catch(function() {
+  }).catch(function(e) {
     if (btn) { btn.textContent = '❌'; btn.disabled = false; }
+    showToast('❌ Lỗi: ' + (e.message || 'kết nối'));
   });
 }
 

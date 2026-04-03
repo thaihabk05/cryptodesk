@@ -556,8 +556,13 @@ def history_add():
     sig = request.json or {}
     if not sig.get("symbol"):
         return jsonify({"ok": False, "error": "Thiếu symbol"})
+    history_before = len(load_history())
     _save_signal_to_history(sig)
-    return jsonify({"ok": True})
+    history_after = len(load_history())
+    if history_after > history_before:
+        return jsonify({"ok": True, "total": history_after})
+    else:
+        return jsonify({"ok": False, "error": "duplicate"})
 
 @app.route("/api/history/import", methods=["POST"])
 def history_import():

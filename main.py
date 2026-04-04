@@ -1599,7 +1599,11 @@ def market_scan_status():
 
 @app.route("/api/market-scan/results")
 def market_scan_results():
-    return jsonify(scan_state["results"])
+    # Khi đang scan (results=[]), trả last_results để frontend vẫn show kết quả cũ
+    results = scan_state["results"]
+    if not results:
+        results = scan_state.get("last_results", [])
+    return jsonify(results)
 
 # ── Telegram ─────────────────────────────────
 def send_telegram(token, chat_id, msg):

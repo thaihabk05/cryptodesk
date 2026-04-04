@@ -63,6 +63,7 @@ scan_state = {
     "progress":    0,
     "total":       _persisted.get("total", 0),
     "results":     _persisted.get("results", []),
+    "last_results": _persisted.get("results", []),  # backup — luôn giữ kết quả scan cuối
     "started_at":  None,
     "finished_at": _persisted.get("finished_at"),
     "error":       None,
@@ -197,6 +198,7 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
         scan_state.update({"running": True, "progress": 0, "results": [],
                            "error": None, "started_at": datetime.now(_TZ_VN).isoformat(),
                            "finished_at": None, "strategy": strategy})
+        # Giữ last_results không reset — frontend show kết quả cũ trong khi scan mới
     try:
         print(f"[SCAN] Bắt đầu fetch tickers min_vol={min_vol:,.0f}...")
         symbols = fetch_all_futures_tickers(min_vol)
@@ -225,8 +227,9 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
             -x.get("score", 0),
             -x.get("rr", 0)
         ))
-        scan_state["results"]     = results
-        scan_state["finished_at"] = datetime.now(_TZ_VN).isoformat()
+        scan_state["results"]      = results
+        scan_state["last_results"] = results  # backup cho lần restart tiếp
+        scan_state["finished_at"]  = datetime.now(_TZ_VN).isoformat()
         _persist_scan_state(scan_state)
         print(f"[SCAN] Lưu {len(results)} kết quả vào {SCAN_CACHE_FILE}")
     except Exception as e:

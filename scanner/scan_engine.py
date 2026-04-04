@@ -16,16 +16,30 @@ import os as _os
 _SCAN_DATA_DIR  = Path("/data") if Path("/data").exists() and _os.access("/data", _os.W_OK) else Path("data")
 SCAN_CACHE_FILE = _SCAN_DATA_DIR / "last_scan.json"
 
+def _clean_for_json(obj):
+    """Replace NaN/Infinity → None, numpy types → native Python."""
+    import math
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _clean_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_for_json(v) for v in obj]
+    return obj
+
 def _persist_scan_state(state: dict):
     """Lưu kết quả scan vào file để survive restart."""
     try:
         SCAN_CACHE_FILE.parent.mkdir(exist_ok=True)
-        SCAN_CACHE_FILE.write_text(json.dumps({
+        data = _clean_for_json({
             "results":     state.get("results", []),
             "finished_at": state.get("finished_at"),
             "total":       state.get("total", 0),
             "strategy":    state.get("strategy", "SWING_H4"),
-        }, ensure_ascii=False))
+        })
+        SCAN_CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False, allow_nan=False, default=str))
     except Exception as e:
         print(f"[SCAN PERSIST ERROR] {e}")
 

@@ -1720,7 +1720,7 @@ function loadScanOnTabSwitch() {
   loadScanModes();
   // Load kết quả scan gần nhất khi vào tab — không trigger scan mới
   fetch('/api/market-scan/status').then(function(r){return r.json();}).then(function(st) {
-    if (!st.finished_at && !st.running) return; // chưa từng scan
+    // Luôn thử load results — kể cả finished_at null (có thể có data persisted từ lần trước)
     fetch('/api/market-scan/results').then(function(r){return r.json();}).then(function(data) {
       if (!data || !data.length) return;
       allScanResults = data;

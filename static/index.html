@@ -618,7 +618,7 @@ tbody td{padding:11px 12px;vertical-align:middle}
       <div class="ctrl-group">
         <label>Confidence</label>
         <select id="sConf" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--font);font-size:12px">
-          <option value="ALL">All Confidence</option>
+          <option value="ALL" selected>All Confidence</option>
           <option value="HIGH">HIGH only</option>
           <option value="MEDIUM">MEDIUM only</option>
           <option value="HIGH_MED">HIGH + MEDIUM</option>
@@ -3059,6 +3059,9 @@ fetch('/api/results').then(function(r){return r.json();}).then(function(data) {
 
 loadConfig();
 updateTzBadge();
+
+// Auto-load kết quả scan cuối cùng khi page load (không chờ bấm tab)
+loadScanOnTabSwitch();
 
 function scanNow(e) {
   var syms = config.symbols || [];

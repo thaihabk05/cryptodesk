@@ -624,8 +624,8 @@ def clear_history():
 # ── Backtest ──────────────────────────────────
 def backtest_signal(signal: dict) -> dict:
     """
-    Fetch H1 candles sau thời điểm signal, kiểm tra SL hay TP1 chạm trước.
-    Return dict với result: WIN / LOSS / OPEN, candles_to_result, pnl_r
+    Backtest signal: dùng M5 cho scalp, M15 cho swing H1, H1 cho swing H4.
+    Market order → entry đã khớp ngay → check SL/TP liên tục trên nến nhỏ.
     """
     from core.binance import fetch_klines, fetch_volume_24h
     import pandas as pd
@@ -633,20 +633,17 @@ def backtest_signal(signal: dict) -> dict:
     symbol    = signal["symbol"]
     direction = signal["direction"]
 
-    # Bug fix 1: Skip WAIT signal — không có entry thực tế
     if direction == "WAIT":
         return {**signal, "bt_result": "SKIP", "bt_note": "Direction=WAIT — không có lệnh thực tế",
                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
     entry     = float(signal["entry"])
     sl        = float(signal["sl"])
     tp1       = float(signal["tp1"])
-    sig_time  = signal["time"]  # ISO string
+    sig_time  = signal["time"]
 
     try:
-        # Parse timestamp — normalize về UTC để so sánh đúng với Binance klines
         ts_parsed = pd.Timestamp(sig_time)
         if ts_parsed.tzinfo is None:
-            # Naive timestamp — giả sử là UTC+7 (VN local)
             ts_parsed = ts_parsed.tz_localize("Asia/Ho_Chi_Minh")
         sig_ts = ts_parsed.tz_convert("UTC").timestamp()
     except Exception:
@@ -654,82 +651,77 @@ def backtest_signal(signal: dict) -> dict:
                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
 
     try:
-        # Tính số nến cần fetch: từ lúc signal đến hiện tại (H1) + buffer 24h
         from datetime import timezone as _tz
-        now_ts    = datetime.now(_tz.utc).timestamp()
-        hours_ago = max(48, int((now_ts - sig_ts) / 3600) + 24)
-        limit     = min(hours_ago, 500)  # tối đa 500 nến H1 (~20 ngày)
+        now_ts = datetime.now(_tz.utc).timestamp()
+        hours_since = (now_ts - sig_ts) / 3600
 
-        df = fetch_klines(symbol, "1h", limit, force_futures=True)
-        # Index là DatetimeIndex (open_time) — convert sang timestamp số
+        # ── Chọn timeframe backtest theo strategy ──
+        # Scalp: M5 (chính xác nhất, 5 phút/nến)
+        # Swing H1: M15
+        # Swing H4/FAM: H1
+        strategy = signal.get("strategy", "SWING_H4")
+        if strategy == "SCALP":
+            bt_interval, bt_label = "5m", "M5"
+            minutes_per_candle = 5
+        elif strategy == "SWING_H1":
+            bt_interval, bt_label = "15m", "M15"
+            minutes_per_candle = 15
+        else:
+            bt_interval, bt_label = "1h", "H1"
+            minutes_per_candle = 60
+
+        # Tính số nến cần fetch
+        candles_needed = max(50, int(hours_since * 60 / minutes_per_candle) + 20)
+        limit = min(candles_needed, 500)
+
+        df = fetch_klines(symbol, bt_interval, limit, force_futures=True)
         df = df.copy()
-        df["ts"] = df.index.astype("int64") // 10**9  # nanoseconds → seconds
+        df["ts"] = df.index.astype("int64") // 10**9
 
-        # Chỉ xét nến SAU thời điểm signal
         df_after = df[df["ts"] > sig_ts].reset_index(drop=True)
 
-        # Khai báo sớm để dùng trong mọi nhánh (bao gồm fallback)
         sl_pct  = float(signal.get("sl_pct", 2))
         tp1_pct = float(signal.get("tp1_pct", 3))
 
+        # ── Nếu không có nến nào sau signal → dùng nến cuối để check ──
         if len(df_after) == 0:
-            # Nếu signal mới < 2h → chưa đủ H1 candles để backtest — PENDING
-            hours_since_signal = (now_ts - sig_ts) / 3600
-            if hours_since_signal < 2:
-                return {**signal, "bt_result": "PENDING",
-                        "bt_note": f"Signal mới ({hours_since_signal:.1f}h trước) — chờ đủ H1 candles",
-                        "bt_candles": 0, "bt_pnl_r": None, "bt_exit_price": None}
-
-            # Fallback: thử dùng nến mới nhất để tính unrealized
-            last_price   = float(df["close"].iloc[-1])
-
-            # ── Kiểm tra SL/TP trước khi tính unrealized ──
-            # Nếu giá đã vượt SL → trả về LOSS tại SL, không tính unrealized oan
+            last_price = float(df["close"].iloc[-1])
             if direction == "LONG":
                 if last_price <= sl:
                     return {**signal, "bt_result": "LOSS",
-                            "bt_note": f"Giá {round(last_price,6)} đã dưới SL {sl} — cắt lỗ tại SL",
+                            "bt_note": f"Giá {round(last_price,6)} dưới SL {sl}",
                             "bt_candles": 0, "bt_pnl_r": -1.0,
                             "bt_exit_price": round(sl, 6)}
                 if last_price >= tp1:
                     return {**signal, "bt_result": "WIN",
-                            "bt_note": f"Giá {round(last_price,6)} đã trên TP1 {tp1}",
+                            "bt_note": f"Giá {round(last_price,6)} trên TP1 {tp1}",
                             "bt_candles": 0,
                             "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
                             "bt_exit_price": round(tp1, 6)}
             else:
                 if last_price >= sl:
                     return {**signal, "bt_result": "LOSS",
-                            "bt_note": f"Giá {round(last_price,6)} đã trên SL {sl} — cắt lỗ tại SL",
+                            "bt_note": f"Giá {round(last_price,6)} trên SL {sl}",
                             "bt_candles": 0, "bt_pnl_r": -1.0,
                             "bt_exit_price": round(sl, 6)}
                 if last_price <= tp1:
                     return {**signal, "bt_result": "WIN",
-                            "bt_note": f"Giá {round(last_price,6)} đã dưới TP1 {tp1}",
+                            "bt_note": f"Giá {round(last_price,6)} dưới TP1 {tp1}",
                             "bt_candles": 0,
                             "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
                             "bt_exit_price": round(tp1, 6)}
-
-            # Chưa chạm SL/TP → tính unrealized thực tế (cap tại SL)
-            if direction == "LONG":
-                unrealized = round((last_price - entry) / entry * 100, 2)
-            else:
-                unrealized = round((entry - last_price) / entry * 100, 2)
-            sl_pct_val   = float(signal.get("sl_pct", 2))
-            unrealized_r = round(unrealized / sl_pct_val, 2) if sl_pct_val > 0 else None
+            # Chưa chạm → OPEN
+            unrealized = round((last_price - entry) / entry * 100, 2) if direction == "LONG" \
+                         else round((entry - last_price) / entry * 100, 2)
+            unrealized_r = round(unrealized / sl_pct, 2) if sl_pct > 0 else None
             return {**signal, "bt_result": "OPEN",
-                    "bt_note": f"Dùng giá mới nhất {round(last_price,6)} ({unrealized:+.2f}%)",
-                    "bt_candles": 0,
-                    "bt_pnl_r": None,
-                    "bt_unrealized_pct": unrealized,
-                    "bt_unrealized_r":   unrealized_r,
+                    "bt_note": f"Giá hiện tại {round(last_price,6)} ({unrealized:+.2f}%) — dùng {bt_label}",
+                    "bt_candles": 0, "bt_pnl_r": None,
+                    "bt_unrealized_pct": unrealized, "bt_unrealized_r": unrealized_r,
                     "bt_exit_price": round(last_price, 6)}
 
-        # ── Bước 1: Kiểm tra lệnh có được khớp không ──
-        # Signal entry thường là giá thị trường lúc phát, nhưng có thể là Limit
-        # → phải xác nhận giá SAU signal có chạm entry hay không
-        # Nếu entry == price (market order) → coi như đã khớp ngay
-        sig_price     = float(signal.get("price", entry))
+        # ── Check SL/TP trên từng nến (market order = entry đã khớp ngay) ──
+        sig_price      = float(signal.get("price", entry))
         is_limit_long  = direction == "LONG"  and entry < sig_price * 0.999
         is_limit_short = direction == "SHORT" and entry > sig_price * 1.001
         is_limit       = is_limit_long or is_limit_short
@@ -777,9 +769,10 @@ def backtest_signal(signal: dict) -> dict:
                 continue
 
             fill_note = f" (khớp nến {entry_fill_idx+1})" if entry_fill_idx is not None else ""
+            time_est = round((i+1) * minutes_per_candle / 60, 1)
             return {**signal,
                     "bt_result":     result,
-                    "bt_note":       f"Chạm {'TP1' if result=='WIN' else 'SL'} sau {i+1} nến H1{fill_note}",
+                    "bt_note":       f"Chạm {'TP1' if result=='WIN' else 'SL'} sau {i+1} nến {bt_label} (~{time_est}h){fill_note}",
                     "bt_candles":    i + 1,
                     "bt_pnl_r":      pnl_r,
                     "bt_exit_price": round(exit_price, 6)}
@@ -837,7 +830,7 @@ def backtest_signal(signal: dict) -> dict:
         unrealized_r = round(unrealized / sl_pct_val, 2) if sl_pct_val > 0 else None
         return {**signal,
                 "bt_result":         "OPEN",
-                "bt_note":           f"Đã khớp, chưa chạm SL/TP — giá hiện tại {round(last_price,6)} ({unrealized:+.2f}%)",
+                "bt_note":           f"Đã khớp, chưa chạm SL/TP — giá {round(last_price,6)} ({unrealized:+.2f}%) [{bt_label}]",
                 "bt_candles":        len(df_after),
                 "bt_pnl_r":          None,
                 "bt_unrealized_pct": round(unrealized, 2),

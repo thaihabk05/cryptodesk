@@ -1432,22 +1432,22 @@ def run_backtest():
 
     # Filter theo thời gian (hours_ago = 0 → không giới hạn)
     if hours_ago > 0:
-        # History timestamps không có timezone (local server time)
-        # Dùng datetime.now() naive để so sánh — tránh lệch timezone UTC vs local
-        cutoff = datetime.now() - timedelta(hours=hours_ago)
+        # Dùng UTC-aware comparison để tránh lệch timezone
+        tz_vn = timezone(timedelta(hours=7))
+        cutoff = datetime.now(tz_vn) - timedelta(hours=hours_ago)
+        cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%S")  # so sánh string
         def sig_after_cutoff(h):
-            try:
-                raw = h.get("time", "")
-                if not raw:
-                    return False
-                t = pd.Timestamp(raw).replace(tzinfo=None)
-                return t >= cutoff
-            except Exception:
-                return False
+            raw = h.get("time", "")
+            if not raw: return False
+            # So sánh string 19 ký tự đầu (bỏ timezone suffix)
+            return raw[:19] >= cutoff_str
         signals = [h for h in signals if sig_after_cutoff(h)]
 
     if not signals:
         return jsonify({"results": [], "summary": {}, "error": "Không có signal phù hợp"})
+
+    # Sort mới nhất trước → lấy 50 signal mới nhất (không phải cũ nhất)
+    signals.sort(key=lambda h: h.get("time", "")[:19], reverse=True)
 
     # Backtest parallel — tránh timeout khi có nhiều signal
     results = []

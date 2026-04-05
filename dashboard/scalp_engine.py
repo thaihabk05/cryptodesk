@@ -302,35 +302,34 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến M15 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
-    # ── PATCH A: BTC Context — Scalp version (taker-aware) ──
-    # FAM Trading scalp dựa vào lực mua/bán thực tế, không phải D1 macro
-    # Nếu BTC D1 BEAR nhưng taker BUY mạnh → vẫn cho LONG (FAM style)
-    # Nếu BTC DUMP + taker SELL mạnh → block
+    # ── PATCH A: BTC Context — Scalp v3 (backtest-tuned) ──
+    # Backtest 24h: 8/16 LOSS = LONG altcoin khi BTC RISK_OFF → 25% WR
+    # Fix: block LONG altcoin khi BTC RISK_OFF/DUMP
+    # Cho phép: BTC/ETH scalp LONG (FAM style), SHORT altcoin
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
     btc_d1   = btc_ctx.get("d1_trend", "")
     _taker_override = taker and taker["trend"] in ("BUY_STRONG", "BUY_MILD")
     _taker_sell     = taker and taker["trend"] in ("SELL_STRONG",)
+    _is_major = symbol in ("BTCUSDT", "ETHUSDT", "BNBUSDT")
 
-    if direction == "LONG" and btc_sent == "DUMP":
-        if _taker_override:
-            # Taker BUY mạnh override DUMP → chỉ warning nhẹ
-            all_warnings.append(f"⚠️ BTC dump nhưng lực mua taker vẫn mạnh ({taker['buy_ratio']:.2f}x) — scalp LONG OK, SL chặt")
-        elif _taker_sell:
-            # DUMP + taker SELL → block thật
+    if direction == "LONG" and btc_sent in ("RISK_OFF", "DUMP"):
+        if _is_major and _taker_override:
+            # BTC/ETH LONG + taker BUY mạnh → cho phép (FAM style)
+            all_warnings.append(f"⚠️ BTC {btc_sent} nhưng {symbol[:3]} + taker mua mạnh — scalp LONG OK, SL chặt")
+        elif _is_major and btc_sent == "RISK_OFF":
+            # BTC/ETH LONG + RISK_OFF (không DUMP) → warning, giảm confidence
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ BTC RISK_OFF — {symbol[:3]} scalp LONG cẩn thận, giữ SL chặt")
+        else:
+            # Altcoin LONG khi BTC RISK_OFF/DUMP → BLOCK
+            # Backtest: 8 LOSS / 2 WIN = 20% WR cho pattern này
             direction  = "WAIT"
             confidence = "LOW"
-            all_warnings.insert(0, f"🚫 BTC DUMP + lực bán mạnh (Taker {taker['buy_ratio']:.2f}x) — không LONG")
-        else:
-            if confidence == "HIGH": confidence = "MEDIUM"
-            all_warnings.insert(0, f"⚠️ BTC đang dump — scalp LONG cẩn thận, SL chặt")
-    elif direction == "LONG" and btc_sent == "RISK_OFF" and btc_d1 == "BEAR":
-        if not _taker_override:
-            if confidence == "HIGH": confidence = "MEDIUM"
-            all_warnings.append(f"⚠️ BTC D1 BEAR — scalp LONG counter-trend, giữ SL chặt")
+            all_warnings.insert(0, f"🚫 BLOCK LONG altcoin — BTC {btc_sent}, chỉ cho SHORT hoặc chờ BTC hồi")
     elif direction == "SHORT" and btc_sent == "PUMP":
         _taker_short_ok = taker and taker["trend"] in ("SELL_STRONG", "SELL_MILD")
         if _taker_short_ok:
-            all_warnings.append(f"⚠️ BTC pump nhưng lực bán taker vẫn mạnh — scalp SHORT OK, SL chặt")
+            all_warnings.append(f"⚠️ BTC pump nhưng lực bán taker vẫn mạnh — scalp SHORT OK")
         else:
             if confidence == "HIGH": confidence = "MEDIUM"
             all_warnings.insert(0, f"⚠️ BTC đang pump — scalp SHORT cẩn thận")
@@ -498,12 +497,18 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     _recent_10_low  = float(df_m15["low"].iloc[-10:].min())
     _recent_10_high = float(df_m15["high"].iloc[-10:].max())
 
-    # OI cao → nới SL minimum (tiền đổ vào = volatility cao, SL sát dễ bị quét)
-    _sl_min_pct = 0.003  # default 0.3%
+    # ── SL minimum dynamic ──
+    # Backtest 24h cho thấy: SL ≤ 0.4% → 50% tổng LOSS (bị quét do noise)
+    # WIN signals trung bình SL = 0.95%. Base minimum nên là 0.5%.
+    # BTC/ETH ít volatile hơn alt → có thể SL chặt hơn
+    _is_major = symbol in ("BTCUSDT", "ETHUSDT", "BNBUSDT")
+    _sl_min_pct = 0.004 if _is_major else 0.005  # 0.4% major, 0.5% altcoin
+
+    # OI cao → nới thêm (tiền đổ vào = volatility cao, SL sát dễ bị quét)
     if oi_change is not None and abs(oi_change) > 5:
-        _sl_min_pct = 0.005  # nới lên 0.5% khi OI biến động mạnh
+        _sl_min_pct = max(_sl_min_pct, 0.006)  # 0.6%
     if oi_change is not None and abs(oi_change) > 8:
-        _sl_min_pct = 0.008  # 0.8% khi OI cực mạnh
+        _sl_min_pct = max(_sl_min_pct, 0.008)  # 0.8%
 
     if direction == "LONG" or (direction == "WAIT" and h1_bias == "LONG"):
         entry = price

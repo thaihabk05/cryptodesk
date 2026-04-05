@@ -1,6 +1,6 @@
 """main.py — Entry point. Chạy: python main.py"""
 import json, os, threading, time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -43,8 +43,8 @@ HISTORY_FILE   = DATA_DIR / "history.json"
 POSITIONS_FILE = DATA_DIR / "positions.json"
 
 # ── Algorithm Version — tăng mỗi khi thay đổi filter/threshold ──
-ALGO_VERSION = "v2.0"   # v2.0: PATCH A-I + RR≥1.5 + SL 2% (2026-03-05)
-ALGO_DATE    = "2026-03-05"
+ALGO_VERSION = "v2.1"   # v2.1: backtest-tuned SL, block LONG alt counter-trend (2026-04-05)
+ALGO_DATE    = "2026-04-05"
 
 DATA_DIR.mkdir(exist_ok=True)
 _storage_type = "Railway Volume (/data)" if str(DATA_DIR) == "/data" else f"Local fallback ({DATA_DIR.resolve()})"
@@ -1546,6 +1546,123 @@ def run_backtest_signals():
         "avg_candles_win": avg_candles_win, "avg_candles_loss": avg_candles_loss,
     }
     return jsonify({"results": results, "summary": summary})
+
+@app.route("/api/backtest/auto-analyze", methods=["POST"])
+def auto_analyze_backtest():
+    """Tự động phân tích backtest results → trả về insights + đề xuất cải thiện.
+    Frontend có thể gọi định kỳ hoặc khi user bấm nút.
+    """
+    import concurrent.futures
+    from collections import defaultdict
+
+    data = request.json or {}
+    hours_ago = int(data.get("hours_ago", 24))
+
+    # Load & filter history
+    history = load_history()
+    if not history:
+        return jsonify({"ok": False, "error": "Không có history"})
+
+    tz_vn = timezone(timedelta(hours=7))
+    cutoff_str = (datetime.now(tz_vn) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S")
+    signals = [h for h in history
+               if h.get("direction") in ("LONG", "SHORT")
+               and h.get("time", "")[:19] >= cutoff_str]
+
+    if len(signals) < 5:
+        return jsonify({"ok": False, "error": f"Chỉ có {len(signals)} signals trong {hours_ago}h — cần ít nhất 5"})
+
+    # Backtest
+    signals_to_bt = sorted(signals, key=lambda h: h.get("time", "")[:19], reverse=True)[:50]
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(backtest_signal, sig): sig for sig in signals_to_bt}
+        for fut in concurrent.futures.as_completed(futures, timeout=110):
+            try:
+                results.append(fut.result())
+            except Exception:
+                pass
+
+    wins   = [r for r in results if r.get("bt_result") == "WIN"]
+    losses = [r for r in results if r.get("bt_result") == "LOSS"]
+    closed = wins + losses
+    if not closed:
+        return jsonify({"ok": False, "error": "Không có signal closed (WIN/LOSS)"})
+
+    # ── Analysis ──
+    insights = []
+    recommendations = []
+
+    # 1. Overall win rate
+    wr = round(len(wins) / len(closed) * 100, 1)
+    insights.append(f"Win rate: {wr}% ({len(wins)}W/{len(losses)}L)")
+
+    # 2. LONG vs SHORT
+    long_w = len([r for r in wins if r["direction"] == "LONG"])
+    long_l = len([r for r in losses if r["direction"] == "LONG"])
+    short_w = len([r for r in wins if r["direction"] == "SHORT"])
+    short_l = len([r for r in losses if r["direction"] == "SHORT"])
+    long_wr = round(long_w / (long_w + long_l) * 100) if (long_w + long_l) else 0
+    short_wr = round(short_w / (short_w + short_l) * 100) if (short_w + short_l) else 0
+    insights.append(f"LONG: {long_wr}% WR ({long_w}W/{long_l}L) | SHORT: {short_wr}% WR ({short_w}W/{short_l}L)")
+    if long_wr < 35 and long_l >= 3:
+        recommendations.append({"type": "direction", "severity": "HIGH",
+                                 "msg": f"LONG win rate chỉ {long_wr}% — cân nhắc giảm LONG signals hoặc thắt filter"})
+
+    # 3. SL analysis
+    loss_sls = [r.get("sl_pct", 0) for r in losses]
+    win_sls = [r.get("sl_pct", 0) for r in wins]
+    avg_loss_sl = round(sum(loss_sls) / len(loss_sls), 2) if loss_sls else 0
+    avg_win_sl = round(sum(win_sls) / len(win_sls), 2) if win_sls else 0
+    tight_sl_losses = len([s for s in loss_sls if s <= 0.4])
+    if tight_sl_losses >= 3:
+        pct = round(tight_sl_losses / len(losses) * 100)
+        recommendations.append({"type": "sl", "severity": "HIGH",
+                                 "msg": f"SL ≤ 0.4%: {tight_sl_losses} LOSS ({pct}%) — SL quá chặt, nên nới lên 0.5%+"})
+    insights.append(f"SL trung bình — LOSS: {avg_loss_sl}% | WIN: {avg_win_sl}%")
+
+    # 4. OI correlation
+    oi_loss = [r.get("oi_change", 0) or 0 for r in losses]
+    oi_win = [r.get("oi_change", 0) or 0 for r in wins]
+    avg_oi_loss = round(sum(oi_loss) / len(oi_loss), 2) if oi_loss else 0
+    avg_oi_win = round(sum(oi_win) / len(oi_win), 2) if oi_win else 0
+    insights.append(f"OI trung bình — LOSS: {avg_oi_loss:+.2f}% | WIN: {avg_oi_win:+.2f}%")
+
+    # 5. Counter-trend
+    counter_losses = len([r for r in losses if r["direction"] == "LONG"
+                          and r.get("btc_sentiment") in ("RISK_OFF", "DUMP")])
+    if counter_losses >= 3:
+        pct = round(counter_losses / len(losses) * 100)
+        recommendations.append({"type": "counter_trend", "severity": "HIGH",
+                                 "msg": f"LONG counter-trend (BTC RISK_OFF): {counter_losses} LOSS ({pct}%) — block LONG altcoin khi BTC BEAR"})
+
+    # 6. Score analysis
+    score_perf = defaultdict(lambda: {"w": 0, "l": 0})
+    for r in wins: score_perf[r.get("score", 0)]["w"] += 1
+    for r in losses: score_perf[r.get("score", 0)]["l"] += 1
+    score_insights = []
+    for sc in sorted(score_perf.keys()):
+        d = score_perf[sc]
+        total = d["w"] + d["l"]
+        swr = round(d["w"] / total * 100) if total else 0
+        score_insights.append({"score": sc, "wins": d["w"], "losses": d["l"], "wr": swr})
+
+    return jsonify({
+        "ok": True,
+        "period_hours": hours_ago,
+        "total_signals": len(signals_to_bt),
+        "closed": len(closed),
+        "win_rate": wr,
+        "insights": insights,
+        "recommendations": recommendations,
+        "direction": {"long_wr": long_wr, "short_wr": short_wr,
+                      "long_w": long_w, "long_l": long_l,
+                      "short_w": short_w, "short_l": short_l},
+        "sl_analysis": {"avg_loss_sl": avg_loss_sl, "avg_win_sl": avg_win_sl,
+                        "tight_sl_losses": tight_sl_losses},
+        "oi_correlation": {"avg_loss": avg_oi_loss, "avg_win": avg_oi_win},
+        "score_analysis": score_insights,
+    })
 
 @app.route("/api/scanner/start", methods=["POST"])
 def start_dashboard_scanner():

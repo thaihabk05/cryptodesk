@@ -871,9 +871,13 @@ tbody td{padding:11px 12px;vertical-align:middle}
         <option value="legacy">Legacy (cũ)</option>
       </select>
       <button class="btn primary" id="btnBacktest" onclick="runBacktest()">&#9654; Run Backtest</button>
+      <button class="btn" id="btnAutoAnalyze" onclick="runAutoAnalyze()" style="background:rgba(255,170,0,.12);border:1px solid rgba(255,170,0,.4);color:#ffaa00" title="Tự động phân tích backtest gần đây và đưa ra gợi ý cải thiện">&#129504; Auto Analyze</button>
       <button class="btn" id="btnExportAnalysis" onclick="exportAnalysis()" style="display:none;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);color:#818cf8">&#128229; Export Analysis</button>
     </div>
   </div>
+
+  <!-- Auto Analyze Results -->
+  <div id="autoAnalyzeResults" style="display:none;margin-bottom:20px;background:var(--bg2);border:1px solid rgba(255,170,0,.3);border-radius:10px;padding:16px"></div>
 
   <!-- Summary cards -->
   <div id="btSummary" style="display:none">
@@ -3353,6 +3357,123 @@ function clearHistory() {
 // ═══════════════════════════════════════════════
 // BACKTEST
 // ═══════════════════════════════════════════════
+function runAutoAnalyze() {
+  var btn = document.getElementById('btnAutoAnalyze');
+  var box = document.getElementById('autoAnalyzeResults');
+  var hoursAgo = parseInt(document.getElementById('btTimeRange').value) || 24;
+  if (hoursAgo === 0) hoursAgo = 24;  // 0 = all → default 24h
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Analyzing...';
+  box.style.display = 'block';
+  box.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)"><span class="spinner"></span> Đang chạy backtest và phân tích...</div>';
+
+  fetch('/api/backtest/auto-analyze', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hours_ago: hoursAgo})
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if (!d.ok) {
+      box.innerHTML = '<div style="color:var(--short);padding:12px">❌ ' + (d.error || 'Lỗi phân tích') + '</div>';
+      return;
+    }
+    renderAutoAnalyze(d);
+  }).catch(function(e) {
+    box.innerHTML = '<div style="color:var(--short);padding:12px">❌ ' + (e.message || 'Lỗi kết nối') + '</div>';
+  }).finally(function() {
+    btn.disabled = false;
+    btn.innerHTML = '🧠 Auto Analyze';
+  });
+}
+
+function renderAutoAnalyze(d) {
+  var box = document.getElementById('autoAnalyzeResults');
+  var wrColor = d.win_rate >= 50 ? 'var(--long)' : d.win_rate >= 35 ? 'var(--wait)' : 'var(--short)';
+
+  // Header
+  var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">'
+    + '<span style="font-size:18px">🧠</span>'
+    + '<span style="font-size:15px;font-weight:800">Auto Analysis</span>'
+    + '<span style="font-size:11px;color:var(--muted)">— ' + d.period_hours + 'h qua, ' + d.total_signals + ' signals, ' + d.closed + ' closed</span>'
+    + '<span style="margin-left:auto;font-size:22px;font-weight:800;color:' + wrColor + '">' + d.win_rate + '% WR</span>'
+    + '</div>';
+
+  // Stats grid
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px">';
+  // LONG
+  var longWr = d.direction.long_wr;
+  var longCol = longWr >= 50 ? 'var(--long)' : longWr >= 35 ? 'var(--wait)' : 'var(--short)';
+  html += '<div style="background:var(--bg3);padding:10px;border-radius:8px;border-left:3px solid ' + longCol + '">'
+    + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase">LONG</div>'
+    + '<div style="font-size:18px;font-weight:800;color:' + longCol + '">' + longWr + '% WR</div>'
+    + '<div style="font-size:11px;color:var(--muted2)">' + d.direction.long_w + 'W / ' + d.direction.long_l + 'L</div>'
+    + '</div>';
+  // SHORT
+  var shortWr = d.direction.short_wr;
+  var shortCol = shortWr >= 50 ? 'var(--long)' : shortWr >= 35 ? 'var(--wait)' : 'var(--short)';
+  html += '<div style="background:var(--bg3);padding:10px;border-radius:8px;border-left:3px solid ' + shortCol + '">'
+    + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase">SHORT</div>'
+    + '<div style="font-size:18px;font-weight:800;color:' + shortCol + '">' + shortWr + '% WR</div>'
+    + '<div style="font-size:11px;color:var(--muted2)">' + d.direction.short_w + 'W / ' + d.direction.short_l + 'L</div>'
+    + '</div>';
+  // SL
+  html += '<div style="background:var(--bg3);padding:10px;border-radius:8px;border-left:3px solid var(--accent)">'
+    + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase">SL avg</div>'
+    + '<div style="font-size:13px;font-weight:700"><span style="color:var(--long)">W: ' + d.sl_analysis.avg_win_sl + '%</span> / <span style="color:var(--short)">L: ' + d.sl_analysis.avg_loss_sl + '%</span></div>'
+    + '<div style="font-size:11px;color:var(--muted2)">Tight SL losses: ' + d.sl_analysis.tight_sl_losses + '</div>'
+    + '</div>';
+  // OI
+  html += '<div style="background:var(--bg3);padding:10px;border-radius:8px;border-left:3px solid var(--accent)">'
+    + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase">OI avg</div>'
+    + '<div style="font-size:13px;font-weight:700"><span style="color:var(--long)">W: ' + (d.oi_correlation.avg_win >= 0 ? '+' : '') + d.oi_correlation.avg_win + '%</span> / <span style="color:var(--short)">L: ' + (d.oi_correlation.avg_loss >= 0 ? '+' : '') + d.oi_correlation.avg_loss + '%</span></div>'
+    + '<div style="font-size:11px;color:var(--muted2)">Correlation giữa OI và kết quả</div>'
+    + '</div>';
+  html += '</div>';
+
+  // Recommendations
+  if (d.recommendations && d.recommendations.length) {
+    html += '<div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px">💡 Gợi ý cải thiện:</div>';
+    d.recommendations.forEach(function(rec) {
+      var sevCol = rec.severity === 'HIGH' ? 'var(--short)' : rec.severity === 'MEDIUM' ? 'var(--wait)' : 'var(--muted)';
+      var sevIcon = rec.severity === 'HIGH' ? '🔴' : rec.severity === 'MEDIUM' ? '🟡' : '⚪';
+      html += '<div style="display:flex;gap:8px;padding:10px;background:var(--bg3);border-radius:6px;margin-bottom:6px;border-left:3px solid ' + sevCol + '">'
+        + '<span>' + sevIcon + '</span>'
+        + '<div style="flex:1">'
+        + '<div style="font-size:11px;color:' + sevCol + ';font-weight:700;text-transform:uppercase;margin-bottom:2px">' + rec.severity + ' - ' + rec.type + '</div>'
+        + '<div style="font-size:12px;color:var(--text)">' + rec.msg + '</div>'
+        + '</div>'
+        + '</div>';
+    });
+  } else {
+    html += '<div style="padding:10px;background:rgba(0,230,118,.08);border-radius:6px;color:var(--long);font-size:12px">✅ Không có vấn đề nghiêm trọng — hệ thống đang hoạt động ổn</div>';
+  }
+
+  // Score analysis
+  if (d.score_analysis && d.score_analysis.length) {
+    html += '<div style="font-size:12px;font-weight:700;color:var(--text);margin-top:14px;margin-bottom:8px">📊 Win rate theo Score:</div>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    d.score_analysis.forEach(function(s) {
+      var col = s.wr >= 50 ? 'var(--long)' : s.wr >= 35 ? 'var(--wait)' : 'var(--short)';
+      html += '<div style="background:var(--bg3);padding:6px 10px;border-radius:6px;border-left:2px solid ' + col + '">'
+        + '<span style="font-size:10px;color:var(--muted)">Score ' + s.score + ': </span>'
+        + '<span style="font-size:12px;font-weight:700;color:' + col + '">' + s.wr + '%</span>'
+        + '<span style="font-size:10px;color:var(--muted2);margin-left:4px">(' + s.wins + 'W/' + s.losses + 'L)</span>'
+        + '</div>';
+    });
+    html += '</div>';
+  }
+
+  // Raw insights
+  if (d.insights && d.insights.length) {
+    html += '<details style="margin-top:14px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">📋 Chi tiết số liệu</summary>';
+    html += '<div style="padding:10px;font-size:11px;color:var(--muted2);font-family:var(--mono)">';
+    d.insights.forEach(function(i) { html += '• ' + i + '<br>'; });
+    html += '</div></details>';
+  }
+
+  box.innerHTML = html;
+}
+
 function runBacktest() {
   var btn  = document.getElementById('btnBacktest');
   var conf     = document.getElementById('btConf').value;

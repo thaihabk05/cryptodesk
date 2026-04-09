@@ -43,8 +43,8 @@ HISTORY_FILE   = DATA_DIR / "history.json"
 POSITIONS_FILE = DATA_DIR / "positions.json"
 
 # ── Algorithm Version — tăng mỗi khi thay đổi filter/threshold ──
-ALGO_VERSION = "v2.1"   # v2.1: backtest-tuned SL, block LONG alt counter-trend (2026-04-05)
-ALGO_DATE    = "2026-04-05"
+ALGO_VERSION = "v2.2"   # v2.2: symmetric block — SHORT alt counter-trend BTC BULL (2026-04-09)
+ALGO_DATE    = "2026-04-09"
 
 DATA_DIR.mkdir(exist_ok=True)
 _storage_type = "Railway Volume (/data)" if str(DATA_DIR) == "/data" else f"Local fallback ({DATA_DIR.resolve()})"

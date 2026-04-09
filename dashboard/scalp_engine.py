@@ -302,37 +302,40 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến M15 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
-    # ── PATCH A: BTC Context — Scalp v3 (backtest-tuned) ──
-    # Backtest 24h: 8/16 LOSS = LONG altcoin khi BTC RISK_OFF → 25% WR
-    # Fix: block LONG altcoin khi BTC RISK_OFF/DUMP
-    # Cho phép: BTC/ETH scalp LONG (FAM style), SHORT altcoin
+    # ── PATCH A: BTC Context — Scalp v4 (symmetric block) ──
+    # Backtest v2.0: 8/16 LOSS = LONG altcoin khi BTC RISK_OFF → fixed in v2.1
+    # Backtest v2.1: 7/7 LOSS khi BTC RISK_ON → SHORT altcoin bị squeeze
+    # Fix: block cả 2 chiều counter-trend cho altcoin
+    # Cho phép: BTC/ETH scalp cả 2 chiều (FAM style) + taker override
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
     btc_d1   = btc_ctx.get("d1_trend", "")
-    _taker_override = taker and taker["trend"] in ("BUY_STRONG", "BUY_MILD")
-    _taker_sell     = taker and taker["trend"] in ("SELL_STRONG",)
+    _taker_buy  = taker and taker["trend"] in ("BUY_STRONG", "BUY_MILD")
+    _taker_sell = taker and taker["trend"] in ("SELL_STRONG", "SELL_MILD")
     _is_major = symbol in ("BTCUSDT", "ETHUSDT", "BNBUSDT")
 
+    # ── LONG counter-trend: BTC đang BEAR/DUMP ──
     if direction == "LONG" and btc_sent in ("RISK_OFF", "DUMP"):
-        if _is_major and _taker_override:
-            # BTC/ETH LONG + taker BUY mạnh → cho phép (FAM style)
+        if _is_major and _taker_buy:
             all_warnings.append(f"⚠️ BTC {btc_sent} nhưng {symbol[:3]} + taker mua mạnh — scalp LONG OK, SL chặt")
         elif _is_major and btc_sent == "RISK_OFF":
-            # BTC/ETH LONG + RISK_OFF (không DUMP) → warning, giảm confidence
             if confidence == "HIGH": confidence = "MEDIUM"
             all_warnings.append(f"⚠️ BTC RISK_OFF — {symbol[:3]} scalp LONG cẩn thận, giữ SL chặt")
         else:
-            # Altcoin LONG khi BTC RISK_OFF/DUMP → BLOCK
-            # Backtest: 8 LOSS / 2 WIN = 20% WR cho pattern này
             direction  = "WAIT"
             confidence = "LOW"
-            all_warnings.insert(0, f"🚫 BLOCK LONG altcoin — BTC {btc_sent}, chỉ cho SHORT hoặc chờ BTC hồi")
-    elif direction == "SHORT" and btc_sent == "PUMP":
-        _taker_short_ok = taker and taker["trend"] in ("SELL_STRONG", "SELL_MILD")
-        if _taker_short_ok:
-            all_warnings.append(f"⚠️ BTC pump nhưng lực bán taker vẫn mạnh — scalp SHORT OK")
-        else:
+            all_warnings.insert(0, f"🚫 BLOCK LONG altcoin — BTC {btc_sent}, không LONG ngược trend")
+
+    # ── SHORT counter-trend: BTC đang BULL/PUMP ──
+    elif direction == "SHORT" and btc_sent in ("RISK_ON", "PUMP"):
+        if _is_major and _taker_sell:
+            all_warnings.append(f"⚠️ BTC {btc_sent} nhưng {symbol[:3]} + taker bán mạnh — scalp SHORT OK, SL chặt")
+        elif _is_major and btc_sent == "RISK_ON":
             if confidence == "HIGH": confidence = "MEDIUM"
-            all_warnings.insert(0, f"⚠️ BTC đang pump — scalp SHORT cẩn thận")
+            all_warnings.append(f"⚠️ BTC RISK_ON — {symbol[:3]} scalp SHORT cẩn thận, giữ SL chặt")
+        else:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK SHORT altcoin — BTC {btc_sent}, không SHORT ngược trend")
 
     # ── PATCH E: OI + Long/Short Ratio — Scalp version ──
     # Kết hợp OI với LS ratio: OI giảm + crowded = nguy hiểm, OI giảm nhẹ + taker mạnh = OK

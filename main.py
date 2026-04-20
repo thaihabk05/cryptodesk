@@ -311,12 +311,14 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
     rr         = result.get("rr", 0) or 0
     verdict    = result.get("entry_verdict", "WAIT")
 
-    # Chỉ alert khi: có direction + confidence HIGH/MEDIUM + RR đạt + verdict GO/WAIT
+    # Chỉ alert khi verdict GO — có thể vào lệnh ngay
     if direction not in ("LONG", "SHORT"):
         return
     if confidence not in ("HIGH", "MEDIUM"):
         return
     if rr < 1.5:
+        return
+    if verdict != "GO":
         return
 
     # Tránh spam — dùng cooldown key
@@ -433,8 +435,8 @@ def market_scan_cycle(cfg):
         if r.get("confidence") not in conf_ok: continue
         if r.get("direction") not in ("LONG","SHORT"): continue
         if r.get("rr", 0) < min_rr: continue
-        # Cho phép verdict GO hoặc WAIT (WAIT = chờ thêm nhưng vẫn đáng chú ý)
-        if r.get("entry_verdict") == "NO": continue
+        # Chỉ gửi Telegram khi verdict GO — có thể vào lệnh ngay
+        if r.get("entry_verdict") != "GO": continue
 
         # Block nếu D1 VÀ H4 đều ngược chiều signal
         dirr = r.get("direction","")

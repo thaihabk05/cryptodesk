@@ -590,6 +590,11 @@ tbody td{padding:11px 12px;vertical-align:middle}
         style="accent-color:#a78bfa;width:14px;height:14px">
       <span style="color:#a78bfa">Range Scalp</span>
     </label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px">
+      <input type="checkbox" id="modeReversal" onchange="onScanModeChange()"
+        style="accent-color:#f59e0b;width:14px;height:14px">
+      <span style="color:#f59e0b">Reversal</span>
+    </label>
   </div>
     <div class="scan-controls">
       <div class="ctrl-group">
@@ -4824,6 +4829,10 @@ function algoTag(algo) {
     return '<span style="background:rgba(167,139,250,.15);border:1px solid rgba(167,139,250,.4);' +
            'color:#a78bfa;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">RANGE</span>';
   }
+  if (algo === 'REVERSAL') {
+    return '<span style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.4);' +
+           'color:#f59e0b;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">REV</span>';
+  }
   var labels = {'SWING_H4':'H4','SWING_H1':'H1','SCALP':'M15','TREND':'TREND'};
   var label  = labels[algo] || algo;
   return '<span style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);' +
@@ -4831,11 +4840,13 @@ function algoTag(algo) {
 }
 
 function onScanModeChange() {
-  var trend = document.getElementById('modeTrend');
-  var range = document.getElementById('modeRange');
+  var trend    = document.getElementById('modeTrend');
+  var range    = document.getElementById('modeRange');
+  var reversal = document.getElementById('modeReversal');
   var modes = [];
-  if (trend && trend.checked) modes.push('TREND');
-  if (range && range.checked) modes.push('RANGE_SCALP');
+  if (trend && trend.checked)       modes.push('TREND');
+  if (range && range.checked)       modes.push('RANGE_SCALP');
+  if (reversal && reversal.checked) modes.push('REVERSAL');
   if (!modes.length) { modes = ['TREND']; if (trend) trend.checked = true; }
 
   fetch('/api/config/scan-modes', {
@@ -4853,8 +4864,10 @@ function loadScanModes() {
     var modes = d.scan_modes || ['TREND'];
     var trend = document.getElementById('modeTrend');
     var range = document.getElementById('modeRange');
+    var reversal = document.getElementById('modeReversal');
     if (trend) trend.checked = modes.indexOf('TREND') >= 0;
     if (range) range.checked = modes.indexOf('RANGE_SCALP') >= 0;
+    if (reversal) reversal.checked = modes.indexOf('REVERSAL') >= 0;
     // Lưu watchlist_algos để dùng khi add
     window._watchlistAlgos = d.watchlist_algos || {};
   });

@@ -373,14 +373,16 @@ _watchlist_alert_cooldown = {}
 
 def dashboard_scan_cycle(cfg):
     """Scan các symbol trong watchlist — dùng đúng algo đã gắn cho từng mã."""
-    from dashboard.fam_engine      import fam_analyze
-    from dashboard.swing_h1_engine import swing_h1_analyze
-    from dashboard.scalp_engine    import scalp_analyze
-    from dashboard.range_engine    import range_analyze
+    from dashboard.fam_engine       import fam_analyze
+    from dashboard.swing_h1_engine  import swing_h1_analyze
+    from dashboard.scalp_engine     import scalp_analyze
+    from dashboard.range_engine     import range_analyze
+    from dashboard.reversal_engine  import reversal_analyze
 
     algo_map = {
         "TREND":       get_analyze_fn(cfg),
         "RANGE_SCALP": range_analyze,
+        "REVERSAL":    reversal_analyze,
         "SWING_H4":    fam_analyze,
         "SWING_H1":    swing_h1_analyze,
         "SCALP":       scalp_analyze,
@@ -425,11 +427,14 @@ def market_scan_cycle(cfg):
 
     results = msc_state.get("results", [])
     high_signals = []
+    min_conf = cfg.get("alert_confidence", "HIGH")
+    conf_ok  = {"HIGH"} if min_conf == "HIGH" else {"HIGH", "MEDIUM"}
     for r in results:
-        if r.get("confidence") != "HIGH": continue
+        if r.get("confidence") not in conf_ok: continue
         if r.get("direction") not in ("LONG","SHORT"): continue
         if r.get("rr", 0) < min_rr: continue
-        if r.get("entry_verdict") != "GO": continue
+        # Cho phép verdict GO hoặc WAIT (WAIT = chờ thêm nhưng vẫn đáng chú ý)
+        if r.get("entry_verdict") == "NO": continue
 
         # Block nếu D1 VÀ H4 đều ngược chiều signal
         dirr = r.get("direction","")

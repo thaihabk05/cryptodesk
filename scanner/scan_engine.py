@@ -52,10 +52,11 @@ def _load_persisted_scan() -> dict:
     except Exception:
         pass
     return {}
-from dashboard.fam_engine      import fam_analyze
-from dashboard.swing_h1_engine import swing_h1_analyze
-from dashboard.scalp_engine    import scalp_analyze
-from dashboard.range_engine    import range_analyze
+from dashboard.fam_engine       import fam_analyze
+from dashboard.swing_h1_engine  import swing_h1_analyze
+from dashboard.scalp_engine     import scalp_analyze
+from dashboard.range_engine     import range_analyze
+from dashboard.reversal_engine  import reversal_analyze
 
 _persisted = _load_persisted_scan()
 scan_state = {
@@ -99,6 +100,8 @@ def _get_engines_for_modes(cfg):
         else:                      engines.append(("TREND", fam_analyze))
     if "RANGE_SCALP" in modes:
         engines.append(("RANGE_SCALP", range_analyze))
+    if "REVERSAL" in modes:
+        engines.append(("REVERSAL", reversal_analyze))
     return engines
 
 

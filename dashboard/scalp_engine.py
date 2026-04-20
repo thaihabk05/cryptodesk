@@ -424,6 +424,38 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
                 f"cẩn thận SHORT vùng capitulation"
             )
 
+    # ── PATCH K: Chasing Filter — entry gần 24h high/low + 24h move lớn ──
+    # Reject signal khi đang đuổi giá cuối sóng pump/dump
+    if direction in ("LONG", "SHORT") and len(df_h1) >= 24:
+        _h24_high = float(df_h1["high"].iloc[-24:].max())
+        _h24_low  = float(df_h1["low"].iloc[-24:].min())
+        _h24_move = round((_h24_high - _h24_low) / _h24_low * 100, 1) if _h24_low > 0 else 0
+        _dist_high = round((_h24_high - price) / _h24_high * 100, 1) if _h24_high > 0 else 99
+        _dist_low  = round((price - _h24_low) / _h24_low * 100, 1) if _h24_low > 0 else 99
+
+        if direction == "LONG" and _h24_move > 10 and _dist_high < 3:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0,
+                f"🚫 CHASING — Entry cách 24h High chỉ {_dist_high}% trong khi 24h move +{_h24_move}% "
+                f"— đang đuổi giá cuối sóng pump, chờ pullback")
+        elif direction == "SHORT" and _h24_move > 10 and _dist_low < 3:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0,
+                f"🚫 CHASING — Entry cách 24h Low chỉ {_dist_low}% trong khi 24h move -{_h24_move}% "
+                f"— đang đuổi giá cuối sóng dump, chờ bounce")
+
+    # ── PATCH L: RSI H1 overbought/oversold check ──
+    # Hệ thống chỉ check RSI M15, bỏ qua RSI H1 → miss divergence
+    _rsi_h1 = float(row_h1["rsi"])
+    if direction == "LONG" and _rsi_h1 > 75:
+        if confidence == "HIGH": confidence = "MEDIUM"
+        all_warnings.append(f"⚠️ RSI H1 {_rsi_h1:.0f} overbought — rủi ro mean-reversion, cân nhắc chờ RSI hạ")
+    elif direction == "SHORT" and _rsi_h1 < 25:
+        if confidence == "HIGH": confidence = "MEDIUM"
+        all_warnings.append(f"⚠️ RSI H1 {_rsi_h1:.0f} oversold — rủi ro bounce, cân nhắc chờ RSI tăng")
+
     # ────────────────────────────────────────
     # SL / TP — ATR M15, swing M15 gần nhất
     # ────────────────────────────────────────
@@ -500,18 +532,25 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
     _recent_10_low  = float(df_m15["low"].iloc[-10:].min())
     _recent_10_high = float(df_m15["high"].iloc[-10:].max())
 
-    # ── SL minimum dynamic ──
-    # Backtest 24h cho thấy: SL ≤ 0.4% → 50% tổng LOSS (bị quét do noise)
-    # WIN signals trung bình SL = 0.95%. Base minimum nên là 0.5%.
-    # BTC/ETH ít volatile hơn alt → có thể SL chặt hơn
+    # ── SL minimum dynamic (ATR-aware) ──
+    # Base: 0.5% altcoin, 0.4% major
+    # Khi ATR cao (> 1.3x) → nới SL theo ATR, không dùng % cứng
     _is_major = symbol in ("BTCUSDT", "ETHUSDT", "BNBUSDT")
-    _sl_min_pct = 0.004 if _is_major else 0.005  # 0.4% major, 0.5% altcoin
+    _sl_min_pct = 0.004 if _is_major else 0.005
+
+    # ATR scaling: khi volatility cao, SL cứng sẽ bị quét
+    if atr_ratio > 1.3:
+        _sl_min_pct = max(_sl_min_pct, 0.007)   # 0.7% khi ATR cao
+    if atr_ratio > 1.8:
+        _sl_min_pct = max(_sl_min_pct, 0.010)   # 1.0% khi ATR rất cao
 
     # OI cao → nới thêm (tiền đổ vào = volatility cao, SL sát dễ bị quét)
     if oi_change is not None and abs(oi_change) > 5:
-        _sl_min_pct = max(_sl_min_pct, 0.006)  # 0.6%
+        _sl_min_pct = max(_sl_min_pct, 0.006)
     if oi_change is not None and abs(oi_change) > 8:
-        _sl_min_pct = max(_sl_min_pct, 0.008)  # 0.8%
+        _sl_min_pct = max(_sl_min_pct, 0.008)
+    if oi_change is not None and abs(oi_change) > 12:
+        _sl_min_pct = max(_sl_min_pct, 0.012)  # OI cực cao (>12%) → SL 1.2%
 
     if direction == "LONG" or (direction == "WAIT" and h1_bias == "LONG"):
         entry = price
@@ -699,8 +738,15 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         if confidence == "LOW": verdict = "NO" if fail_c >= 1 else "WAIT"
         elif confidence == "MEDIUM":
             if verdict == "GO": verdict = "WAIT"
+
+        # M5 chưa confirm: HIGH → giữ GO (nhưng thêm note), MEDIUM → WAIT
+        # Fix contradiction: HIGH confidence + WAIT verdict = mâu thuẫn
         if m5_status in ("FORMING", "OVERBOUGHT", "OVERSOLD") and verdict == "GO":
-            verdict = "WAIT"
+            if confidence == "HIGH" and ok_c >= 5 and fail_c == 0:
+                # HIGH + nhiều OK + 0 fail → giữ GO, M5 chỉ là confirmation phụ
+                checks.append({"ok": None, "text": "M5 chưa confirm nhưng signals đủ mạnh — GO với SL chặt"})
+            else:
+                verdict = "WAIT"
 
         # ── Taker ngược chiều mạnh → hạ verdict ──
         # Scalp: taker là chỉ số real-time quan trọng nhất

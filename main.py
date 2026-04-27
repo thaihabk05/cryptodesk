@@ -43,7 +43,7 @@ HISTORY_FILE   = DATA_DIR / "history.json"
 POSITIONS_FILE = DATA_DIR / "positions.json"
 
 # ── Algorithm Version — tăng mỗi khi thay đổi filter/threshold ──
-ALGO_VERSION = "v2.5"   # v2.5: watchlist fast loop + SL max cap (force cut loss) (2026-04-27)
+ALGO_VERSION = "v2.6"   # v2.6: position monitor + Telegram bot commands (2026-04-27)
 ALGO_DATE    = "2026-04-27"
 
 DATA_DIR.mkdir(exist_ok=True)
@@ -487,6 +487,121 @@ def market_scan_cycle(cfg):
                 _send_high_alert(result, token, chat_id)
             except Exception as e:
                 print(f"[TELEGRAM ERROR] {result.get('symbol')}: {e}")
+
+# ── Position Monitor — alert reversal cho lệnh đang mở ──
+_position_alert_cooldown = {}
+
+def _check_position_reversal(pos: dict, cfg: dict):
+    """Check 1 position đang mở: nếu có dấu hiệu reversal → Telegram alert."""
+    from dashboard.reversal_engine import reversal_analyze
+
+    sym = pos.get("symbol", "")
+    pos_dir = pos.get("direction", "")
+    if not sym or not pos_dir:
+        return
+
+    token   = cfg.get("telegram_token", "")
+    chat_id = cfg.get("telegram_chat", "")
+    if not token or not chat_id:
+        return
+
+    try:
+        r = reversal_analyze(sym, {"force_futures": True})
+    except Exception as e:
+        print(f"[POS MONITOR] {sym} error: {e}")
+        return
+
+    rev_dir  = r.get("direction")
+    rev_conf = r.get("confidence")
+    rev_score = r.get("score", 0)
+
+    # Trigger alert: reversal NGƯỢC chiều với position đang mở
+    # LONG position + reversal SHORT detected = nên close
+    # SHORT position + reversal LONG detected = nên close & flip
+    flip_dir = "SHORT" if pos_dir == "LONG" else "LONG"
+    if rev_dir != flip_dir:
+        return
+    if rev_conf not in ("HIGH", "MEDIUM"):
+        return
+    if rev_score < 3:
+        return
+
+    # Cooldown 30 phút theo position id
+    import time as _t
+    pid = pos.get("id", sym)
+    cooldown_key = f"pos_{pid}_{rev_dir}"
+    now = _t.time()
+    last_alert = _position_alert_cooldown.get(cooldown_key, 0)
+    if now - last_alert < 1800:
+        return
+    _position_alert_cooldown[cooldown_key] = now
+
+    rd = r.get("reversal_data", {})
+    price = r.get("price", "?")
+    entry = pos.get("entry", "?")
+
+    # PnL ước lượng
+    pnl_pct = "?"
+    try:
+        e = float(entry); p = float(price)
+        if pos_dir == "LONG":
+            pnl_pct = f"{(p-e)/e*100:+.2f}%"
+        else:
+            pnl_pct = f"{(e-p)/e*100:+.2f}%"
+    except: pass
+
+    flip_emoji = "🔄"
+    lines = [
+        f"{flip_emoji} REVERSAL ALERT — {sym} {pos_dir}",
+        f"Lenh dang mo: Entry {entry} | Hien tai {price} ({pnl_pct})",
+        "--------------------",
+        f"Reversal {rev_dir} signal: confidence {rev_conf}, score {rev_score}",
+    ]
+    conds = r.get("conditions", [])
+    for c in conds[:5]:
+        lines.append(f"  + {c}")
+
+    if rd.get("rsi_h1"):
+        lines.append(f"RSI H1: {rd['rsi_h1']} | RSI M15: {rd.get('rsi_m15', '?')}")
+    t = rd.get("taker", {})
+    if t:
+        lines.append(f"Taker: {t.get('buy_ratio')}x ({t.get('trend')})")
+
+    lines.append("--------------------")
+    if pos_dir == "LONG":
+        lines.append(f"⚠️ Can nhac CLOSE LONG (reversal SHORT detected)")
+    else:
+        lines.append(f"⚠️ Can nhac CLOSE SHORT + flip LONG")
+
+    send_telegram(token, chat_id, chr(10).join(lines))
+    print(f"[POS ALERT] {sym} {pos_dir} → reversal {rev_dir} alert sent")
+
+
+def position_monitor_loop():
+    """Monitor positions đang mở, alert khi có reversal signal ngược chiều."""
+    global scanner_running
+    while scanner_running:
+        try:
+            cfg = load_config()
+            interval = int(cfg.get("position_monitor_interval_sec", 120))
+            positions = load_positions()
+            # Chỉ monitor positions tạo trong 7 ngày gần nhất
+            from datetime import datetime as _dt, timedelta as _td
+            cutoff = (_dt.now() - _td(days=7)).isoformat()
+            active = [p for p in positions if p.get("saved_at", "") >= cutoff]
+            for pos in active[:10]:  # max 10 positions cùng lúc
+                try:
+                    _check_position_reversal(pos, cfg)
+                except Exception as e:
+                    print(f"[POS LOOP] {pos.get('symbol')} error: {e}")
+
+            elapsed = 0
+            while elapsed < interval and scanner_running:
+                time.sleep(5); elapsed += 5
+        except Exception as e:
+            print(f"[POS MONITOR LOOP] {e} — retry sau 60s")
+            time.sleep(60)
+
 
 def watchlist_fast_loop():
     """Loop riêng cho watchlist — quét nhanh hơn (1-2 phút) để alert tức thì."""
@@ -1713,6 +1828,7 @@ def start_dashboard_scanner():
         scanner_running = True
         threading.Thread(target=dashboard_scanner_loop, daemon=True).start()
         threading.Thread(target=watchlist_fast_loop, daemon=True).start()
+        threading.Thread(target=position_monitor_loop, daemon=True).start()
     return jsonify({"running": True})
 
 @app.route("/api/scanner/stop", methods=["POST"])
@@ -1769,6 +1885,214 @@ def send_telegram(token, chat_id, msg):
         return r.status_code == 200
     except: return False
 
+def _parse_position_command(text: str) -> dict:
+    """Parse các command position từ Telegram.
+    Cú pháp:
+      /pos add ARB short 0.1295 [sl 0.1310] [tp 0.1280]
+      /pos add BTC long 75000 sl 74000 tp 76500
+      /pos list
+      /pos del <id>
+      /pos help
+    """
+    parts = text.strip().split()
+    if not parts or not parts[0].startswith('/pos'):
+        return None
+
+    if len(parts) == 1:
+        return {"action": "help"}
+
+    cmd = parts[1].lower()
+
+    if cmd == "list":
+        return {"action": "list"}
+    if cmd == "help":
+        return {"action": "help"}
+    if cmd == "del" and len(parts) >= 3:
+        try:
+            return {"action": "del", "id": int(parts[2])}
+        except ValueError:
+            return {"action": "error", "msg": "ID phải là số"}
+
+    if cmd == "add" and len(parts) >= 5:
+        try:
+            symbol = parts[2].upper()
+            if not symbol.endswith("USDT"):
+                symbol += "USDT"
+            direction = parts[3].upper()
+            if direction not in ("LONG", "SHORT"):
+                return {"action": "error", "msg": f"Direction phải là LONG hoặc SHORT, không phải '{direction}'"}
+            entry = float(parts[4])
+
+            sl = None; tp = None
+            i = 5
+            while i < len(parts) - 1:
+                key = parts[i].lower()
+                try:
+                    val = float(parts[i+1])
+                    if key == "sl": sl = val
+                    elif key == "tp": tp = val
+                except ValueError:
+                    pass
+                i += 2
+
+            return {
+                "action": "add",
+                "symbol": symbol,
+                "direction": direction,
+                "entry": entry,
+                "sl": sl,
+                "tp": tp,
+            }
+        except (ValueError, IndexError) as e:
+            return {"action": "error", "msg": f"Cú pháp sai: {e}"}
+
+    return {"action": "error", "msg": "Cú pháp sai. Gõ /pos help để xem hướng dẫn"}
+
+
+def _handle_telegram_command(text: str, chat_id: str, token: str) -> str:
+    """Xử lý command từ Telegram, return reply message."""
+    parsed = _parse_position_command(text)
+    if not parsed:
+        return None  # không phải /pos command
+
+    action = parsed.get("action")
+
+    if action == "help":
+        return (
+            "📋 POSITION COMMANDS\n"
+            "─────────────────\n"
+            "/pos add <coin> <long|short> <entry> [sl X] [tp Y]\n"
+            "  vd: /pos add ARB short 0.1295 sl 0.131 tp 0.128\n"
+            "  vd: /pos add BTC long 75000\n"
+            "\n"
+            "/pos list — xem positions đang theo dõi\n"
+            "/pos del <id> — xóa 1 position\n"
+            "/pos help — xem hướng dẫn\n"
+            "\n"
+            "Sau khi add, hệ thống sẽ alert khi có reversal signal!"
+        )
+
+    if action == "error":
+        return f"❌ {parsed.get('msg', 'Lỗi')}"
+
+    if action == "add":
+        positions = load_positions()
+        sym = parsed["symbol"]
+        direction = parsed["direction"]
+        entry = parsed["entry"]
+
+        # Check duplicate
+        dup = next((p for p in positions
+                    if p.get("symbol") == sym
+                    and p.get("direction") == direction
+                    and abs(float(p.get("entry", 0) or 0) - entry) / entry < 0.005), None)
+        if dup:
+            return f"⚠️ Đã có position {sym} {direction} entry ~{entry} (id {dup.get('id')})"
+
+        import time as _t
+        new_pos = {
+            "id":         int(_t.time() * 1000),
+            "saved_at":   _local_isoformat(),
+            "symbol":     sym,
+            "direction":  direction,
+            "entry":      entry,
+            "sl":         parsed.get("sl"),
+            "tp":         parsed.get("tp"),
+            "base_mode":  "pct",
+            "base_value": 2.0,
+            "leverage":   10,
+            "source":     "telegram",
+        }
+        positions.insert(0, new_pos)
+        save_positions(positions)
+
+        sl_str = f" SL={parsed['sl']}" if parsed.get("sl") else ""
+        tp_str = f" TP={parsed['tp']}" if parsed.get("tp") else ""
+        return (
+            f"✅ Đã thêm position\n"
+            f"{sym} {direction} entry={entry}{sl_str}{tp_str}\n"
+            f"ID: {new_pos['id']}\n"
+            f"\n"
+            f"Hệ thống sẽ alert khi có reversal signal cho lệnh này."
+        )
+
+    if action == "list":
+        positions = load_positions()
+        if not positions:
+            return "📭 Chưa có position nào."
+        lines = [f"📋 POSITIONS ({len(positions)})"]
+        lines.append("─────────────────")
+        for p in positions[:10]:
+            d_emoji = "🟢" if p.get("direction") == "LONG" else "🔴"
+            lines.append(
+                f"{d_emoji} {p.get('symbol')} {p.get('direction')} @ {p.get('entry')}"
+                + (f" SL={p['sl']}" if p.get('sl') else "")
+                + (f" TP={p['tp']}" if p.get('tp') else "")
+                + f" [id:{p.get('id')}]"
+            )
+        return chr(10).join(lines)
+
+    if action == "del":
+        positions = load_positions()
+        pid = parsed["id"]
+        before = len(positions)
+        positions = [p for p in positions if p.get("id") != pid]
+        if len(positions) == before:
+            return f"❌ Không tìm thấy position id={pid}"
+        save_positions(positions)
+        return f"✅ Đã xóa position id={pid}"
+
+    return None
+
+
+@app.route("/api/telegram/webhook", methods=["POST"])
+def telegram_webhook():
+    """Nhận update từ Telegram bot — xử lý commands."""
+    update = request.json or {}
+    msg = update.get("message", {})
+    text = msg.get("text", "")
+    chat = msg.get("chat", {})
+    chat_id = str(chat.get("id", ""))
+
+    cfg = load_config()
+    cfg_chat = str(cfg.get("telegram_chat", ""))
+    token = cfg.get("telegram_token", "")
+
+    # Chỉ accept message từ chat_id đã config (security)
+    if chat_id != cfg_chat:
+        return jsonify({"ok": True})  # silently ignore
+
+    reply = _handle_telegram_command(text, chat_id, token)
+    if reply:
+        send_telegram(token, chat_id, reply)
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/telegram/setup-webhook", methods=["POST"])
+def telegram_setup_webhook():
+    """Setup webhook cho Telegram bot. Gọi 1 lần sau deploy."""
+    cfg = load_config()
+    token = cfg.get("telegram_token", "")
+    if not token:
+        return jsonify({"ok": False, "error": "Chưa có token"})
+
+    base_url = request.json.get("base_url", "") if request.json else ""
+    if not base_url:
+        return jsonify({"ok": False, "error": "Thiếu base_url"})
+
+    webhook_url = f"{base_url.rstrip('/')}/api/telegram/webhook"
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": webhook_url, "allowed_updates": ["message"]},
+            timeout=10,
+        )
+        return jsonify({"ok": r.status_code == 200, "response": r.json(), "webhook": webhook_url})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 @app.route("/api/telegram/test", methods=["POST"])
 def telegram_test():
     data   = request.json or {}
@@ -1790,6 +2114,7 @@ def auto_start_scanner():
         scanner_running = True
         threading.Thread(target=dashboard_scanner_loop, daemon=True).start()
         threading.Thread(target=watchlist_fast_loop, daemon=True).start()
+        threading.Thread(target=position_monitor_loop, daemon=True).start()
         print("[AUTO-START] Dashboard scanner started automatically")
 
 # Chạy auto-start trong thread riêng để không block gunicorn worker

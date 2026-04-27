@@ -463,8 +463,9 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
                     f"🚫 SHORT TRONG UPTREND — Giá {price:.5f} trên MA89 H1 ({_ma89_h1:.5f}) "
                     f"— ngược trend mạnh, chờ rejection từ MA200")
 
-    # ── PATCH K: Chasing Filter — entry gần 24h high/low + 24h move lớn ──
+    # ── PATCH K: Chasing Filter — strict cho BTC/ETH (ít volatile hơn) ──
     # Reject signal khi đang đuổi giá cuối sóng pump/dump
+    # User real loss: BTC LONG 78,149 sau khi BTC pump → bị quét -1%
     if direction in ("LONG", "SHORT") and len(df_h1) >= 24:
         _h24_high = float(df_h1["high"].iloc[-24:].max())
         _h24_low  = float(df_h1["low"].iloc[-24:].min())
@@ -472,13 +473,21 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         _dist_high = round((_h24_high - price) / _h24_high * 100, 1) if _h24_high > 0 else 99
         _dist_low  = round((price - _h24_low) / _h24_low * 100, 1) if _h24_low > 0 else 99
 
-        if direction == "LONG" and _h24_move > 10 and _dist_high < 3:
+        # Major coins: thresholds chặt hơn (BTC/ETH ít volatile, 5% move = nhiều)
+        if _is_major:
+            move_threshold = 5
+            dist_threshold = 1.5
+        else:
+            move_threshold = 10
+            dist_threshold = 3
+
+        if direction == "LONG" and _h24_move > move_threshold and _dist_high < dist_threshold:
             direction  = "WAIT"
             confidence = "LOW"
             all_warnings.insert(0,
                 f"🚫 CHASING — Entry cách 24h High chỉ {_dist_high}% trong khi 24h move +{_h24_move}% "
                 f"— đang đuổi giá cuối sóng pump, chờ pullback")
-        elif direction == "SHORT" and _h24_move > 10 and _dist_low < 3:
+        elif direction == "SHORT" and _h24_move > move_threshold and _dist_low < dist_threshold:
             direction  = "WAIT"
             confidence = "LOW"
             all_warnings.insert(0,

@@ -577,8 +577,83 @@ def _check_position_reversal(pos: dict, cfg: dict):
     print(f"[POS ALERT] {sym} {pos_dir} → reversal {rev_dir} alert sent")
 
 
+def _check_position_sl_tp(pos: dict, cfg: dict) -> str:
+    """Check nếu giá đã chạm SL hoặc TP → return 'SL' / 'TP' / None.
+    Nếu chạm → gửi Telegram alert + return reason để xóa khỏi monitor.
+    """
+    sym = pos.get("symbol", "")
+    pos_dir = pos.get("direction", "")
+    entry = pos.get("entry")
+    sl = pos.get("sl")
+    tp = pos.get("tp")
+    if not sym or not pos_dir or entry is None:
+        return None
+    if sl is None and tp is None:
+        return None  # không có SL/TP để check
+
+    try:
+        from core.binance import fetch_klines
+        # Lấy 5 nến M5 gần nhất để check high/low
+        df = fetch_klines(sym, "5m", 5, force_futures=True)
+        if df is None or len(df) == 0:
+            return None
+        recent_high = float(df["high"].max())
+        recent_low  = float(df["low"].min())
+        last_price  = float(df["close"].iloc[-1])
+    except Exception as e:
+        print(f"[POS SL/TP] {sym} fetch error: {e}")
+        return None
+
+    hit = None
+    exit_price = None
+
+    if pos_dir == "LONG":
+        # SL hit: low chạm xuống SL
+        if sl is not None and recent_low <= float(sl):
+            hit = "SL"; exit_price = float(sl)
+        # TP hit: high chạm lên TP
+        elif tp is not None and recent_high >= float(tp):
+            hit = "TP"; exit_price = float(tp)
+    else:  # SHORT
+        if sl is not None and recent_high >= float(sl):
+            hit = "SL"; exit_price = float(sl)
+        elif tp is not None and recent_low <= float(tp):
+            hit = "TP"; exit_price = float(tp)
+
+    if not hit:
+        return None
+
+    # Gửi Telegram alert
+    token   = cfg.get("telegram_token", "")
+    chat_id = cfg.get("telegram_chat", "")
+    if token and chat_id:
+        try:
+            e = float(entry); ex = float(exit_price)
+            if pos_dir == "LONG":
+                pnl_pct = (ex - e) / e * 100
+            else:
+                pnl_pct = (e - ex) / e * 100
+            emoji = "✅" if hit == "TP" else "❌"
+            lines = [
+                f"{emoji} POSITION CLOSED — {sym} {pos_dir}",
+                f"Entry: {entry} → Exit: {exit_price} (chạm {hit})",
+                f"PnL ước lượng: {pnl_pct:+.2f}%",
+                "─────────────────",
+                f"Đã tự xóa khỏi monitor (id: {pos.get('id')})",
+            ]
+            send_telegram(token, chat_id, chr(10).join(lines))
+        except Exception as e:
+            print(f"[POS SL/TP ALERT] {sym} error: {e}")
+
+    print(f"[POS AUTO-CLOSE] {sym} {pos_dir} hit {hit} @ {exit_price}")
+    return hit
+
+
 def position_monitor_loop():
-    """Monitor positions đang mở, alert khi có reversal signal ngược chiều."""
+    """Monitor positions đang mở:
+    1. Check nếu chạm SL/TP → tự xóa khỏi monitor + Telegram alert
+    2. Check reversal signal → Telegram alert (vẫn giữ position)
+    """
     global scanner_running
     while scanner_running:
         try:
@@ -589,7 +664,26 @@ def position_monitor_loop():
             from datetime import datetime as _dt, timedelta as _td
             cutoff = (_dt.now() - _td(days=7)).isoformat()
             active = [p for p in positions if p.get("saved_at", "") >= cutoff]
-            for pos in active[:10]:  # max 10 positions cùng lúc
+
+            # Bước 1: Check SL/TP — tự xóa nếu chạm
+            ids_to_remove = []
+            for pos in active[:10]:
+                try:
+                    hit = _check_position_sl_tp(pos, cfg)
+                    if hit:
+                        ids_to_remove.append(pos.get("id"))
+                except Exception as e:
+                    print(f"[POS SL/TP CHECK] {pos.get('symbol')} error: {e}")
+
+            if ids_to_remove:
+                positions = load_positions()  # reload để tránh race
+                positions = [p for p in positions if p.get("id") not in ids_to_remove]
+                save_positions(positions)
+                print(f"[POS AUTO-CLOSE] Removed {len(ids_to_remove)} positions")
+
+            # Bước 2: Check reversal signal cho positions còn lại
+            active = [p for p in active if p.get("id") not in ids_to_remove]
+            for pos in active[:10]:
                 try:
                     _check_position_reversal(pos, cfg)
                 except Exception as e:

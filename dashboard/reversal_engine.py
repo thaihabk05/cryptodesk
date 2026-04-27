@@ -54,8 +54,17 @@ def _is_pin_bar(row, direction, atr):
     return False, 0
 
 
-def _check_ma_bounce(price, df, ma_col, tolerance_pct=0.5):
-    """Check giá vừa chạm MA và bounce (trong 3 nến gần nhất).
+def _check_ma_bounce(price, df, ma_col, direction="LONG", tolerance_pct=0.5):
+    """Check giá vừa chạm MA và bounce ĐÚNG hướng (trong 5 nến gần nhất).
+
+    LONG bounce: giá từ TRÊN xuống chạm MA rồi BẬT LÊN
+        - Nến trước close > MA (giá đang ở trên)
+        - Nến hiện tại: low chạm MA, close > MA, nến xanh (close > open)
+
+    SHORT rejection: giá từ DƯỚI lên chạm MA rồi RỚT XUỐNG
+        - Nến trước close < MA (giá đang ở dưới)
+        - Nến hiện tại: high chạm MA, close < MA, nến đỏ
+
     Return: (is_bounce, ma_value, touch_candle_idx)
     """
     if ma_col not in df.columns:
@@ -67,20 +76,41 @@ def _check_ma_bounce(price, df, ma_col, tolerance_pct=0.5):
 
     tol = ma_val * tolerance_pct / 100
 
-    # Check 3 nến gần nhất: có nến nào low chạm MA không?
-    for i in range(-3, 0):
-        if abs(i) > len(df):
+    # Check 5 nến gần nhất
+    for i in range(-5, 0):
+        if abs(i) > len(df) - 1:
             continue
-        low_i  = float(df["low"].iloc[i])
-        high_i = float(df["high"].iloc[i])
+        low_i   = float(df["low"].iloc[i])
+        high_i  = float(df["high"].iloc[i])
+        close_i = float(df["close"].iloc[i])
+        open_i  = float(df["open"].iloc[i])
 
-        # LONG bounce: low chạm MA (hoặc xuyên nhẹ) rồi close trên
-        if low_i <= ma_val + tol and float(df["close"].iloc[i]) > ma_val:
-            return True, round(ma_val, 6), i
+        # Lấy nến TRƯỚC để biết hướng tiếp cận
+        prev_close = float(df["close"].iloc[i-1])
+        prev_low   = float(df["low"].iloc[i-1])
+        prev_high  = float(df["high"].iloc[i-1])
 
-        # SHORT bounce: high chạm MA rồi close dưới
-        if high_i >= ma_val - tol and float(df["close"].iloc[i]) < ma_val:
-            return True, round(ma_val, 6), i
+        if direction == "LONG":
+            # LONG bounce: nến trước phải ABOVE MA (giá đang ở trên)
+            # → nến hiện tại dip down chạm MA rồi bật lên
+            came_from_above = prev_close > ma_val and prev_low > ma_val * 0.998
+            touched_ma = low_i <= ma_val + tol
+            closed_above = close_i > ma_val
+            bullish_candle = close_i > open_i
+
+            if came_from_above and touched_ma and closed_above and bullish_candle:
+                return True, round(ma_val, 6), i
+
+        elif direction == "SHORT":
+            # SHORT rejection: nến trước phải BELOW MA (giá đang ở dưới)
+            # → nến hiện tại rally up chạm MA rồi rớt xuống
+            came_from_below = prev_close < ma_val and prev_high < ma_val * 1.002
+            touched_ma = high_i >= ma_val - tol
+            closed_below = close_i < ma_val
+            bearish_candle = close_i < open_i
+
+            if came_from_below and touched_ma and closed_below and bearish_candle:
+                return True, round(ma_val, 6), i
 
     return False, round(ma_val, 6), None
 
@@ -121,42 +151,42 @@ def reversal_analyze(symbol: str, cfg: dict) -> dict:
 
     # === LONG REVERSAL (bounce from support) ===
     long_signals = 0
+    long_conditions = []
 
-    # 1. Giá chạm EMA200 H1 và bounce
-    bounce_200, ma200_val, _ = _check_ma_bounce(price, df_h1, "ma200", tolerance_pct=0.3)
-    if bounce_200 and price > (ma200_val or 0):
-        conditions.append(f"Bounce từ EMA200 H1 ({smart_round(ma200_val)})")
-        long_signals += 2  # strong signal
+    # 1. Giá chạm EMA200 H1 và bounce LONG (giá > MA sau bounce)
+    bounce_200, ma200_val, _ = _check_ma_bounce(price, df_h1, "ma200", direction="LONG", tolerance_pct=0.3)
+    if bounce_200:
+        long_conditions.append(f"Bounce LONG từ EMA200 H1 ({smart_round(ma200_val)})")
+        long_signals += 2
 
-    # 2. Giá chạm MA89 H1 và bounce
-    bounce_89, ma89_val, _ = _check_ma_bounce(price, df_h1, "ma89", tolerance_pct=0.4)
-    if bounce_89 and price > (ma89_val or 0):
-        conditions.append(f"Bounce từ MA89 H1 ({smart_round(ma89_val)})")
+    # 2. Giá chạm MA89 H1 và bounce LONG
+    bounce_89, ma89_val, _ = _check_ma_bounce(price, df_h1, "ma89", direction="LONG", tolerance_pct=0.4)
+    if bounce_89:
+        long_conditions.append(f"Bounce LONG từ MA89 H1 ({smart_round(ma89_val)})")
         long_signals += 1
 
     # 3. RSI oversold H1
     if rsi_h1 < 30:
-        conditions.append(f"RSI H1 {rsi_h1:.0f} — oversold (< 30)")
+        long_conditions.append(f"RSI H1 {rsi_h1:.0f} — oversold (< 30)")
         long_signals += 1
     elif rsi_h1 < 35:
-        conditions.append(f"RSI H1 {rsi_h1:.0f} — gần oversold")
+        long_conditions.append(f"RSI H1 {rsi_h1:.0f} — gần oversold")
         long_signals += 0.5
 
     # 4. Pin bar bullish trên H1
     is_pin, pin_str = _is_pin_bar(row_h1, "LONG", atr_h1)
     if is_pin:
-        conditions.append(f"Pin bar bullish H1 (strength {pin_str})")
+        long_conditions.append(f"Pin bar bullish H1 (strength {pin_str})")
         long_signals += 1
 
-    # Check M15 pin bar too
     is_pin_m15, pin_str_m15 = _is_pin_bar(row_m15, "LONG", atr_m15)
     if is_pin_m15:
-        conditions.append(f"Pin bar bullish M15 (strength {pin_str_m15})")
+        long_conditions.append(f"Pin bar bullish M15 (strength {pin_str_m15})")
         long_signals += 0.5
 
     # 5. Taker buy spike (lực mua đang vào)
     if taker and taker["buy_ratio"] > 1.3:
-        conditions.append(f"Taker BUY mạnh ({taker['buy_ratio']:.2f}x)")
+        long_conditions.append(f"Taker BUY mạnh ({taker['buy_ratio']:.2f}x)")
         long_signals += 1
 
     # 6. BTC context — BTC cũng đang bounce?
@@ -165,35 +195,45 @@ def reversal_analyze(symbol: str, cfg: dict) -> dict:
         btc_bounce = True
     elif btc_ctx.get("sentiment") == "RISK_ON":
         btc_bounce = True
-    # BTC đang hồi từ dump
     if btc_ctx.get("sentiment") == "NEUTRAL" and btc_ctx.get("d1_trend") == "BEAR":
-        btc_bounce = True  # BTC D1 BEAR nhưng H4 neutral = đang bounce
+        btc_bounce = True
 
     if btc_bounce:
-        conditions.append("BTC đang hồi/ổn định — hỗ trợ reversal")
+        long_conditions.append("BTC đang hồi/ổn định — hỗ trợ reversal LONG")
         long_signals += 0.5
 
     # === SHORT REVERSAL (rejection from resistance) ===
     short_signals = 0
+    short_conditions = []
 
-    # Check MA200 resistance
-    bounce_200_s, ma200_s, _ = _check_ma_bounce(price, df_h1, "ma200", tolerance_pct=0.3)
-    if bounce_200_s and price < (ma200_s or float('inf')):
+    # 1. Giá chạm MA200 H1 và rejection SHORT (giá < MA sau touch từ dưới lên)
+    bounce_200_s, ma200_s, _ = _check_ma_bounce(price, df_h1, "ma200", direction="SHORT", tolerance_pct=0.3)
+    if bounce_200_s:
+        short_conditions.append(f"Rejection SHORT từ EMA200 H1 ({smart_round(ma200_s)})")
         short_signals += 2
-    bounce_89_s, ma89_s, _ = _check_ma_bounce(price, df_h1, "ma89", tolerance_pct=0.4)
-    if bounce_89_s and price < (ma89_s or float('inf')):
+
+    bounce_89_s, ma89_s, _ = _check_ma_bounce(price, df_h1, "ma89", direction="SHORT", tolerance_pct=0.4)
+    if bounce_89_s:
+        short_conditions.append(f"Rejection SHORT từ MA89 H1 ({smart_round(ma89_s)})")
         short_signals += 1
 
+    # 2. RSI overbought H1
     if rsi_h1 > 70:
+        short_conditions.append(f"RSI H1 {rsi_h1:.0f} — overbought (> 70)")
         short_signals += 1
     elif rsi_h1 > 65:
+        short_conditions.append(f"RSI H1 {rsi_h1:.0f} — gần overbought")
         short_signals += 0.5
 
+    # 3. Pin bar bearish
     is_pin_s, pin_str_s = _is_pin_bar(row_h1, "SHORT", atr_h1)
     if is_pin_s:
+        short_conditions.append(f"Pin bar bearish H1 (strength {pin_str_s})")
         short_signals += 1
 
+    # 4. Taker sell mạnh
     if taker and taker["buy_ratio"] < 0.77:
+        short_conditions.append(f"Taker SELL mạnh ({taker['buy_ratio']:.2f}x)")
         short_signals += 1
 
     # ────────────────────────────────────────
@@ -205,13 +245,19 @@ def reversal_analyze(symbol: str, cfg: dict) -> dict:
     if long_signals >= MIN_SCORE and long_signals > short_signals:
         direction = "LONG"
         score = int(long_signals)
+        conditions = long_conditions
     elif short_signals >= MIN_SCORE and short_signals > long_signals:
         direction = "SHORT"
         score = int(short_signals)
+        conditions = short_conditions
     else:
         direction = "WAIT"
         score = 0
-        conditions = [f"Reversal score thấp (LONG: {long_signals:.1f}, SHORT: {short_signals:.1f}) — chưa đủ điều kiện"]
+        # Hiển thị side đang gần trigger nhất để user biết đang quan sát gì
+        if long_signals >= short_signals:
+            conditions = [f"Đang theo dõi LONG bounce (score {long_signals:.1f}/3.0)"] + long_conditions
+        else:
+            conditions = [f"Đang theo dõi SHORT rejection (score {short_signals:.1f}/3.0)"] + short_conditions
 
     confidence = "HIGH" if score >= 5 else "MEDIUM" if score >= 3 else "LOW"
 

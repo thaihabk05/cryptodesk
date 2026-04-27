@@ -597,6 +597,12 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         _sl_min_pct = max(_sl_min_pct, 0.006)
     if oi_change is not None and abs(oi_change) > 8:
         _sl_min_pct = max(_sl_min_pct, 0.008)
+
+    # ── SL MAX CAP (Patch N) ──
+    # User real loss: ARB SHORT 0.1270 hold 17h → -5.2% (SL không cắt)
+    # Force max SL = 2% cho altcoin, 1.5% cho major
+    # Nếu signal cần SL > cap → block luôn (setup không tốt)
+    _sl_max_pct = 0.015 if _is_major else 0.020
     if oi_change is not None and abs(oi_change) > 12:
         _sl_min_pct = max(_sl_min_pct, 0.012)  # OI cực cao (>12%) → SL 1.2%
 
@@ -624,9 +630,9 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             # Fallback: ATR-based, cap 1.2%
             sl_price = smart_round(max(entry - atr_m15 * 1.2, entry * 0.988))
 
-        # Đảm bảo SL trong range hợp lý cho scalp: _sl_min_pct - 1.5%
-        sl_price = smart_round(max(sl_price, entry * 0.985))          # tối đa 1.5%
-        sl_price = smart_round(min(sl_price, entry * (1 - _sl_min_pct)))  # tối thiểu dynamic
+        # SL range: min dynamic, max cap (Patch N)
+        sl_price = smart_round(max(sl_price, entry * (1 - _sl_max_pct)))   # cap max
+        sl_price = smart_round(min(sl_price, entry * (1 - _sl_min_pct)))   # min dynamic
 
         tp1 = _tp1_long(entry, swing_highs_m15, ema9_m15, ema21_m15, atr_m15,
                         ob_data.get("resistance_walls") if ob_data else None,
@@ -652,8 +658,9 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         else:
             sl_price = smart_round(min(entry + atr_m15 * 1.2, entry * 1.012))
 
-        sl_price = smart_round(min(sl_price, entry * 1.015))              # tối đa 1.5%
-        sl_price = smart_round(max(sl_price, entry * (1 + _sl_min_pct)))  # tối thiểu dynamic
+        # SL range: max cap (Patch N), min dynamic
+        sl_price = smart_round(min(sl_price, entry * (1 + _sl_max_pct)))   # cap max
+        sl_price = smart_round(max(sl_price, entry * (1 + _sl_min_pct)))   # min dynamic
 
         tp1 = _tp1_short(entry, swing_lows_m15, ema9_m15, ema21_m15, atr_m15,
                          ob_data.get("support_walls") if ob_data else None,

@@ -43,7 +43,7 @@ HISTORY_FILE   = DATA_DIR / "history.json"
 POSITIONS_FILE = DATA_DIR / "positions.json"
 
 # ── Algorithm Version — tăng mỗi khi thay đổi filter/threshold ──
-ALGO_VERSION = "v2.4"   # v2.4: trend position filter (MA89 H1) + relax SHORT for weak altcoins (2026-04-27)
+ALGO_VERSION = "v2.5"   # v2.5: watchlist fast loop + SL max cap (force cut loss) (2026-04-27)
 ALGO_DATE    = "2026-04-27"
 
 DATA_DIR.mkdir(exist_ok=True)
@@ -300,7 +300,7 @@ def get_analyze_fn(cfg):
 
 
 def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
-    """Alert Telegram khi mã watchlist đang đúng điểm entry."""
+    """Alert Telegram khi mã watchlist đang đúng điểm entry hoặc gần entry tốt."""
     token   = cfg.get("telegram_token", "")
     chat_id = cfg.get("telegram_chat", "")
     if not token or not chat_id:
@@ -310,23 +310,43 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
     confidence = result.get("confidence", "LOW")
     rr         = result.get("rr", 0) or 0
     verdict    = result.get("entry_verdict", "WAIT")
+    price      = float(result.get("price", 0) or 0)
+    entry_opt  = result.get("entry_opt")  # entry tốt hơn nếu có
 
-    # Chỉ alert khi verdict GO — có thể vào lệnh ngay
     if direction not in ("LONG", "SHORT"):
         return
     if confidence not in ("HIGH", "MEDIUM"):
         return
     if rr < 1.5:
         return
-    if verdict != "GO":
+
+    # ── Alert types ──
+    # 1. GO: vào ngay
+    # 2. APPROACHING: giá đang tiến gần entry tốt (< 0.5%) — chuẩn bị vào
+    alert_type = None
+    if verdict == "GO":
+        alert_type = "GO"
+    elif entry_opt and price > 0:
+        try:
+            entry_opt_val = float(entry_opt)
+            dist_pct = abs(price - entry_opt_val) / price * 100
+            if dist_pct < 0.5:  # giá cách entry_opt < 0.5%
+                if direction == "LONG" and price > entry_opt_val:
+                    alert_type = "APPROACHING"
+                elif direction == "SHORT" and price < entry_opt_val:
+                    alert_type = "APPROACHING"
+        except (TypeError, ValueError):
+            pass
+
+    if not alert_type:
         return
 
-    # Tránh spam — dùng cooldown key
+    # Cooldown ngắn hơn cho fast loop — 15 phút (vs 1 tiếng cũ)
     import time
-    cooldown_key = f"{sym}_{direction}_{algo_key}"
+    cooldown_key = f"{sym}_{direction}_{algo_key}_{alert_type}"
     now = time.time()
     last_alert = _watchlist_alert_cooldown.get(cooldown_key, 0)
-    if now - last_alert < 3600:  # cooldown 1 tiếng
+    if now - last_alert < 900:  # cooldown 15 phút
         return
     _watchlist_alert_cooldown[cooldown_key] = now
 
@@ -341,8 +361,11 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
     dir_emoji  = "🟢" if direction == "LONG" else "🔴"
     mk         = result.get("market", {})
 
+    type_emoji = "✅" if alert_type == "GO" else "⏰"
+    type_text  = "DA SAN SANG VAO LENH" if alert_type == "GO" else f"GIA SAP CHAM ENTRY {entry_opt}"
+
     lines = [
-        f"📌 [WATCHLIST] {sym}",
+        f"📌 [WATCHLIST {alert_type}] {sym}",
         f"{dir_emoji} {direction} | {confidence} | [{algo_label}]",
         "--------------------",
     ]
@@ -361,11 +384,8 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
         f"TP1: {result.get('tp1','')} (+{result.get('tp1_pct','')}%)",
         "--------------------",
         f"Funding: {mk.get('funding_pct','N/A')} | OI: {mk.get('oi_str','N/A')}",
+        f"{type_emoji} {type_text}",
     ]
-    if verdict == "GO":
-        lines.append("✅ DA SAN SANG VAO LENH")
-    else:
-        lines.append("🟡 CHO THEM XAC NHAN")
 
     send_telegram(token, chat_id, chr(10).join(lines))
 
@@ -468,7 +488,29 @@ def market_scan_cycle(cfg):
             except Exception as e:
                 print(f"[TELEGRAM ERROR] {result.get('symbol')}: {e}")
 
+def watchlist_fast_loop():
+    """Loop riêng cho watchlist — quét nhanh hơn (1-2 phút) để alert tức thì."""
+    global scanner_running
+    while scanner_running:
+        try:
+            cfg = load_config()
+            wl_interval = int(cfg.get("watchlist_interval_sec", 90))  # mặc định 90s
+
+            try:
+                dashboard_scan_cycle(cfg)
+            except Exception as e:
+                print(f"[WATCHLIST FAST LOOP ERROR] {e}")
+
+            elapsed = 0
+            while elapsed < wl_interval and scanner_running:
+                time.sleep(5); elapsed += 5
+        except Exception as e:
+            print(f"[WATCHLIST LOOP ERROR] {e} — retry sau 30s")
+            time.sleep(30)
+
+
 def dashboard_scanner_loop():
+    """Market-wide scan — chậm hơn (15+ phút) vì quét toàn thị trường."""
     global scanner_running, scanner_status
     while scanner_running:
         try:
@@ -477,15 +519,9 @@ def dashboard_scanner_loop():
             scan_start_ts = time.time()
 
             scanner_status["is_scanning"] = True
-            scanner_status["scan_start"]  = _local_isoformat()  # khi BẮT ĐẦU
+            scanner_status["scan_start"]  = _local_isoformat()
 
-            # 1. Scan watchlist Dashboard (symbols cụ thể)
-            try:
-                dashboard_scan_cycle(cfg)
-            except Exception as e:
-                print(f"[DASHBOARD SCAN ERROR] {e}")
-
-            # 2. Scan toàn thị trường futures — alert + lưu history cho HIGH
+            # Scan toàn thị trường futures — alert + lưu history cho HIGH
             try:
                 market_scan_cycle(cfg)
             except Exception as e:
@@ -494,8 +530,8 @@ def dashboard_scanner_loop():
             scan_duration = round(time.time() - scan_start_ts)
             scanner_status["is_scanning"]  = False
             scanner_status["scan_count"]  += 1
-            scanner_status["last_scan"]    = _local_isoformat()  # khi HOÀN THÀNH
-            scanner_status["scan_duration"] = scan_duration      # thời gian scan thực tế (giây)
+            scanner_status["last_scan"]    = _local_isoformat()
+            scanner_status["scan_duration"] = scan_duration
             scanner_status["next_scan"]     = datetime.fromtimestamp(
                 time.time() + interval_sec).isoformat()
 
@@ -503,7 +539,6 @@ def dashboard_scanner_loop():
             while elapsed < interval_sec and scanner_running:
                 time.sleep(5); elapsed += 5
         except Exception as e:
-            # Catch-all: loop không bao giờ chết dù có lỗi bất ngờ
             print(f"[SCANNER LOOP ERROR] {e} — tiếp tục sau 60s")
             scanner_status["is_scanning"] = False
             time.sleep(60)
@@ -1677,6 +1712,7 @@ def start_dashboard_scanner():
     if not scanner_running:
         scanner_running = True
         threading.Thread(target=dashboard_scanner_loop, daemon=True).start()
+        threading.Thread(target=watchlist_fast_loop, daemon=True).start()
     return jsonify({"running": True})
 
 @app.route("/api/scanner/stop", methods=["POST"])
@@ -1753,6 +1789,7 @@ def auto_start_scanner():
     if not scanner_running:
         scanner_running = True
         threading.Thread(target=dashboard_scanner_loop, daemon=True).start()
+        threading.Thread(target=watchlist_fast_loop, daemon=True).start()
         print("[AUTO-START] Dashboard scanner started automatically")
 
 # Chạy auto-start trong thread riêng để không block gunicorn worker

@@ -2376,12 +2376,26 @@ function buildCard(d) {
   var slColor = 'var(--short)';
   var tp1Color= 'var(--long)';
 
+  // Algo dropdown — cho phép switch nhanh giữa các strategy
+  var currentAlgo = d.algo || d.strategy || 'TREND';
+  var algoOptions = ['SWING_H1','SWING_H4','SCALP','REVERSAL','RANGE_SCALP'];
+  var algoSelect = '<select onclick="event.stopPropagation()" '+
+    'onchange="changeWatchlistAlgo(\''+d.symbol+'\', this.value)" '+
+    'title="Đổi thuật toán phân tích cho mã này" '+
+    'style="background:rgba(0,200,255,.08);border:1px solid rgba(0,200,255,.3);'+
+    'color:var(--accent);border-radius:6px;padding:1px 4px;font-size:10px;'+
+    'font-weight:700;cursor:pointer;outline:none">';
+  algoOptions.forEach(function(opt){
+    algoSelect += '<option value="'+opt+'"'+(opt===currentAlgo?' selected':'')+'>'+opt+'</option>';
+  });
+  algoSelect += '</select>';
+
   return '<div class="card '+dir+'" onclick="showDetail(\''+d.symbol+'\')">' +
     '<div class="card-header">' +
       '<span class="card-sym">'+d.symbol.replace('USDT','')+'<span>/USDT</span></span>' +
       '<div style="display:flex;align-items:center;gap:6px">' +
         '<div class="badges"><span class="badge '+conf+'">'+conf+'</span>' +
-          algoTag(d.algo||d.strategy) +
+          algoSelect +
           '<span class="badge '+dir+'">'+dir+'</span>'+ntBadge+'</div>' +
         '<button onclick="event.stopPropagation();refreshSingle(this,\''+d.symbol+'\')" '+
           'title="Refresh mã này" '+
@@ -2474,7 +2488,10 @@ function scanSingle(sym) {
 function refreshSingle(btn, sym) {
   btn.innerHTML = '<span class="spinner" style="width:10px;height:10px;border-width:2px"></span>';
   btn.disabled = true;
-  fetch('/api/symbol/'+sym)
+  // Dùng algo đã gắn cho symbol này (nếu có)
+  var algo = (config.watchlist_algos || {})[sym] || '';
+  var url = '/api/symbol/' + sym + (algo ? '?algo=' + algo : '');
+  fetch(url)
     .then(function(r){return r.json();})
     .then(function(d){
       signalCache[sym] = d;
@@ -2483,6 +2500,33 @@ function refreshSingle(btn, sym) {
     .catch(function(){
       btn.innerHTML = '!';
       btn.disabled = false;
+    });
+}
+
+function changeWatchlistAlgo(symbol, newAlgo) {
+  // Update local config
+  config.watchlist_algos = config.watchlist_algos || {};
+  config.watchlist_algos[symbol] = newAlgo;
+
+  // Save to server
+  fetch('/api/config/watchlist-algo', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: symbol, algo: newAlgo})
+  });
+
+  // Re-analyze ngay với algo mới
+  showToast('🔄 ' + symbol.replace('USDT','') + ' → ' + newAlgo + ' — đang phân tích...');
+  fetch('/api/symbol/' + symbol + '?algo=' + newAlgo)
+    .then(function(r){return r.json();})
+    .then(function(d){
+      d.algo = newAlgo;
+      signalCache[symbol] = d;
+      renderCards();
+      showToast('✅ ' + symbol.replace('USDT','') + ' đã chuyển sang ' + newAlgo);
+    })
+    .catch(function(e){
+      showToast('❌ Lỗi: ' + (e.message || 'không phân tích được'));
     });
 }
 

@@ -781,9 +781,31 @@ def scan_now():
 
 @app.route("/api/symbol/<symbol>")
 def symbol_detail(symbol):
+    """Phân tích 1 coin. Optional ?algo=SWING_H1|REVERSAL|SCALP|SWING_H4|RANGE_SCALP"""
     cfg = load_config()
-    try:    return jsonify(get_analyze_fn(cfg)(symbol, cfg))
-    except Exception as e: return jsonify({"error": str(e)}), 500
+    algo_override = request.args.get("algo", "").upper()
+    try:
+        if algo_override:
+            from dashboard.fam_engine       import fam_analyze
+            from dashboard.swing_h1_engine  import swing_h1_analyze
+            from dashboard.scalp_engine     import scalp_analyze
+            from dashboard.range_engine     import range_analyze
+            from dashboard.reversal_engine  import reversal_analyze
+            engine_map = {
+                "SWING_H4":    fam_analyze,
+                "SWING_H1":    swing_h1_analyze,
+                "SCALP":       scalp_analyze,
+                "RANGE_SCALP": range_analyze,
+                "REVERSAL":    reversal_analyze,
+                "TREND":       get_analyze_fn(cfg),
+            }
+            engine = engine_map.get(algo_override, get_analyze_fn(cfg))
+            result = engine(symbol, {**cfg, "force_futures": True})
+            result["algo"] = algo_override
+            return jsonify(result)
+        return jsonify(get_analyze_fn(cfg)(symbol, cfg))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/results")
 def get_results():

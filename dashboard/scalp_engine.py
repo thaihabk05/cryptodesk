@@ -326,16 +326,29 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
             all_warnings.insert(0, f"🚫 BLOCK LONG altcoin — BTC {btc_sent}, không LONG ngược trend")
 
     # ── SHORT counter-trend: BTC đang BULL/PUMP ──
+    # Backtest 7d: 0 SHORT signals trong khi nhiều altcoin downtrend rõ
+    # Fix v5: cho phép SHORT khi altcoin có structure DOWNTREND rõ rệt
+    # (giá dưới MA89 H1 + taker bán mạnh) — coin yếu hơn BTC nhiều
     elif direction == "SHORT" and btc_sent in ("RISK_ON", "PUMP"):
+        # Check structure altcoin yếu rõ rệt
+        _ma89_h1_val = float(df_h1["ma89"].iloc[-1]) if "ma89" in df_h1.columns else 0
+        _ma34_h1_val = float(df_h1["ma34"].iloc[-1]) if "ma34" in df_h1.columns else 0
+        _alt_weak = (_ma89_h1_val > 0 and price < _ma89_h1_val * 0.99
+                     and _ma34_h1_val > 0 and price < _ma34_h1_val)
+
         if _is_major and _taker_sell:
             all_warnings.append(f"⚠️ BTC {btc_sent} nhưng {symbol[:3]} + taker bán mạnh — scalp SHORT OK, SL chặt")
         elif _is_major and btc_sent == "RISK_ON":
             if confidence == "HIGH": confidence = "MEDIUM"
             all_warnings.append(f"⚠️ BTC RISK_ON — {symbol[:3]} scalp SHORT cẩn thận, giữ SL chặt")
+        elif _alt_weak and _taker_sell:
+            # Altcoin yếu hơn BTC + taker bán mạnh → cho phép SHORT
+            if confidence == "HIGH": confidence = "MEDIUM"
+            all_warnings.append(f"⚠️ BTC RISK_ON nhưng altcoin yếu (giá < MA89 H1) + taker bán — SHORT OK")
         else:
             direction  = "WAIT"
             confidence = "LOW"
-            all_warnings.insert(0, f"🚫 BLOCK SHORT altcoin — BTC {btc_sent}, không SHORT ngược trend")
+            all_warnings.insert(0, f"🚫 BLOCK SHORT altcoin — BTC {btc_sent}, không SHORT ngược trend mạnh")
 
     # ── PATCH E: OI + Long/Short Ratio — Scalp version ──
     # Kết hợp OI với LS ratio: OI giảm + crowded = nguy hiểm, OI giảm nhẹ + taker mạnh = OK
@@ -423,6 +436,32 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
                 f"⚠️ GIẢM MẠNH 7D ({round(_chg_7d,1)}%) — có thể oversold, "
                 f"cẩn thận SHORT vùng capitulation"
             )
+
+    # ── PATCH M: Trend Position Filter (backtest 7d v2.3 → 23% WR) ──
+    # Pattern: LONG khi giá dưới MA89 H1 = bắt dao rơi trong downtrend
+    # CRV/ARB cases: EMA9>EMA21 cross nhỏ trong downtrend → bị quét
+    # Fix: LONG cần giá trên MA89 H1, SHORT cần giá dưới MA89 H1
+    if "ma89" in df_h1.columns:
+        _ma89_h1 = float(df_h1["ma89"].iloc[-1])
+        if direction == "LONG" and price < _ma89_h1 * 0.998:
+            # Cho phép nếu giá đang bounce mạnh từ MA200 (reversal setup)
+            _ma200_h1 = float(df_h1["ma200"].iloc[-1]) if "ma200" in df_h1.columns else 0
+            _bouncing_ma200 = _ma200_h1 > 0 and price > _ma200_h1 * 0.998 and price < _ma200_h1 * 1.02
+            if not _bouncing_ma200:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 LONG TRONG DOWNTREND — Giá {price:.5f} dưới MA89 H1 ({_ma89_h1:.5f}) "
+                    f"— bắt dao rơi, chờ giá vượt MA89 hoặc bounce từ MA200")
+        elif direction == "SHORT" and price > _ma89_h1 * 1.002:
+            _ma200_h1 = float(df_h1["ma200"].iloc[-1]) if "ma200" in df_h1.columns else 0
+            _rejecting_ma200 = _ma200_h1 > 0 and price < _ma200_h1 * 1.002 and price > _ma200_h1 * 0.98
+            if not _rejecting_ma200:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 SHORT TRONG UPTREND — Giá {price:.5f} trên MA89 H1 ({_ma89_h1:.5f}) "
+                    f"— ngược trend mạnh, chờ rejection từ MA200")
 
     # ── PATCH K: Chasing Filter — entry gần 24h high/low + 24h move lớn ──
     # Reject signal khi đang đuổi giá cuối sóng pump/dump

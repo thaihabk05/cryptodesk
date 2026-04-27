@@ -31,6 +31,7 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
     ff = bool(cfg.get("force_futures", False))
 
     # Fetch: H4 (bias) + H1 (confirm + entry) + M15 (zone tinh chỉnh)
+    df_d1  = prepare(fetch_klines(symbol, "1d",   30, force_futures=ff))  # cho pump exhaustion check
     df_h4  = prepare(fetch_klines(symbol, "4h",  200, force_futures=ff))
     df_h1  = prepare(fetch_klines(symbol, "1h",  200, force_futures=ff))
     df_m15 = prepare(fetch_klines(symbol, "15m", 100, force_futures=ff))
@@ -273,6 +274,7 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
 
     # ── PATCH I: Far From EMA34 H1 — gợi ý chờ pullback ──
     # Nếu giá cách EMA34 H1 > 5% = đã pump/dump quá xa, entry ngay không tối ưu
+    ma34_h1 = float(row_h1["ma34"])  # define here so it's available in this block
     if direction in ("LONG", "SHORT") and ma34_h1 > 0:
         _dist_ema34_h1 = (price - ma34_h1) / ma34_h1 * 100
         if direction == "LONG" and _dist_ema34_h1 > 5:
@@ -321,7 +323,6 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
     # ────────────────────────────────────────
     # SL / TP — dựa ATR H1, swing H1 gần nhất
     # ────────────────────────────────────────
-    ma34_h1 = float(row_h1["ma34"])
     ma89_h1 = float(row_h1["ma89"])
     ma34_h4 = float(row_h4["ma34"])
 

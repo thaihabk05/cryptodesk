@@ -1543,6 +1543,264 @@ def position_analyze():
             except Exception as _ce:
                 coin_ema_note = f"Không fetch được {symbol}: {str(_ce)[:50]}"
 
+        # ═══════════════════════════════════════════════════════════════
+        # ENGINE OVERLAY — gọi fam_analyze để lấy view kỹ thuật của engine
+        # cho symbol này, từ đó:
+        #   1. engine_view: D1/H4 bias, SL/TP kỹ thuật (swing-based, không
+        #      phải Fibo cứng từ %), warnings, direction engine khuyến
+        #   2. entry_quality: entry user vs entry tối ưu engine — diagnose
+        #      vào sai pha / vào sau pump / vào tốt
+        #   3. smart_action: tổng hợp HOLD/CUT/PARTIAL/DCA dựa trên
+        #      conflict direction + P&L hiện tại + khoảng cách tới
+        #      SL/TP kỹ thuật của engine
+        # ═══════════════════════════════════════════════════════════════
+        engine_view    = None
+        entry_quality  = None
+        smart_action   = None
+
+        if symbol and coin_price and coin_price > 0:
+            try:
+                from dashboard.fam_engine import fam_analyze
+                eng_cfg = {"force_futures": True, "rr_ratio": 1.0}
+                eng = fam_analyze(symbol, eng_cfg)
+
+                eng_dir   = (eng.get("direction") or "WAIT").upper()
+                eng_conf  = (eng.get("confidence") or "LOW").upper()
+                eng_score = int(eng.get("score") or 0)
+                eng_sl    = eng.get("sl")
+                eng_tp1   = eng.get("tp1")
+                eng_tp2   = eng.get("tp2")
+                eng_entry_opt = eng.get("entry_optimal") or eng.get("entry")
+                eng_warns = eng.get("warnings") or []
+                eng_d1    = (eng.get("d1") or {}).get("bias", "")
+                eng_h4    = (eng.get("h4") or {}).get("bias", "")
+                eng_h1_status = eng.get("h1_status") or ""
+
+                engine_view = {
+                    "direction":     eng_dir,
+                    "confidence":    eng_conf,
+                    "score":         eng_score,
+                    "d1_bias":       eng_d1,
+                    "h4_bias":       eng_h4,
+                    "h1_status":     eng_h1_status,
+                    "sl":            _fmt(float(eng_sl)) if eng_sl else None,
+                    "tp1":           _fmt(float(eng_tp1)) if eng_tp1 else None,
+                    "tp2":           _fmt(float(eng_tp2)) if eng_tp2 else None,
+                    "entry_optimal": _fmt(float(eng_entry_opt)) if eng_entry_opt else None,
+                    "warnings":      [str(w) for w in eng_warns[:8]],
+                }
+
+                # ── Entry Quality ──
+                pnl_pct_now = ((coin_price - entry) / entry * 100) if is_long                                 else ((entry - coin_price) / entry * 100)
+                pnl_usd_now = round(pos_size * pnl_pct_now / 100, 2) if pos_size > 0 else 0
+
+                aligned = (is_long and eng_dir == "LONG") or (not is_long and eng_dir == "SHORT")
+                conflict = (is_long and eng_dir == "SHORT") or (not is_long and eng_dir == "LONG")
+
+                # So entry user vs entry_optimal engine
+                dist_from_opt_pct = None
+                entry_verdict_text = ""
+                if eng_entry_opt:
+                    eo = float(eng_entry_opt)
+                    if eo > 0:
+                        if is_long:
+                            # LONG tốt: entry <= entry_optimal (mua thấp hơn vùng tối ưu = tốt hơn)
+                            dist_from_opt_pct = round((entry - eo) / eo * 100, 2)
+                            if dist_from_opt_pct > 3:
+                                entry_verdict_text = f"Vào cao hơn vùng tối ưu {dist_from_opt_pct}% — chasing top"
+                            elif dist_from_opt_pct < -1:
+                                entry_verdict_text = f"Vào thấp hơn vùng tối ưu {abs(dist_from_opt_pct)}% — entry đẹp"
+                            else:
+                                entry_verdict_text = f"Vào sát vùng tối ưu (chênh {dist_from_opt_pct:+.1f}%)"
+                        else:
+                            # SHORT tốt: entry >= entry_optimal
+                            dist_from_opt_pct = round((entry - eo) / eo * 100, 2)
+                            if dist_from_opt_pct < -3:
+                                entry_verdict_text = f"Vào thấp hơn vùng tối ưu {abs(dist_from_opt_pct)}% — chasing bottom"
+                            elif dist_from_opt_pct > 1:
+                                entry_verdict_text = f"Vào cao hơn vùng tối ưu {dist_from_opt_pct}% — entry đẹp"
+                            else:
+                                entry_verdict_text = f"Vào sát vùng tối ưu (chênh {dist_from_opt_pct:+.1f}%)"
+
+                entry_quality = {
+                    "aligned":         aligned,
+                    "conflict":        conflict,
+                    "pnl_pct":         round(pnl_pct_now, 3),
+                    "pnl_usd":         pnl_usd_now,
+                    "dist_from_opt":   dist_from_opt_pct,
+                    "verdict":         entry_verdict_text,
+                    "engine_dir":      eng_dir,
+                    "user_dir":        direction,
+                }
+
+                # ── Smart Action — synthesize ──
+                action_label  = "HOLD"
+                action_color  = "info"
+                action_detail = ""
+                action_steps_smart = []
+
+                # Khoảng cách từ giá hiện tại tới SL/TP engine
+                eng_sl_f  = float(eng_sl)  if eng_sl  else None
+                eng_tp1_f = float(eng_tp1) if eng_tp1 else None
+                eng_tp2_f = float(eng_tp2) if eng_tp2 else None
+
+                # Đã chạm/qua TP1 của engine?
+                hit_eng_tp1 = False
+                if eng_tp1_f:
+                    hit_eng_tp1 = (is_long and coin_price >= eng_tp1_f) or                                   (not is_long and coin_price <= eng_tp1_f)
+
+                # Sắp chạm SL của engine?
+                near_eng_sl = False
+                broke_eng_sl = False
+                if eng_sl_f:
+                    if is_long:
+                        broke_eng_sl = coin_price <= eng_sl_f
+                        near_eng_sl  = (coin_price - eng_sl_f) / coin_price < 0.01 and coin_price > eng_sl_f
+                    else:
+                        broke_eng_sl = coin_price >= eng_sl_f
+                        near_eng_sl  = (eng_sl_f - coin_price) / coin_price < 0.01 and coin_price < eng_sl_f
+
+                # Logic phân loại
+                if conflict:
+                    # Engine đảo chiều — đây là tín hiệu nguy hiểm nhất
+                    action_label  = "CẮT NGAY"
+                    action_color  = "danger"
+                    action_detail = f"Engine flip ngược chiều ({eng_dir} với confidence {eng_conf}) — không hợp lệ tiếp tục giữ"
+                    action_steps_smart.append({
+                        "icon": "🚫",
+                        "text": f"Engine khuyến {eng_dir} ngược lại với lệnh {direction} của bạn",
+                        "color": "warning",
+                    })
+                    if pnl_pct_now > 0:
+                        action_steps_smart.append({
+                            "icon": "💰",
+                            "text": f"Đang lãi {pnl_pct_now:+.2f}% ({pnl_usd_now:+.2f} USDT) — chốt toàn bộ ngay",
+                            "color": "success",
+                        })
+                    else:
+                        action_steps_smart.append({
+                            "icon": "✂️",
+                            "text": f"Đang lỗ {pnl_pct_now:.2f}% ({pnl_usd_now:.2f} USDT) — cắt lỗ, không cố gồng",
+                            "color": "warning",
+                        })
+
+                elif broke_eng_sl:
+                    action_label  = "CẮT NGAY"
+                    action_color  = "danger"
+                    action_detail = f"Giá đã thủng SL kỹ thuật của engine ({_fmt(eng_sl_f)}) — cấu trúc đã gãy"
+                    action_steps_smart.append({
+                        "icon": "🚨",
+                        "text": f"Giá {_fmt(coin_price)} đã thủng SL kỹ thuật {_fmt(eng_sl_f)} — không còn lý do hold",
+                        "color": "warning",
+                    })
+
+                elif hit_eng_tp1:
+                    action_label  = "CHỐT 50–70%"
+                    action_color  = "success"
+                    action_detail = f"Đã chạm/qua TP1 kỹ thuật ({_fmt(eng_tp1_f)}) — chốt lợi nhuận một phần"
+                    action_steps_smart.append({
+                        "icon": "🎯",
+                        "text": f"Chốt 50–70% tại {_fmt(coin_price)} (đã qua TP1 engine {_fmt(eng_tp1_f)})",
+                        "color": "success",
+                    })
+                    action_steps_smart.append({
+                        "icon": "🔒",
+                        "text": "Dời SL về break-even (entry) cho phần còn lại",
+                        "color": "info",
+                    })
+                    if eng_tp2_f:
+                        action_steps_smart.append({
+                            "icon": "⏳",
+                            "text": f"Giữ 30% kéo về TP2 engine {_fmt(eng_tp2_f)}",
+                            "color": "info",
+                        })
+
+                elif near_eng_sl:
+                    action_label  = "THẬN TRỌNG"
+                    action_color  = "warning"
+                    action_detail = f"Giá sát SL kỹ thuật engine ({_fmt(eng_sl_f)}) — cân nhắc cắt sớm"
+                    action_steps_smart.append({
+                        "icon": "⚠️",
+                        "text": f"Còn cách SL engine ~1% — nếu vol bán mạnh, cắt trước khi thủng",
+                        "color": "warning",
+                    })
+
+                elif eng_dir == "WAIT":
+                    # Engine không cùng chiều cũng không ngược — hold cẩn thận
+                    action_label  = "HOLD CẨN THẬN"
+                    action_color  = "warning"
+                    action_detail = f"Engine WAIT (confidence {eng_conf}) — cấu trúc đang yếu, không phải lúc DCA"
+                    if pnl_pct_now < -2:
+                        action_steps_smart.append({
+                            "icon": "📉",
+                            "text": f"Đang lỗ {pnl_pct_now:.2f}% — engine không xác nhận, cân nhắc cắt nhẹ giảm risk",
+                            "color": "warning",
+                        })
+                    else:
+                        action_steps_smart.append({
+                            "icon": "👀",
+                            "text": f"Engine chưa rõ — giữ SL gốc, không thêm vị thế",
+                            "color": "info",
+                        })
+
+                else:
+                    # Aligned + chưa đến TP/SL engine
+                    action_label  = "HOLD"
+                    action_color  = "success" if eng_conf == "HIGH" else "info"
+                    action_detail = f"Engine vẫn xác nhận {eng_dir} ({eng_conf}, score {eng_score}) — kế hoạch đang đúng"
+
+                    # Có cơ hội DCA?
+                    can_dca = False
+                    if eng_entry_opt and dist_from_opt_pct is not None:
+                        if is_long and dist_from_opt_pct < -2:
+                            can_dca = True
+                        elif (not is_long) and dist_from_opt_pct > 2:
+                            can_dca = True
+
+                    if can_dca and not broke_eng_sl:
+                        action_steps_smart.append({
+                            "icon": "💎",
+                            "text": f"Giá đang ở vùng entry tốt (cách entry tối ưu {dist_from_opt_pct:+.1f}%) — có thể DCA nhỏ nếu chưa full position",
+                            "color": "ok",
+                        })
+
+                    if eng_tp1_f:
+                        dist_to_tp1 = abs(eng_tp1_f - coin_price) / coin_price * 100
+                        action_steps_smart.append({
+                            "icon": "🎯",
+                            "text": f"TP1 engine: {_fmt(eng_tp1_f)} (còn {dist_to_tp1:.1f}%) — chốt 50% khi chạm",
+                            "color": "info",
+                        })
+                    if eng_sl_f:
+                        dist_to_sl = abs(coin_price - eng_sl_f) / coin_price * 100
+                        action_steps_smart.append({
+                            "icon": "🛡️",
+                            "text": f"SL engine: {_fmt(eng_sl_f)} (cách {dist_to_sl:.1f}%) — cân nhắc dời SL theo nếu chưa",
+                            "color": "info",
+                        })
+
+                # Append warnings từ engine vào action steps nếu là blocker
+                blocker_keywords = ("🚫", "BLOCK", "VETO", "EXHAUSTION", "PUMP", "DUMP")
+                for w in eng_warns[:4]:
+                    if any(k in str(w) for k in blocker_keywords):
+                        action_steps_smart.append({
+                            "icon": "📛",
+                            "text": str(w),
+                            "color": "warning",
+                        })
+
+                smart_action = {
+                    "label":   action_label,
+                    "color":   action_color,
+                    "detail":  action_detail,
+                    "steps":   action_steps_smart,
+                    "pnl_pct": round(pnl_pct_now, 3),
+                    "pnl_usd": pnl_usd_now,
+                }
+
+            except Exception as _eng_e:
+                engine_view = {"error": f"Không chạy được engine: {str(_eng_e)[:80]}"}
+
         return jsonify({
             "direction": direction, "entry": entry,
             "sl_implied": _fmt(sl_implied), "sl_pct": sl_pct,
@@ -1564,6 +1822,9 @@ def position_analyze():
             "action_now":   action_now,
             "coin_price":   _fmt(coin_price) if coin_price else None,
             "coin_chg_1h":  coin_chg_1h,
+            "engine_view":   engine_view,
+            "entry_quality": entry_quality,
+            "smart_action":  smart_action,
             "generated_at": _local_isoformat(),
         })
 

@@ -1872,9 +1872,129 @@ function renderPosResults(d) {
 
   var genAt = d.generated_at ? d.generated_at.replace('T',' ').substring(0,16) : '';
 
+  // ── SMART ACTION CARD (engine-driven) ──
+  var smartActionHtml = '';
+  if (d.smart_action) {
+    var sa = d.smart_action;
+    var saColors = {
+      'danger': {bg:'rgba(226,75,74,.12)', border:'#E24B4A', text:'#A32D2D'},
+      'warning':{bg:'rgba(186,117,23,.12)', border:'#BA7517', text:'#633806'},
+      'success':{bg:'rgba(29,158,117,.12)', border:'#1D9E75', text:'#0F6E56'},
+      'info':   {bg:'rgba(55,138,221,.12)', border:'#378ADD', text:'#0C447C'}
+    };
+    var sac = saColors[sa.color] || saColors.info;
+    var stepColors = { success:'#1D9E75', ok:'#1D9E75', info:'#378ADD', warning:'#E24B4A' };
+    var saStepsHtml = (sa.steps || []).map(function(s){
+      var col = stepColors[s.color] || '#888780';
+      return '<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border-radius:6px;background:'+col+'11;margin-bottom:5px">' +
+        '<span style="flex-shrink:0;font-size:14px;line-height:1.3">'+s.icon+'</span>' +
+        '<span style="font-size:13px;color:var(--color-text-primary);line-height:1.4">'+s.text+'</span>' +
+      '</div>';
+    }).join('');
+    var pnlCol = (sa.pnl_pct >= 0) ? '#1D9E75' : '#E24B4A';
+    var pnlSign = (sa.pnl_pct >= 0) ? '+' : '';
+    smartActionHtml =
+      '<div style="background:' + sac.bg + ';border:1.5px solid ' + sac.border + ';border-radius:var(--border-radius-lg);padding:14px 16px;margin-bottom:14px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">' +
+          '<div>' +
+            '<div style="font-size:11px;font-weight:500;color:' + sac.text + ';text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Smart Action (Engine + Position)</div>' +
+            '<div style="font-size:18px;font-weight:600;color:' + sac.text + '">' + sa.label + '</div>' +
+          '</div>' +
+          '<div style="text-align:right">' +
+            '<div style="font-size:11px;color:var(--color-text-secondary)">P&L hiện tại</div>' +
+            '<div style="font-size:16px;font-weight:600;color:' + pnlCol + '">' + pnlSign + sa.pnl_pct + '% &nbsp;(' + pnlSign + sa.pnl_usd + ' USDT)</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:10px;line-height:1.5">' + sa.detail + '</div>' +
+        saStepsHtml +
+      '</div>';
+  }
+
+  // ── ENTRY QUALITY ──
+  var entryQualHtml = '';
+  if (d.entry_quality) {
+    var eq = d.entry_quality;
+    var alignBg, alignBorder, alignText, alignLabel;
+    if (eq.conflict) {
+      alignBg='rgba(226,75,74,.08)'; alignBorder='#E24B4A'; alignText='#A32D2D';
+      alignLabel='⚠️ ENGINE NGƯỢC CHIỀU — engine khuyến ' + eq.engine_dir + ' nhưng bạn đang ' + eq.user_dir;
+    } else if (eq.aligned) {
+      alignBg='rgba(29,158,117,.08)'; alignBorder='#1D9E75'; alignText='#0F6E56';
+      alignLabel='✅ Engine cùng chiều ' + eq.user_dir;
+    } else {
+      alignBg='rgba(186,117,23,.08)'; alignBorder='#BA7517'; alignText='#633806';
+      alignLabel='⏳ Engine WAIT — chưa xác nhận hướng';
+    }
+    entryQualHtml =
+      '<div style="background:' + alignBg + ';border:0.5px solid ' + alignBorder + '88;border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:12px">' +
+        '<div style="font-size:12px;font-weight:500;color:' + alignText + ';margin-bottom:4px">' + alignLabel + '</div>' +
+        (eq.verdict ? '<div style="font-size:12px;color:var(--color-text-secondary)">Entry: ' + eq.verdict + '</div>' : '') +
+      '</div>';
+  }
+
+  // ── ENGINE VIEW ──
+  var engineHtml = '';
+  if (d.engine_view && !d.engine_view.error) {
+    var ev = d.engine_view;
+    var dirCol = ev.direction === 'LONG' ? '#1D9E75' : ev.direction === 'SHORT' ? '#E24B4A' : '#BA7517';
+    var confCol = ev.confidence === 'HIGH' ? '#1D9E75' : ev.confidence === 'MEDIUM' ? '#BA7517' : '#888780';
+    var warnsHtml = (ev.warnings || []).slice(0,5).map(function(w){
+      return '<div style="font-size:11px;color:var(--color-text-secondary);padding:3px 0;line-height:1.4">' + w + '</div>';
+    }).join('');
+    engineHtml =
+      '<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px 14px;margin-bottom:14px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">' +
+          '<div style="font-size:12px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.04em">Engine View — ' + (d.symbol||'') + '</div>' +
+          '<div style="display:flex;gap:6px;align-items:center">' +
+            '<span style="font-size:13px;font-weight:600;color:' + dirCol + '">' + ev.direction + '</span>' +
+            '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:' + confCol + '22;color:' + confCol + '">' + ev.confidence + '</span>' +
+            '<span style="font-size:11px;color:var(--color-text-secondary)">score ' + ev.score + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:10px">' +
+          '<div style="background:var(--color-background-primary);border-radius:6px;padding:6px 10px">' +
+            '<div style="font-size:10px;color:var(--color-text-secondary)">D1</div>' +
+            '<div style="font-size:12px;font-weight:500">' + (ev.d1_bias||'--') + '</div>' +
+          '</div>' +
+          '<div style="background:var(--color-background-primary);border-radius:6px;padding:6px 10px">' +
+            '<div style="font-size:10px;color:var(--color-text-secondary)">H4</div>' +
+            '<div style="font-size:12px;font-weight:500">' + (ev.h4_bias||'--') + '</div>' +
+          '</div>' +
+          '<div style="background:var(--color-background-primary);border-radius:6px;padding:6px 10px">' +
+            '<div style="font-size:10px;color:var(--color-text-secondary)">H1</div>' +
+            '<div style="font-size:12px;font-weight:500">' + (ev.h1_status||'--') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:' + (warnsHtml ? '10px' : '0') + '">' +
+          '<div style="background:rgba(226,75,74,.08);border-radius:6px;padding:6px 10px">' +
+            '<div style="font-size:10px;color:#A32D2D">SL kỹ thuật</div>' +
+            '<div style="font-size:13px;font-weight:600;color:#A32D2D">' + (ev.sl ? '$'+ev.sl : '--') + '</div>' +
+          '</div>' +
+          '<div style="background:rgba(29,158,117,.08);border-radius:6px;padding:6px 10px">' +
+            '<div style="font-size:10px;color:#0F6E56">TP1 kỹ thuật</div>' +
+            '<div style="font-size:13px;font-weight:600;color:#0F6E56">' + (ev.tp1 ? '$'+ev.tp1 : '--') + '</div>' +
+          '</div>' +
+          '<div style="background:rgba(83,74,183,.08);border-radius:6px;padding:6px 10px">' +
+            '<div style="font-size:10px;color:#534AB7">TP2 kỹ thuật</div>' +
+            '<div style="font-size:13px;font-weight:600;color:#534AB7">' + (ev.tp2 ? '$'+ev.tp2 : '--') + '</div>' +
+          '</div>' +
+        '</div>' +
+        (warnsHtml ? '<div style="border-top:0.5px solid var(--color-border-tertiary);padding-top:8px;margin-top:4px">' + warnsHtml + '</div>' : '') +
+      '</div>';
+  } else if (d.engine_view && d.engine_view.error) {
+    engineHtml = '<div style="font-size:11px;color:var(--color-text-secondary);padding:8px 12px;background:var(--color-background-secondary);border-radius:6px;margin-bottom:12px">Engine: ' + d.engine_view.error + '</div>';
+  }
+
   document.getElementById('posResults').innerHTML =
-    // Recommendation header
+    // Smart Action — ƯU TIÊN HIỂN THỊ TRÊN CÙNG
+    smartActionHtml +
+    // Entry Quality
+    entryQualHtml +
+    // Engine View
+    engineHtml +
+    // Recommendation header (BTC-driven, giữ lại làm thông tin bổ trợ)
     '<div style="background:' + recBg[rc] + ';border:1px solid ' + recBorder[rc] + ';border-radius:var(--border-radius-lg);padding:14px 16px;margin-bottom:14px">' +
+      '<div style="font-size:11px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">BTC-based recommendation</div>' +
       '<div style="font-size:16px;font-weight:500;color:' + recTextColor[rc] + ';margin-bottom:4px">' + d.recommendation + '</div>' +
       '<div style="font-size:13px;color:var(--color-text-secondary)">' + d.rec_detail + '</div>' +
     '</div>' +

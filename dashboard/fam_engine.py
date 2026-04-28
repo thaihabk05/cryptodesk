@@ -452,23 +452,44 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
                 confidence = "MEDIUM"
             all_warnings.append(f"⚠️ Giá trên EMA9 H1 ({_ema9_h1:.5f}) — momentum ngắn hạn mạnh, cân nhắc chờ rejection")
 
-    # ── PATCH I: Far From EMA34 H1 — gợi ý chờ pullback ──
-    # Nếu giá cách EMA34 H1 > 5% = đã pump/dump quá xa, entry ngay không tối ưu
+    # ── PATCH I: Far From EMA34 H1 — soft warning + hard block khi quá xa ──
+    # 5–7%: cảnh báo, hạ confidence
+    # > 7%: HARD BLOCK — giá đã pump/dump quá xa, entry là chasing top/bottom
+    # Lý do: case OPENUSDT 28/04/2026 — entry 0.281 khi EMA34 H1 ~0.255 (xa ~10%)
+    # → 2 trade LONG liên tiếp đều SL ngay đỉnh pump parabolic
     if direction in ("LONG", "SHORT") and ma34_h1 > 0:
         _dist_ema34_h1 = (price - ma34_h1) / ma34_h1 * 100
-        if direction == "LONG" and _dist_ema34_h1 > 5:
-            _pullback_target = round(ma34_h1 * 1.005, 6)  # vùng ngay trên EMA34
-            _pullback_pct    = round(_dist_ema34_h1, 1)
+        if direction == "LONG" and _dist_ema34_h1 > 7:
+            direction  = "WAIT"
+            confidence = "LOW"
+            _pullback_target = round(ma34_h1 * 1.005, 6)
+            all_warnings.insert(0,
+                f"🚫 BLOCK LONG — Giá cách EMA34 H1 +{round(_dist_ema34_h1,1)}% (>7%) "
+                f"— chasing top, chờ pullback về ~{_pullback_target}"
+            )
+        elif direction == "SHORT" and _dist_ema34_h1 < -7:
+            direction  = "WAIT"
+            confidence = "LOW"
+            _pullback_target = round(ma34_h1 * 0.995, 6)
+            all_warnings.insert(0,
+                f"🚫 BLOCK SHORT — Giá cách EMA34 H1 {round(_dist_ema34_h1,1)}% (<-7%) "
+                f"— chasing bottom, chờ rebound về ~{_pullback_target}"
+            )
+        elif direction == "LONG" and _dist_ema34_h1 > 5:
+            if confidence == "HIGH":
+                confidence = "MEDIUM"
+            _pullback_target = round(ma34_h1 * 1.005, 6)
             all_warnings.append(
-                f"⚠️ GIÁ CÁCH EMA34 H1 +{_pullback_pct}% — entry ngay không tối ưu. "
-                f"Chờ pullback về ~{_pullback_target} (vùng EMA34 H1) để R:R tốt hơn"
+                f"⚠️ GIÁ CÁCH EMA34 H1 +{round(_dist_ema34_h1,1)}% — entry không tối ưu, "
+                f"chờ pullback về ~{_pullback_target} (đã hạ confidence)"
             )
         elif direction == "SHORT" and _dist_ema34_h1 < -5:
+            if confidence == "HIGH":
+                confidence = "MEDIUM"
             _pullback_target = round(ma34_h1 * 0.995, 6)
-            _pullback_pct    = round(abs(_dist_ema34_h1), 1)
             all_warnings.append(
-                f"⚠️ GIÁ CÁCH EMA34 H1 -{_pullback_pct}% — entry ngay không tối ưu. "
-                f"Chờ rebound về ~{_pullback_target} (vùng EMA34 H1) để R:R tốt hơn"
+                f"⚠️ GIÁ CÁCH EMA34 H1 {round(_dist_ema34_h1,1)}% — entry không tối ưu, "
+                f"chờ rebound về ~{_pullback_target} (đã hạ confidence)"
             )
 
 
@@ -489,6 +510,68 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
             all_warnings.append(
                 f"⚠️ GIẢM MẠNH 7D ({round(_chg_7d,1)}%) — có thể oversold, "
                 f"cẩn thận SHORT vùng capitulation"
+            )
+
+    # ── PATCH K: Short-term Pump/Dump Filter — 4h price change ──
+    # Patch J chỉ check 7d, mù với pump parabolic trong vài giờ.
+    # Case OPENUSDT 28/04/2026: pump 0.25→0.281 (+12%) trong vài giờ → engine vẫn LONG HIGH.
+    # Block LONG nếu giá tăng >10% trong 4h gần nhất (4 nến H1).
+    # Block SHORT nếu giá giảm >10% trong 4h gần nhất.
+    if len(df_h1) >= 5 and direction in ("LONG", "SHORT"):
+        _price_4h_ago = float(df_h1["close"].iloc[-5])
+        if _price_4h_ago > 0:
+            _chg_4h = (price - _price_4h_ago) / _price_4h_ago * 100
+            if direction == "LONG" and _chg_4h > 10:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 SHORT-TERM PUMP — Giá tăng +{round(_chg_4h,1)}% trong 4h "
+                    f"— parabolic blow-off, không LONG đuổi đỉnh"
+                )
+            elif direction == "SHORT" and _chg_4h < -10:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 SHORT-TERM DUMP — Giá giảm {round(_chg_4h,1)}% trong 4h "
+                    f"— capitulation, không SHORT đuổi đáy"
+                )
+
+    # ── PATCH L: RSI Veto trên H1 ──
+    # Veto cứng: bất kể score cao đến đâu, RSI extreme là cấm entry cùng chiều.
+    # RSI H1 > 75 → cấm LONG (overbought, momentum sắp reversal)
+    # RSI H1 < 25 → cấm SHORT (oversold)
+    if "rsi" in df_h1.columns and direction in ("LONG", "SHORT"):
+        _rsi_h1 = float(df_h1["rsi"].iloc[-1])
+        if direction == "LONG" and _rsi_h1 > 75:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0,
+                f"🚫 RSI VETO — RSI H1 {_rsi_h1:.1f} > 75 (overbought) "
+                f"— cấm LONG dù score cao, chờ RSI reset về <65"
+            )
+        elif direction == "SHORT" and _rsi_h1 < 25:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0,
+                f"🚫 RSI VETO — RSI H1 {_rsi_h1:.1f} < 25 (oversold) "
+                f"— cấm SHORT dù score cao, chờ RSI reset về >35"
+            )
+
+    # ── PATCH M: ATR Expansion Guard ──
+    # ATR H1 đang nở mạnh + giá extended = pump/dump parabolic đang diễn ra.
+    # ATR hiện tại > 2x ATR trung bình 20 nến H1 + giá xa EMA34 H1 > 4%
+    # → block entry cùng chiều với move.
+    if len(df_h1) >= 21 and direction in ("LONG", "SHORT") and ma34_h1 > 0:
+        _atr_avg_h1 = float(df_h1["atr"].iloc[-21:-1].mean())
+        _atr_now_h1 = float(df_h1["atr"].iloc[-1])
+        _dist_ma34_pct = abs((price - ma34_h1) / ma34_h1 * 100)
+        if _atr_avg_h1 > 0 and _atr_now_h1 > _atr_avg_h1 * 2 and _dist_ma34_pct > 4:
+            _atr_ratio = _atr_now_h1 / _atr_avg_h1
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0,
+                f"🚫 ATR EXPANSION — ATR H1 {_atr_ratio:.1f}x baseline + "
+                f"giá cách EMA34 H1 {_dist_ma34_pct:.1f}% — biến động cực mạnh, chờ ATR ổn định"
             )
 
 

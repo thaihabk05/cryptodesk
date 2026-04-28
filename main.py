@@ -130,9 +130,14 @@ scanner_status  = {"is_scanning": False, "last_scan": None,
 def _is_duplicate_signal(result: dict, history: list, window_hours: int = 2) -> bool:
     """
     Kiểm tra signal có phải duplicate không.
-    Duplicate = cùng symbol + direction + entry price tương tự (±1%) trong window_hours.
+    Hai tầng dedup:
+    1. Hard cooldown 30 phút: cùng symbol + direction → dup BẤT KỂ entry price
+       (chống case parabolic pump: 2 entry cách nhau vài phút, giá khác >1% nhưng cùng đỉnh)
+    2. Soft dedup window_hours: cùng symbol + direction + entry ±1% → dup
     """
-    cutoff = time.time() - window_hours * 3600
+    now    = time.time()
+    cutoff = now - window_hours * 3600
+    hard_cutoff = now - 30 * 60  # 30 phút
     sym    = result.get("symbol", "")
     dirr   = result.get("direction", "")
     entry  = float(result.get("entry", 0) or 0)
@@ -144,10 +149,13 @@ def _is_duplicate_signal(result: dict, history: list, window_hours: int = 2) -> 
                 continue
             if h.get("symbol") != sym or h.get("direction") != dirr:
                 continue
-            # Entry price tương tự ±1%
+            # Tầng 1: hard cooldown 30 phút — bất kể entry
+            if ts >= hard_cutoff:
+                return True
+            # Tầng 2: soft dedup ±1% entry trong window_hours
             prev_entry = float(h.get("entry", 0) or 0)
             if prev_entry > 0 and abs(entry - prev_entry) / prev_entry <= 0.01:
-                return True  # duplicate
+                return True
         except:
             continue
     return False

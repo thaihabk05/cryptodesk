@@ -732,6 +732,18 @@ tbody td{padding:11px 12px;vertical-align:middle}
 <div class="page" id="page-position">
   <div style="max-width:680px;margin:0 auto;padding:16px">
 
+    <!-- ── ENTRY ADVISOR — gợi ý LONG/SHORT + điểm vào ── -->
+    <div style="background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:16px 18px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Phân tích vào lệnh mới</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:12px">Hệ thống tự đề xuất LONG/SHORT + entry tối ưu dựa trên TREND + REVERSAL + structure</div>
+
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:10px">
+        <input type="text" id="advSymbol" placeholder="ARBUSDT" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+        <button onclick="runEntryAdvice()" id="advBtn" style="padding:10px 18px;border-radius:var(--border-radius-md);background:#534AB7;border:none;color:white;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap">&#9889; Phân tích</button>
+      </div>
+      <div id="advResults" style="display:none;margin-top:10px"></div>
+    </div>
+
     <div style="background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:16px 18px;margin-bottom:14px">
       <div style="font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em">Thông tin lệnh đang mở</div>
 
@@ -2340,6 +2352,156 @@ function posAnalyze() {
     document.getElementById('posResults').innerHTML =
       '<div style="color:#E24B4A;padding:14px">Lỗi kết nối: '+e.message+'</div>';
   });
+}
+
+// ═══════════════════════════════════════════
+// ENTRY ADVISOR — gợi ý LONG/SHORT + điểm vào
+// ═══════════════════════════════════════════
+function runEntryAdvice() {
+  var sym = (document.getElementById('advSymbol').value || '').trim().toUpperCase();
+  if (!sym) { alert('Nhập symbol (ví dụ: ARBUSDT)'); return; }
+  if (!sym.endsWith('USDT')) sym += 'USDT';
+
+  var btn = document.getElementById('advBtn');
+  btn.disabled = true; btn.textContent = 'Đang phân tích...';
+  document.getElementById('advResults').style.display = '';
+  document.getElementById('advResults').innerHTML =
+    '<div style="text-align:center;padding:20px;color:var(--color-text-secondary);font-size:13px">Đang chạy 3 engine...</div>';
+
+  fetch('/api/entry-advice', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ symbol: sym })
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    btn.disabled = false; btn.textContent = '⚡ Phân tích';
+    if (d.error) {
+      document.getElementById('advResults').innerHTML =
+        '<div style="color:#E24B4A;padding:12px;background:rgba(226,75,74,.1);border-radius:6px;font-size:13px"><b>Lỗi:</b> ' + d.error + '</div>';
+      return;
+    }
+    renderEntryAdvice(d);
+  }).catch(function(e) {
+    btn.disabled = false; btn.textContent = '⚡ Phân tích';
+    document.getElementById('advResults').innerHTML =
+      '<div style="color:#E24B4A;padding:12px">Lỗi: ' + e.message + '</div>';
+  });
+}
+
+function renderEntryAdvice(d) {
+  var fmtP = function(v) {
+    if (v === null || v === undefined) return '--';
+    var n = Math.abs(parseFloat(v));
+    if (n === 0) return '0';
+    if (n < 0.0001) return parseFloat(v).toFixed(7);
+    if (n < 0.01)  return parseFloat(v).toFixed(5);
+    if (n < 1)     return parseFloat(v).toFixed(4);
+    return parseFloat(v).toFixed(2);
+  };
+
+  var dirColors = {
+    'LONG':  {bg:'rgba(29,158,117,.12)', border:'#1D9E75', text:'#0F6E56'},
+    'SHORT': {bg:'rgba(226,75,74,.12)',  border:'#E24B4A', text:'#A32D2D'},
+    'WAIT':  {bg:'rgba(186,117,23,.12)', border:'#BA7517', text:'#633806'}
+  };
+  var dc = dirColors[d.direction] || dirColors.WAIT;
+
+  var setupLabels = {
+    'TREND_CONTINUATION': 'TREND tiếp diễn',
+    'TREND_PULLBACK':     'TREND pullback',
+    'FADE_BOUNCE':        'Fade bounce sau pump-and-dump',
+    'REVERSAL':           'Reversal tại MA major',
+    'NO_SETUP':           'Không có setup'
+  };
+
+  var confColors = { 'HIGH':'#1D9E75', 'MEDIUM':'#BA7517', 'LOW':'#888780' };
+
+  var qualityHtml = '';
+  if (d.quality) {
+    var qColors = { 'EXCELLENT':'#1D9E75', 'OK':'#378ADD', 'POOR_RR':'#E24B4A' };
+    var qLabels = { 'EXCELLENT':'⭐ Setup tốt', 'OK':'OK', 'POOR_RR':'⚠️ R:R thấp' };
+    var qc = qColors[d.quality] || '#888780';
+    qualityHtml = '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:'+qc+'22;color:'+qc+';margin-left:6px">' +
+      (qLabels[d.quality] || d.quality) + '</span>';
+  }
+
+  // Reasoning bullets
+  var reasonHtml = (d.reasoning || []).map(function(r){
+    return '<div style="display:flex;gap:6px;padding:4px 0;font-size:12px;color:var(--color-text-secondary);line-height:1.5">' +
+      '<span style="color:'+dc.border+';flex-shrink:0">•</span>' +
+      '<span>' + r + '</span>' +
+    '</div>';
+  }).join('');
+
+  // Engine breakdown
+  var engineHtml = '';
+  if (d.trend_engine || d.reversal_engine) {
+    engineHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">';
+    if (d.trend_engine) {
+      var te = d.trend_engine;
+      var tc = confColors[te.confidence] || '#888780';
+      engineHtml += '<div style="background:var(--color-background-secondary);border-radius:6px;padding:8px 10px">' +
+        '<div style="font-size:10px;color:var(--color-text-secondary);text-transform:uppercase">TREND engine</div>' +
+        '<div style="font-size:12px;font-weight:500"><span style="color:' + (te.direction==='LONG'?'#1D9E75':te.direction==='SHORT'?'#E24B4A':'#BA7517') + '">' + te.direction + '</span> · <span style="color:'+tc+'">' + te.confidence + '</span> · score ' + te.score + '</div>' +
+      '</div>';
+    }
+    if (d.reversal_engine) {
+      var re = d.reversal_engine;
+      var rc = confColors[re.confidence] || '#888780';
+      engineHtml += '<div style="background:var(--color-background-secondary);border-radius:6px;padding:8px 10px">' +
+        '<div style="font-size:10px;color:var(--color-text-secondary);text-transform:uppercase">REVERSAL engine</div>' +
+        '<div style="font-size:12px;font-weight:500"><span style="color:' + (re.direction==='LONG'?'#1D9E75':re.direction==='SHORT'?'#E24B4A':'#BA7517') + '">' + re.direction + '</span> · <span style="color:'+rc+'">' + re.confidence + '</span> · score ' + re.score + '</div>' +
+      '</div>';
+    }
+    engineHtml += '</div>';
+  }
+
+  // Setup levels — entry/SL/TP/RR
+  var setupHtml = '';
+  if (d.direction !== 'WAIT' && d.entry_price) {
+    var rrCol = (d.rr >= 2.5) ? '#1D9E75' : (d.rr >= 1.5) ? '#378ADD' : '#E24B4A';
+    setupHtml =
+      '<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px 14px;margin-bottom:10px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+          '<div style="font-size:11px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.04em">Trade Setup</div>' +
+          '<div style="font-size:13px;font-weight:600;color:'+rrCol+'">R:R 1:' + (d.rr || 0) + '</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;font-size:12px">' +
+          '<div><div style="color:var(--color-text-secondary);font-size:10px">Entry (' + (d.entry_strategy||'?') + ')</div><div style="font-size:14px;font-weight:600;color:'+dc.border+'">$' + fmtP(d.entry_price) + '</div></div>' +
+          '<div><div style="color:var(--color-text-secondary);font-size:10px">Stop Loss</div><div style="font-size:14px;font-weight:600;color:#E24B4A">$' + fmtP(d.sl) + '</div></div>' +
+          '<div><div style="color:var(--color-text-secondary);font-size:10px">TP1</div><div style="font-size:14px;font-weight:600;color:#1D9E75">$' + fmtP(d.tp1) + '</div></div>' +
+          '<div><div style="color:var(--color-text-secondary);font-size:10px">TP2</div><div style="font-size:14px;font-weight:600;color:#534AB7">$' + fmtP(d.tp2) + '</div></div>' +
+        '</div>' +
+        (d.invalidation ? '<div style="margin-top:8px;padding-top:8px;border-top:0.5px solid var(--color-border-tertiary);font-size:11px;color:var(--color-text-secondary)">Invalidation: <span style="color:#E24B4A;font-weight:500">$' + fmtP(d.invalidation) + '</span> — nếu giá phá level này, setup không còn hợp lệ</div>' : '') +
+      '</div>';
+  }
+
+  // Context strip
+  var ctx = d.context || {};
+  var ctxHtml = '<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:10px;padding:6px 10px;background:var(--color-background-secondary);border-radius:6px">' +
+    'Recent: drop ' + (ctx.recent_drop_pct || 0) + '% / pump ' + (ctx.recent_pump_pct || 0) + '% · bounce vol ' + (ctx.bounce_vol_avg || 0) + 'x · ATR H1 $' + fmtP(d.atr_h1) +
+    '</div>';
+
+  document.getElementById('advResults').innerHTML =
+    '<div style="background:' + dc.bg + ';border:1.5px solid ' + dc.border + ';border-radius:var(--border-radius-lg);padding:14px 16px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">' +
+        '<div>' +
+          '<div style="font-size:11px;font-weight:500;color:' + dc.text + ';text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">' + (d.symbol||'') + ' — ' + (setupLabels[d.setup_type]||d.setup_type) + '</div>' +
+          '<div style="font-size:22px;font-weight:700;color:' + dc.border + '">' + d.direction +
+            (d.confidence ? ' <span style="font-size:13px;font-weight:500;color:'+(confColors[d.confidence]||'#888780')+'">[' + d.confidence + ']</span>' : '') +
+            qualityHtml +
+          '</div>' +
+        '</div>' +
+        '<div style="text-align:right">' +
+          '<div style="font-size:11px;color:var(--color-text-secondary)">Giá hiện tại</div>' +
+          '<div style="font-size:16px;font-weight:600">$' + fmtP(d.current_price) + '</div>' +
+        '</div>' +
+      '</div>' +
+      ctxHtml +
+      engineHtml +
+      setupHtml +
+      '<div style="font-size:11px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Reasoning</div>' +
+      reasonHtml +
+    '</div>';
 }
 
 // ═══════════════════════════════════════════

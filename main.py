@@ -2047,6 +2047,299 @@ def position_analyze():
         return jsonify({"error": str(e), "trace": traceback.format_exc()[-600:]}), 500
 
 
+@app.route("/api/entry-advice", methods=["POST"])
+def entry_advice():
+    """
+    Gợi ý LONG/SHORT + điểm vào tối ưu cho 1 symbol.
+    Tổng hợp: TREND engine + REVERSAL engine + reversal signals + swing levels +
+    fade-bounce detection + structure analysis. Trả về 1 setup hoàn chỉnh
+    (entry strategy LIMIT/MARKET, SL, TP1, TP2, R:R, invalidation, reasoning).
+
+    Input: { symbol, risk_pct? (default 1.5) }
+    """
+    try:
+        from core.binance import fetch_klines
+        from core.indicators import prepare
+        from dashboard.fam_engine      import fam_analyze
+        from dashboard.reversal_engine import reversal_analyze
+
+        def _fmt(v):
+            if v is None: return None
+            n = abs(float(v))
+            d = 8 if n < 0.000001 else 6 if n < 0.0001 else 5 if n < 0.01 else 4 if n < 1 else 2
+            return round(float(v), d)
+
+        data     = request.json or {}
+        symbol   = (data.get("symbol", "") or "").upper().strip()
+        if not symbol:
+            return jsonify({"error": "Thiếu symbol"}), 400
+        if not symbol.endswith("USDT"):
+            symbol += "USDT"
+
+        # ── Fetch data ──
+        df_h4  = prepare(fetch_klines(symbol, "4h",  100, force_futures=True))
+        df_h1  = prepare(fetch_klines(symbol, "1h",  150, force_futures=True))
+
+        if len(df_h1) < 30 or len(df_h4) < 10:
+            return jsonify({"error": f"Không đủ data cho {symbol}"}), 400
+
+        price     = float(df_h1["close"].iloc[-1])
+        atr_h1    = float(df_h1["atr"].iloc[-1])
+        ema34_h1  = float(df_h1["ma34"].iloc[-1])
+        ema89_h1  = float(df_h1["ma89"].iloc[-1])
+        ema200_h1 = float(df_h1["ma200"].iloc[-1])
+        ema34_h4  = float(df_h4["ma34"].iloc[-1])
+        ema89_h4  = float(df_h4["ma89"].iloc[-1])
+
+        # ── Run engines ──
+        eng_cfg = {"force_futures": True, "rr_ratio": 1.0}
+        try:
+            trend = fam_analyze(symbol, eng_cfg)
+        except Exception as _te:
+            trend = {"direction": "WAIT", "confidence": "LOW", "score": 0, "warnings": [f"TREND error: {str(_te)[:80]}"]}
+        try:
+            rev = reversal_analyze(symbol, eng_cfg)
+        except Exception:
+            rev = {"direction": "WAIT", "confidence": "LOW", "score": 0}
+
+        # ── Context: pump/dump pattern recent ──
+        recent_high_10 = float(df_h1["high"].iloc[-10:].max())
+        recent_low_10  = float(df_h1["low"].iloc[-10:].min())
+        recent_drop_pct = (recent_high_10 - price) / recent_high_10 * 100  # >5 = vừa drop từ high
+        recent_pump_pct = (price - recent_low_10) / recent_low_10 * 100    # >5 = vừa pump từ low
+
+        # Bounce volume yếu (3 nến gần)
+        bounce_vol_avg = float(df_h1["vol_ratio"].iloc[-3:].mean()) if "vol_ratio" in df_h1.columns else 1.0
+
+        # Đỉnh đã hình thành chưa? (giá đã cách đỉnh > 2%)
+        peak_made     = recent_drop_pct > 2
+        bottom_made   = recent_pump_pct > 2
+
+        # FADE BOUNCE patterns
+        fade_short = (recent_drop_pct >= 4 and peak_made and bounce_vol_avg < 0.8)
+        fade_long  = (recent_pump_pct >= 4 and bottom_made and bounce_vol_avg < 0.8 and price < ema34_h1)
+
+        # ── Swing levels for entry/SL/TP ──
+        swing_high_5  = float(df_h1["high"].iloc[-5:].max())
+        swing_low_5   = float(df_h1["low"].iloc[-5:].min())
+        swing_high_20 = float(df_h1["high"].iloc[-20:].max())
+        swing_low_20  = float(df_h1["low"].iloc[-20:].min())
+
+        # ── DECISION TREE ──
+        decision      = None
+        reasoning     = []
+
+        trend_dir   = (trend.get("direction") or "WAIT").upper()
+        trend_conf  = (trend.get("confidence") or "LOW").upper()
+        trend_score = int(trend.get("score") or 0)
+        rev_dir     = (rev.get("direction") or "WAIT").upper()
+        rev_conf    = (rev.get("confidence") or "LOW").upper()
+        rev_score   = int(rev.get("score") or 0)
+
+        # Priority 1: TREND HIGH aligned
+        if trend_conf == "HIGH" and trend_dir in ("LONG", "SHORT"):
+            decision = {
+                "direction":  trend_dir,
+                "setup_type": "TREND_CONTINUATION",
+                "confidence": "HIGH",
+            }
+            reasoning = [
+                f"TREND engine HIGH (score {trend_score})",
+                f"D1 {(trend.get('d1') or {}).get('bias','?')} / H4 {(trend.get('h4') or {}).get('bias','?')} — multi-TF aligned",
+            ]
+            for c in (trend.get("conditions") or [])[:3]:
+                reasoning.append(c)
+
+        # Priority 2: FADE BOUNCE (sau pump-and-dump)
+        elif fade_short:
+            decision = {
+                "direction":  "SHORT",
+                "setup_type": "FADE_BOUNCE",
+                "confidence": "MEDIUM",
+            }
+            reasoning = [
+                f"Vừa drop {recent_drop_pct:.1f}% từ đỉnh {_fmt(recent_high_10)} (10h gần)",
+                f"Bounce volume yếu ({bounce_vol_avg:.2f}x baseline) — không có lực cầu thật",
+                f"Cấu trúc bearish chưa break — fade ở vùng resistance {_fmt(swing_high_5)}",
+            ]
+            if trend_dir == "SHORT": reasoning.append(f"TREND engine cũng SHORT ({trend_conf}) — confluence")
+        elif fade_long:
+            decision = {
+                "direction":  "LONG",
+                "setup_type": "FADE_BOUNCE",
+                "confidence": "MEDIUM",
+            }
+            reasoning = [
+                f"Vừa pump {recent_pump_pct:.1f}% từ đáy {_fmt(recent_low_10)} (10h gần)",
+                f"Pullback volume yếu ({bounce_vol_avg:.2f}x) — sellers exhausting",
+                f"Long ở vùng support {_fmt(swing_low_5)}",
+            ]
+
+        # Priority 3: REVERSAL HIGH
+        elif rev_conf == "HIGH" and rev_dir in ("LONG", "SHORT"):
+            decision = {
+                "direction":  rev_dir,
+                "setup_type": "REVERSAL",
+                "confidence": "HIGH",
+            }
+            reasoning = [f"REVERSAL engine HIGH (score {rev_score})"] + [str(c) for c in (rev.get("conditions") or [])[:3]]
+
+        # Priority 4: TREND MEDIUM
+        elif trend_conf == "MEDIUM" and trend_dir in ("LONG", "SHORT"):
+            decision = {
+                "direction":  trend_dir,
+                "setup_type": "TREND_PULLBACK",
+                "confidence": "MEDIUM",
+            }
+            reasoning = [
+                f"TREND MEDIUM ({trend_score}/5)",
+                f"Chờ pullback về vùng entry tốt — không market ngay",
+            ]
+
+        # No setup
+        else:
+            decision = {
+                "direction":  "WAIT",
+                "setup_type": "NO_SETUP",
+                "confidence": "LOW",
+            }
+            reasoning = [
+                "Không có setup rõ ràng tại thời điểm này",
+                f"TREND: {trend_dir}/{trend_conf} (score {trend_score})",
+                f"REVERSAL: {rev_dir}/{rev_conf} (score {rev_score})",
+                f"Recent move: {recent_drop_pct:.1f}% drop / {recent_pump_pct:.1f}% pump",
+            ]
+
+        # ── Compute entry / SL / TP based on direction + setup_type ──
+        result = {
+            "symbol":        symbol,
+            "current_price": _fmt(price),
+            "ema34_h1":      _fmt(ema34_h1),
+            "ema89_h1":      _fmt(ema89_h1),
+            "ema200_h1":     _fmt(ema200_h1),
+            "atr_h1":        _fmt(atr_h1),
+            "swing_high_20": _fmt(swing_high_20),
+            "swing_low_20":  _fmt(swing_low_20),
+            "trend_engine": {
+                "direction":  trend_dir,
+                "confidence": trend_conf,
+                "score":      trend_score,
+                "warnings":   [str(w) for w in (trend.get("warnings") or [])[:5]],
+            },
+            "reversal_engine": {
+                "direction":  rev_dir,
+                "confidence": rev_conf,
+                "score":      rev_score,
+            },
+            "context": {
+                "recent_drop_pct":  round(recent_drop_pct, 2),
+                "recent_pump_pct":  round(recent_pump_pct, 2),
+                "bounce_vol_avg":   round(bounce_vol_avg, 2),
+                "fade_short":       fade_short,
+                "fade_long":        fade_long,
+            },
+            "reasoning":     reasoning,
+            **decision,
+            "entry_strategy": None,
+            "entry_price":    None,
+            "sl":             None,
+            "tp1":            None,
+            "tp2":            None,
+            "rr":             None,
+            "invalidation":   None,
+        }
+
+        if decision["direction"] in ("LONG", "SHORT"):
+            is_long  = decision["direction"] == "LONG"
+            stype    = decision["setup_type"]
+            entry_price = price
+            entry_strategy = "MARKET"
+            sl = tp1 = tp2 = invalidation = None
+
+            if stype == "FADE_BOUNCE":
+                # SHORT: limit ở vùng resistance gần (swing_high_5 hoặc EMA34/89 H1)
+                # LONG: limit ở vùng support gần
+                if is_long:
+                    candidates = [c for c in [ema34_h1, ema89_h1, swing_low_5 * 1.005] if c < price * 0.998]
+                    entry_price = max(candidates) if candidates else price
+                    sl  = min(swing_low_20 * 0.997, entry_price - atr_h1 * 1.5)
+                    tp1 = swing_high_5 * 0.998 if swing_high_5 > entry_price * 1.01 else entry_price + atr_h1 * 3
+                    tp2 = tp1 + (tp1 - entry_price) * 0.8
+                    invalidation = swing_low_20 * 0.995
+                else:
+                    candidates = [c for c in [ema34_h1, ema89_h1, swing_high_5 * 0.995] if c > price * 1.002]
+                    entry_price = min(candidates) if candidates else price
+                    sl  = max(swing_high_20 * 1.003, entry_price + atr_h1 * 1.5)
+                    tp1 = swing_low_5 * 1.002 if swing_low_5 < entry_price * 0.99 else entry_price - atr_h1 * 3
+                    tp2 = tp1 - (entry_price - tp1) * 0.8
+                    invalidation = swing_high_20 * 1.005
+                entry_strategy = "LIMIT" if abs(entry_price - price) / price > 0.003 else "MARKET"
+
+            elif stype in ("TREND_CONTINUATION", "TREND_PULLBACK"):
+                if is_long:
+                    if price > ema34_h1 * 1.012:
+                        entry_price = ema34_h1 * 1.003
+                        entry_strategy = "LIMIT"
+                    sl  = min(ema89_h1 * 0.997, entry_price - atr_h1 * 1.5)
+                    tp1 = swing_high_20 * 0.998
+                    if tp1 < entry_price * 1.015: tp1 = entry_price + atr_h1 * 3
+                    tp2 = entry_price + (entry_price - sl) * 2.5
+                    invalidation = ema89_h1 * 0.995
+                else:
+                    if price < ema34_h1 * 0.988:
+                        entry_price = ema34_h1 * 0.997
+                        entry_strategy = "LIMIT"
+                    sl  = max(ema89_h1 * 1.003, entry_price + atr_h1 * 1.5)
+                    tp1 = swing_low_20 * 1.002
+                    if tp1 > entry_price * 0.985: tp1 = entry_price - atr_h1 * 3
+                    tp2 = entry_price - (sl - entry_price) * 2.5
+                    invalidation = ema89_h1 * 1.005
+
+            elif stype == "REVERSAL":
+                # Sử dụng SL/TP từ reversal engine
+                sl   = float(rev.get("sl")  or 0) or (price * (0.98 if is_long else 1.02))
+                tp1  = float(rev.get("tp1") or 0) or (price * (1.02 if is_long else 0.98))
+                tp2  = float(rev.get("tp2") or 0) or (price * (1.04 if is_long else 0.96))
+                invalidation = sl
+
+            # Compute R:R
+            if entry_price and sl and tp1:
+                if is_long:
+                    risk   = entry_price - sl
+                    reward = tp1 - entry_price
+                else:
+                    risk   = sl - entry_price
+                    reward = entry_price - tp1
+                rr = round(reward / risk, 2) if risk > 0 else 0
+            else:
+                rr = 0
+
+            # Sanity: nếu R:R < 1.2 thì cấu hình entry/SL có vấn đề → flag
+            quality = "OK"
+            if rr < 1.2:
+                quality = "POOR_RR"
+                reasoning.append(f"⚠️ R:R thấp ({rr}) — setup này entry-SL chưa tối ưu, cân nhắc chờ giá về vùng tốt hơn")
+            elif rr >= 2.5:
+                quality = "EXCELLENT"
+
+            result.update({
+                "entry_strategy": entry_strategy,
+                "entry_price":    _fmt(entry_price),
+                "sl":             _fmt(sl),
+                "tp1":            _fmt(tp1),
+                "tp2":            _fmt(tp2),
+                "rr":             rr,
+                "invalidation":   _fmt(invalidation),
+                "quality":        quality,
+            })
+
+        result["generated_at"] = _local_isoformat()
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()[-500:]}), 500
+
 
 @app.route("/api/btc/trend")
 def btc_trend():

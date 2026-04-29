@@ -574,6 +574,80 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
                 f"giá cách EMA34 H1 {_dist_ma34_pct:.1f}% — biến động cực mạnh, chờ ATR ổn định"
             )
 
+    # ── PATCH N: 24h Extreme Proximity Guard ──
+    # Chasing đỉnh/đáy 24h là setup R:R xấu — giá thường bounce/reject ở extreme.
+    # LONG: giá cách 24h HIGH < 2% → block (chasing top)
+    # SHORT: giá cách 24h LOW < 2% → block (chasing bottom)
+    # Case HUMAUSDT 29/04/2026: SHORT entry 0.0209 sát đáy 24h 0.020718 (~0.4%)
+    # → cấu trúc đúng nhưng timing sai, dễ bounce trước khi reach TP1.
+    if len(df_h1) >= 24 and direction in ("LONG", "SHORT"):
+        _high_24h = float(df_h1["high"].iloc[-24:].max())
+        _low_24h  = float(df_h1["low"].iloc[-24:].min())
+        if direction == "LONG" and _high_24h > 0:
+            _dist_high_pct = (_high_24h - price) / price * 100
+            if _dist_high_pct < 2:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 CHASING TOP — Giá {price:.6f} sát đỉnh 24h {_high_24h:.6f} "
+                    f"({_dist_high_pct:.1f}% cách) — chờ pullback rồi vào lại"
+                )
+        elif direction == "SHORT" and _low_24h > 0:
+            _dist_low_pct = (price - _low_24h) / price * 100
+            if _dist_low_pct < 2:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 CHASING BOTTOM — Giá {price:.6f} sát đáy 24h {_low_24h:.6f} "
+                    f"({_dist_low_pct:.1f}% cách) — chờ bounce rồi short lại tốt hơn"
+                )
+
+    # ── PATCH O: TP1 Cushion vs EMA200 H4 ──
+    # EMA200 H4 là support/resistance động cực mạnh. Nếu entry quá gần EMA200
+    # thì TP1 không đủ chỗ thở — giá thường bounce/reject ở EMA200 trước khi
+    # reach TP1, và setup R:R thực tế tệ hơn engine tính.
+    # SHORT: nếu entry cách EMA200 H4 (phía dưới) < 8% → giảm confidence
+    #        nếu < 4% → block (TP1 gần như sát EMA200 = vô nghĩa)
+    # LONG (mirror): nếu entry cách EMA200 H4 (phía trên) < 8% → giảm
+    #               nếu < 4% → block
+    try:
+        _ma200_h4 = float(row_h4["ma200"])
+    except Exception:
+        _ma200_h4 = 0
+    if _ma200_h4 > 0 and direction in ("LONG", "SHORT"):
+        if direction == "SHORT" and price > _ma200_h4:
+            _cushion_pct = (price - _ma200_h4) / price * 100
+            if _cushion_pct < 4:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 SHORT QUÁ GẦN EMA200 H4 — entry cách EMA200 H4 ({_ma200_h4:.6f}) "
+                    f"chỉ {_cushion_pct:.1f}% — TP1 không đủ chỗ thở, EMA200 sẽ đỡ giá"
+                )
+            elif _cushion_pct < 8:
+                if confidence == "HIGH":
+                    confidence = "MEDIUM"
+                all_warnings.append(
+                    f"⚠️ SHORT cách EMA200 H4 {_cushion_pct:.1f}% — gần support động, "
+                    f"cẩn thận bounce. Đã hạ confidence."
+                )
+        elif direction == "LONG" and price < _ma200_h4:
+            _cushion_pct = (_ma200_h4 - price) / price * 100
+            if _cushion_pct < 4:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 LONG QUÁ GẦN EMA200 H4 — entry cách EMA200 H4 ({_ma200_h4:.6f}) "
+                    f"chỉ {_cushion_pct:.1f}% — TP1 không đủ chỗ thở, EMA200 sẽ đè giá"
+                )
+            elif _cushion_pct < 8:
+                if confidence == "HIGH":
+                    confidence = "MEDIUM"
+                all_warnings.append(
+                    f"⚠️ LONG cách EMA200 H4 {_cushion_pct:.1f}% — gần resistance động, "
+                    f"cẩn thận rejection. Đã hạ confidence."
+                )
+
 
     total_adj = funding_score_adj + atr_score_adj + weekly_score_adj
     if total_adj <= -2 and confidence != "LOW":

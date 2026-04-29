@@ -119,7 +119,8 @@ def reversal_analyze(symbol: str, cfg: dict) -> dict:
     """Phân tích Mean Reversion signal."""
     ff = bool(cfg.get("force_futures", False))
 
-    # Fetch data: H1 chính, M15 cho entry
+    # Fetch data: H4 cho trend filter, H1 chính, M15 cho entry
+    df_h4  = prepare(fetch_klines(symbol, "4h",  100, force_futures=ff))
     df_h1  = prepare(fetch_klines(symbol, "1h",  150, force_futures=ff))
     df_m15 = prepare(fetch_klines(symbol, "15m", 100, force_futures=ff))
 
@@ -269,6 +270,134 @@ def reversal_analyze(symbol: str, cfg: dict) -> dict:
         direction = "WAIT"
         confidence = "LOW"
         warnings.append("🚫 BTC DUMP — không reversal LONG khi BTC đang rơi mạnh")
+
+    # ════════════════════════════════════════════════════════════════
+    # REV-PATCHES — Smart filters cho REVERSAL
+    # Case ARBUSDT 29/04/2026: SHORT signals fire liên tục lúc 13:17,
+    # 13:37, ... khi giá đang BREAKOUT từ 0.126 → 0.132. Engine đọc
+    # nhầm "giá chạm EMA89/200 từ dưới" thành rejection thay vì breakout.
+    # ════════════════════════════════════════════════════════════════
+
+    # ── REV-1' Smart: H4 Trend Conflict Block ──
+    # Block reversal đi NGƯỢC H4 trend khi giá CHƯA extended.
+    # Cho phép khi giá đã extended >5% từ MA34 H4 (vùng blow-off — fade tốt).
+    if direction in ("LONG", "SHORT") and len(df_h4) >= 5:
+        try:
+            row_h4   = df_h4.iloc[-1]
+            ma34_h4  = float(row_h4.get("ma34") or 0)
+            ma89_h4  = float(row_h4.get("ma89") or 0)
+            slope_h4 = ma_slope(df_h4["ma34"], n=3) if "ma34" in df_h4.columns else "FLAT"
+            h4_close = float(row_h4["close"])
+
+            h4_strong_bull = (ma34_h4 > 0 and ma89_h4 > 0 and
+                              h4_close > ma34_h4 > ma89_h4 and slope_h4 == "UP")
+            h4_strong_bear = (ma34_h4 > 0 and ma89_h4 > 0 and
+                              h4_close < ma34_h4 < ma89_h4 and slope_h4 == "DOWN")
+
+            # Đo khoảng cách giá hiện tại tới MA34 H4 (% extended)
+            dist_pct = (price - ma34_h4) / ma34_h4 * 100 if ma34_h4 > 0 else 0
+
+            if direction == "SHORT" and h4_strong_bull and dist_pct < 5:
+                # Đang fade trend mạnh, chưa extended → block
+                direction  = "WAIT"
+                confidence = "LOW"
+                warnings.append(
+                    f"🚫 REV-1: H4 BULL mạnh + giá chưa extended ({dist_pct:+.1f}% vs MA34 H4) "
+                    f"— không SHORT fade trend đang lên"
+                )
+            elif direction == "LONG" and h4_strong_bear and dist_pct > -5:
+                direction  = "WAIT"
+                confidence = "LOW"
+                warnings.append(
+                    f"🚫 REV-1: H4 BEAR mạnh + giá chưa extended ({dist_pct:+.1f}% vs MA34 H4) "
+                    f"— không LONG fade trend đang xuống"
+                )
+        except Exception as _e1:
+            pass
+
+    # ── REV-2' Smart: Active Breakout Block ──
+    # Block SHORT trong nến break high đầu tiên với volume cao.
+    # Cho phép sau khi có ≥2 nến đóng dưới breakout level (failed breakout).
+    if direction in ("LONG", "SHORT") and len(df_h1) >= 22:
+        try:
+            high20_prev = float(df_h1["high"].iloc[-22:-2].max())
+            low20_prev  = float(df_h1["low"].iloc[-22:-2].min())
+            cur_high    = float(df_h1["high"].iloc[-1])
+            cur_low     = float(df_h1["low"].iloc[-1])
+            cur_close   = float(df_h1["close"].iloc[-1])
+            prev_close  = float(df_h1["close"].iloc[-2])
+            cur_vol_r   = float(df_h1["vol_ratio"].iloc[-1]) if "vol_ratio" in df_h1.columns else 1.0
+
+            # Breakout UP: nến hiện tại make new HH
+            broke_up   = cur_high > high20_prev * 1.002 and cur_vol_r > 1.5
+            # Failed up: 2 nến đóng dưới breakout level
+            failed_up  = cur_close < high20_prev and prev_close < high20_prev
+
+            broke_dn   = cur_low < low20_prev * 0.998 and cur_vol_r > 1.5
+            failed_dn  = cur_close > low20_prev and prev_close > low20_prev
+
+            if direction == "SHORT" and broke_up and not failed_up:
+                direction  = "WAIT"
+                confidence = "LOW"
+                warnings.append(
+                    f"🚫 REV-2: Active breakout UP (high {cur_high:.6f} > {high20_prev:.6f}, "
+                    f"vol {cur_vol_r:.1f}x) — không SHORT trong nến break, chờ confirm fail"
+                )
+            elif direction == "LONG" and broke_dn and not failed_dn:
+                direction  = "WAIT"
+                confidence = "LOW"
+                warnings.append(
+                    f"🚫 REV-2: Active breakout DOWN (low {cur_low:.6f} < {low20_prev:.6f}, "
+                    f"vol {cur_vol_r:.1f}x) — không LONG trong nến break, chờ confirm bounce"
+                )
+        except Exception as _e2:
+            pass
+
+    # ── REV-3: Volume Confirmation cho Pin Bar ──
+    # Pin bar reversal chỉ đáng tin khi có volume confirm. Vol < 1.2x
+    # baseline = pin bar có thể là noise, hạ confidence một bậc.
+    if direction in ("LONG", "SHORT") and confidence in ("HIGH", "MEDIUM"):
+        try:
+            cur_vol_r = float(df_h1["vol_ratio"].iloc[-1]) if "vol_ratio" in df_h1.columns else 1.0
+            had_pin   = (direction == "LONG" and is_pin) or (direction == "SHORT" and is_pin_s)
+            if had_pin and cur_vol_r < 1.2:
+                if confidence == "HIGH":
+                    confidence = "MEDIUM"
+                elif confidence == "MEDIUM":
+                    confidence = "LOW"
+                warnings.append(
+                    f"⚠️ REV-3: Pin bar volume thấp ({cur_vol_r:.2f}x < 1.2x) — "
+                    f"có thể là noise, hạ confidence"
+                )
+        except Exception as _e3:
+            pass
+
+    # ── REV-4' Smart: MEDIUM Gating với 2/3 Strong Conditions ──
+    # MEDIUM REVERSAL (score 3-4) phải có ≥2 trong 3 điều kiện mạnh:
+    #   1. RSI extreme (>75 SHORT / <25 LONG)
+    #   2. Pin bar strength > 0.7
+    #   3. Taker confirm mạnh (>1.4x cho LONG / <0.7x cho SHORT)
+    # Nếu không đủ → hạ MEDIUM xuống LOW.
+    if direction in ("LONG", "SHORT") and confidence == "MEDIUM":
+        strong_count = 0
+        try:
+            if direction == "SHORT":
+                if rsi_h1 > 75: strong_count += 1
+                if is_pin_s and pin_str_s > 0.7: strong_count += 1
+                if taker and taker.get("buy_ratio", 1.0) < 0.7: strong_count += 1
+            else:
+                if rsi_h1 < 25: strong_count += 1
+                if is_pin and pin_str > 0.7: strong_count += 1
+                if taker and taker.get("buy_ratio", 1.0) > 1.4: strong_count += 1
+        except Exception:
+            pass
+
+        if strong_count < 2:
+            confidence = "LOW"
+            warnings.append(
+                f"⚠️ REV-4: MEDIUM reversal nhưng chỉ có {strong_count}/3 điều kiện mạnh "
+                f"— hạ xuống LOW (cần RSI extreme/pin strong/taker confirm)"
+            )
 
     # ────────────────────────────────────────
     # SL / TP — Reversal style

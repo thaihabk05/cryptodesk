@@ -130,16 +130,21 @@ scanner_status  = {"is_scanning": False, "last_scan": None,
 def _is_duplicate_signal(result: dict, history: list, window_hours: int = 2) -> bool:
     """
     Kiểm tra signal có phải duplicate không.
-    Hai tầng dedup:
-    1. Hard cooldown 30 phút: cùng symbol + direction → dup BẤT KỂ entry price
+    Ba tầng dedup:
+    1. REVERSAL hard cooldown 60 phút: REVERSAL setup cần thời gian nến confirm,
+       fire dồn dập là dấu hiệu engine đọc nhầm trend (case ARBUSDT 29/04/2026)
+    2. Hard cooldown 30 phút: cùng symbol + direction → dup BẤT KỂ entry price
        (chống case parabolic pump: 2 entry cách nhau vài phút, giá khác >1% nhưng cùng đỉnh)
-    2. Soft dedup window_hours: cùng symbol + direction + entry ±1% → dup
+    3. Soft dedup window_hours: cùng symbol + direction + entry ±1% → dup
     """
     now    = time.time()
     cutoff = now - window_hours * 3600
-    hard_cutoff = now - 30 * 60  # 30 phút
+    hard_cutoff    = now - 30 * 60   # 30 phút (default)
+    rev_cutoff     = now - 60 * 60   # 60 phút (REVERSAL)
     sym    = result.get("symbol", "")
     dirr   = result.get("direction", "")
+    strat  = (result.get("strategy") or result.get("algo") or "").upper()
+    is_rev = strat == "REVERSAL"
     entry  = float(result.get("entry", 0) or 0)
 
     for h in history[-100:]:
@@ -149,10 +154,14 @@ def _is_duplicate_signal(result: dict, history: list, window_hours: int = 2) -> 
                 continue
             if h.get("symbol") != sym or h.get("direction") != dirr:
                 continue
-            # Tầng 1: hard cooldown 30 phút — bất kể entry
+            h_strat = (h.get("strategy") or h.get("algo") or "").upper()
+            # Tầng 1: REVERSAL cooldown 60 phút — chỉ áp khi cả 2 đều REVERSAL
+            if is_rev and h_strat == "REVERSAL" and ts >= rev_cutoff:
+                return True
+            # Tầng 2: hard cooldown 30 phút — bất kể entry, mọi strategy
             if ts >= hard_cutoff:
                 return True
-            # Tầng 2: soft dedup ±1% entry trong window_hours
+            # Tầng 3: soft dedup ±1% entry trong window_hours
             prev_entry = float(h.get("entry", 0) or 0)
             if prev_entry > 0 and abs(entry - prev_entry) / prev_entry <= 0.01:
                 return True

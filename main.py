@@ -1396,7 +1396,8 @@ def position_analyze():
 
         if symbol:
             try:
-                df_coin = fetch_klines(symbol, "1h", 10, force_futures=True)
+                # Fetch 50 nến H1 + prepare để có RSI, ATR, vol_ratio cho reversal detection
+                df_coin = prepare(fetch_klines(symbol, "1h", 50, force_futures=True))
                 coin_price  = float(df_coin["close"].iloc[-1])
                 coin_prev   = float(df_coin["close"].iloc[-2])
                 coin_chg_1h = round((coin_price - coin_prev) / coin_prev * 100, 3)
@@ -1669,12 +1670,127 @@ def position_analyze():
                         broke_eng_sl = coin_price >= eng_sl_f
                         near_eng_sl  = (eng_sl_f - coin_price) / coin_price < 0.01 and coin_price < eng_sl_f
 
-                # Logic phân loại
+                # ═══════════════════════════════════════════════════════
+                # REVERSAL SIGNALS — đo momentum exhaustion theo direction
+                # 3 tín hiệu độc lập, count → quyết định mức độ cảnh báo
+                # ═══════════════════════════════════════════════════════
+                vol_exhaustion  = False
+                rsi_divergence  = False
+                oi_shift_against = False
+                rev_detail      = []
+
+                try:
+                    # 1. Volume exhaustion: 2/3 nến gần nhất cùng chiều move với vol < 0.8x
+                    if "vol_ratio" in df_coin.columns and len(df_coin) >= 3:
+                        weak_count = 0
+                        for i in range(-3, 0):
+                            o = float(df_coin["open"].iloc[i])
+                            c = float(df_coin["close"].iloc[i])
+                            v = float(df_coin["vol_ratio"].iloc[i])
+                            if is_long and c > o and v < 0.8:
+                                weak_count += 1
+                            elif (not is_long) and c < o and v < 0.8:
+                                weak_count += 1
+                        if weak_count >= 2:
+                            vol_exhaustion = True
+                            rev_detail.append(f"Vol exhaustion: {weak_count}/3 nến {'tăng' if is_long else 'giảm'} với vol < 0.8x")
+
+                    # 2. RSI divergence H1 (5 nến gần vs 5 nến trước đó)
+                    if "rsi" in df_coin.columns and len(df_coin) >= 10:
+                        recent = df_coin.iloc[-5:]
+                        prior  = df_coin.iloc[-10:-5]
+                        if is_long:
+                            # Bear divergence: price HH but RSI LH → cảnh báo LONG
+                            p_hh = float(recent["high"].max()) > float(prior["high"].max())
+                            r_lh = float(recent["rsi"].max()) < float(prior["rsi"].max())
+                            if p_hh and r_lh:
+                                rsi_divergence = True
+                                rev_detail.append(f"RSI bear div: giá HH nhưng RSI {float(recent['rsi'].max()):.0f} < {float(prior['rsi'].max()):.0f}")
+                        else:
+                            # Bull divergence: price LL but RSI HL → cảnh báo SHORT
+                            p_ll = float(recent["low"].min()) < float(prior["low"].min())
+                            r_hl = float(recent["rsi"].min()) > float(prior["rsi"].min())
+                            if p_ll and r_hl:
+                                rsi_divergence = True
+                                rev_detail.append(f"RSI bull div: giá LL nhưng RSI {float(recent['rsi'].min()):.0f} > {float(prior['rsi'].min()):.0f}")
+
+                    # 3. OI shift against position
+                    # SHORT: OI giảm > 1.5% → shorts đang đóng → bullish
+                    # LONG: OI giảm > 1.5% → longs đang đóng → bearish
+                    if oi_change is not None and oi_change < -1.5:
+                        oi_shift_against = True
+                        rev_detail.append(f"OI {oi_change:+.1f}% — vị thế cùng chiều đang đóng dần (unwinding)")
+                except Exception as _re:
+                    pass
+
+                rev_count = sum([vol_exhaustion, rsi_divergence, oi_shift_against])
+
+                # ═══════════════════════════════════════════════════════
+                # SWING LEVELS — tìm swing high/low gần nhất từ H1
+                # Dùng để: trail SL theo cấu trúc + suggest level chốt partial
+                # ═══════════════════════════════════════════════════════
+                swing_high_30 = swing_low_30 = None
+                swing_high_10 = swing_low_10 = None
+                trail_sl_suggest = None
+                partial_level    = None
+
+                try:
+                    if len(df_coin) >= 30:
+                        swing_high_30 = float(df_coin["high"].iloc[-30:].max())
+                        swing_low_30  = float(df_coin["low"].iloc[-30:].min())
+                    if len(df_coin) >= 10:
+                        swing_high_10 = float(df_coin["high"].iloc[-10:].max())
+                        swing_low_10  = float(df_coin["low"].iloc[-10:].min())
+
+                    # Trail SL theo cấu trúc:
+                    # SHORT: swing high gần nhất + buffer 0.3% (chỗ phá cấu trúc)
+                    # LONG: swing low gần nhất - buffer 0.3%
+                    if is_long and swing_low_10:
+                        trail_sl_suggest = round(swing_low_10 * 0.997, 6)
+                    elif (not is_long) and swing_high_10:
+                        trail_sl_suggest = round(swing_high_10 * 1.003, 6)
+
+                    # Partial level: swing low/high 30 nến (vùng support/resistance to)
+                    # Chỉ suggest nếu giá còn cách >= 0.5% (chưa quá gần)
+                    if is_long and swing_high_30 and swing_high_30 > coin_price * 1.005:
+                        partial_level = round(swing_high_30 * 0.998, 6)
+                    elif (not is_long) and swing_low_30 and swing_low_30 < coin_price * 0.995:
+                        partial_level = round(swing_low_30 * 1.002, 6)
+                except Exception:
+                    pass
+
+                # ═══════════════════════════════════════════════════════
+                # SL ZONE DIAGNOSIS — SL của user đang ở đâu?
+                # loss   = SL còn ở vùng lỗ (chưa BE)
+                # be     = SL ở break-even (gần entry)
+                # profit = SL đã lock profit (đã trail vào vùng lãi)
+                # ═══════════════════════════════════════════════════════
+                sl_zone = "loss"
+                if sl_implied:
+                    if is_long:
+                        if sl_implied >= entry * 1.001:
+                            sl_zone = "profit"
+                        elif sl_implied >= entry * 0.999:
+                            sl_zone = "be"
+                    else:
+                        if sl_implied <= entry * 0.999:
+                            sl_zone = "profit"
+                        elif sl_implied <= entry * 1.001:
+                            sl_zone = "be"
+
+                # ═══════════════════════════════════════════════════════
+                # 3-TIER ACTION CLASSIFICATION với SL-aware mode
+                # Priority order:
+                #   1. Hard exits (conflict, broke SL eng, hit TP1 eng)
+                #   2. SL ở profit zone → MONITOR (đã protected, ít can thiệp)
+                #   3. SL ở loss/BE → dùng rev_count để quyết định CHỐT/CẢNH GIÁC/HOLD
+                # ═══════════════════════════════════════════════════════
+
+                # ── PRIORITY 1: Hard exits ──
                 if conflict:
-                    # Engine đảo chiều — đây là tín hiệu nguy hiểm nhất
                     action_label  = "CẮT NGAY"
                     action_color  = "danger"
-                    action_detail = f"Engine flip ngược chiều ({eng_dir} với confidence {eng_conf}) — không hợp lệ tiếp tục giữ"
+                    action_detail = f"Engine flip ngược chiều ({eng_dir} {eng_conf}) — không hợp lệ tiếp tục giữ"
                     action_steps_smart.append({
                         "icon": "🚫",
                         "text": f"Engine khuyến {eng_dir} ngược lại với lệnh {direction} của bạn",
@@ -1696,7 +1812,7 @@ def position_analyze():
                 elif broke_eng_sl:
                     action_label  = "CẮT NGAY"
                     action_color  = "danger"
-                    action_detail = f"Giá đã thủng SL kỹ thuật của engine ({_fmt(eng_sl_f)}) — cấu trúc đã gãy"
+                    action_detail = f"Giá đã thủng SL kỹ thuật engine ({_fmt(eng_sl_f)}) — cấu trúc đã gãy"
                     action_steps_smart.append({
                         "icon": "🚨",
                         "text": f"Giá {_fmt(coin_price)} đã thủng SL kỹ thuật {_fmt(eng_sl_f)} — không còn lý do hold",
@@ -1724,6 +1840,61 @@ def position_analyze():
                             "color": "info",
                         })
 
+                # ── PRIORITY 2: SL đã ở profit zone → MONITOR mode ──
+                elif sl_zone == "profit":
+                    if rev_count >= 2:
+                        action_label  = "CẢNH GIÁC — sẵn sàng cắt tay"
+                        action_color  = "warning"
+                        action_detail = f"SL đã lock profit + có {rev_count}/3 reversal signal — chuẩn bị cắt thủ công nếu thêm signal"
+                    else:
+                        action_label  = "MONITOR (SL đã lock profit)"
+                        action_color  = "success"
+                        action_detail = f"SL đã ở vùng profit → downside = 0. {rev_count}/3 reversal signal — để market quyết định"
+                    action_steps_smart.append({
+                        "icon": "🔒",
+                        "text": f"SL hiện tại {_fmt(sl_implied)} đã lock profit — không thể lỗ",
+                        "color": "success",
+                    })
+                    if partial_level and rev_count >= 1:
+                        action_steps_smart.append({
+                            "icon": "⏰",
+                            "text": f"Đặt limit chốt 30–50% ở swing level {_fmt(partial_level)} (vùng kháng cự/hỗ trợ to gần nhất)",
+                            "color": "info",
+                        })
+
+                elif sl_zone == "be":
+                    action_label  = "HOLD (SL ở BE)"
+                    action_color  = "info"
+                    action_detail = f"SL ở break-even — không thể lỗ. {rev_count}/3 reversal signal."
+                    action_steps_smart.append({
+                        "icon": "🛡️",
+                        "text": f"SL ở BE {_fmt(sl_implied)} — đã free trade, để market quyết",
+                        "color": "info",
+                    })
+                    if rev_count >= 2 and partial_level:
+                        action_steps_smart.append({
+                            "icon": "⚠️",
+                            "text": f"{rev_count}/3 reversal signal — đặt limit chốt 30% ở {_fmt(partial_level)} chủ động",
+                            "color": "warning",
+                        })
+
+                # ── PRIORITY 3: SL còn ở loss zone — dùng rev_count quyết định ──
+                elif rev_count >= 2:
+                    action_label  = "CHỐT 30–50% PARTIAL"
+                    action_color  = "warning"
+                    action_detail = f"{rev_count}/3 reversal signal + SL còn ở vùng lỗ → bảo vệ vốn ngay"
+                    action_steps_smart.append({
+                        "icon": "✂️",
+                        "text": f"Chốt 30–50% tại {_fmt(coin_price)} để giảm risk khi reversal đang hình thành",
+                        "color": "warning",
+                    })
+                    if trail_sl_suggest:
+                        action_steps_smart.append({
+                            "icon": "🛡️",
+                            "text": f"Phần còn lại: dời SL về {_fmt(trail_sl_suggest)} (theo swing structure gần nhất)",
+                            "color": "info",
+                        })
+
                 elif near_eng_sl:
                     action_label  = "THẬN TRỌNG"
                     action_color  = "warning"
@@ -1735,42 +1906,49 @@ def position_analyze():
                     })
 
                 elif eng_dir == "WAIT":
-                    # Engine không cùng chiều cũng không ngược — hold cẩn thận
-                    action_label  = "HOLD CẨN THẬN"
-                    action_color  = "warning"
-                    action_detail = f"Engine WAIT (confidence {eng_conf}) — cấu trúc đang yếu, không phải lúc DCA"
+                    if rev_count >= 1:
+                        action_label  = "CẢNH GIÁC"
+                        action_color  = "warning"
+                        action_detail = f"Engine WAIT + {rev_count}/3 reversal signal — tighten SL về cấu trúc, đừng vội chốt"
+                    else:
+                        action_label  = "HOLD CẨN THẬN"
+                        action_color  = "warning"
+                        action_detail = f"Engine WAIT (confidence {eng_conf}) — cấu trúc yếu, không phải lúc DCA"
                     if pnl_pct_now < -2:
                         action_steps_smart.append({
                             "icon": "📉",
-                            "text": f"Đang lỗ {pnl_pct_now:.2f}% — engine không xác nhận, cân nhắc cắt nhẹ giảm risk",
+                            "text": f"Đang lỗ {pnl_pct_now:.2f}% — cắt nhẹ giảm risk",
                             "color": "warning",
+                        })
+                    elif trail_sl_suggest:
+                        action_steps_smart.append({
+                            "icon": "🛡️",
+                            "text": f"Tighten SL về {_fmt(trail_sl_suggest)} (swing gần nhất) thay vì giữ SL gốc",
+                            "color": "info",
                         })
                     else:
                         action_steps_smart.append({
                             "icon": "👀",
-                            "text": f"Engine chưa rõ — giữ SL gốc, không thêm vị thế",
+                            "text": "Engine chưa rõ — giữ SL gốc, không thêm vị thế",
                             "color": "info",
                         })
 
                 else:
-                    # Aligned + chưa đến TP/SL engine
-                    action_label  = "HOLD"
-                    action_color  = "success" if eng_conf == "HIGH" else "info"
-                    action_detail = f"Engine vẫn xác nhận {eng_dir} ({eng_conf}, score {eng_score}) — kế hoạch đang đúng"
+                    # Aligned + chưa đến TP/SL — phân loại theo rev_count
+                    if rev_count >= 1:
+                        action_label  = "CẢNH GIÁC"
+                        action_color  = "warning"
+                        action_detail = f"Engine xác nhận {eng_dir} nhưng có {rev_count}/3 reversal signal — tighten SL, chưa cần chốt"
+                    else:
+                        action_label  = "HOLD vững"
+                        action_color  = "success" if eng_conf == "HIGH" else "info"
+                        action_detail = f"Engine xác nhận {eng_dir} ({eng_conf}, score {eng_score}), 0/3 reversal signal — kế hoạch đang đúng"
 
-                    # Có cơ hội DCA?
-                    can_dca = False
-                    if eng_entry_opt and dist_from_opt_pct is not None:
-                        if is_long and dist_from_opt_pct < -2:
-                            can_dca = True
-                        elif (not is_long) and dist_from_opt_pct > 2:
-                            can_dca = True
-
-                    if can_dca and not broke_eng_sl:
+                    if trail_sl_suggest:
                         action_steps_smart.append({
-                            "icon": "💎",
-                            "text": f"Giá đang ở vùng entry tốt (cách entry tối ưu {dist_from_opt_pct:+.1f}%) — có thể DCA nhỏ nếu chưa full position",
-                            "color": "ok",
+                            "icon": "🛡️",
+                            "text": f"Trail SL về {_fmt(trail_sl_suggest)} (swing structure 10 nến gần nhất)",
+                            "color": "info",
                         })
 
                     if eng_tp1_f:
@@ -1780,12 +1958,24 @@ def position_analyze():
                             "text": f"TP1 engine: {_fmt(eng_tp1_f)} (còn {dist_to_tp1:.1f}%) — chốt 50% khi chạm",
                             "color": "info",
                         })
-                    if eng_sl_f:
-                        dist_to_sl = abs(coin_price - eng_sl_f) / coin_price * 100
+
+                    # Có cơ hội DCA chỉ khi 0 reversal signal + giá ở vùng entry tốt
+                    if rev_count == 0 and eng_entry_opt and dist_from_opt_pct is not None:
+                        can_dca = (is_long and dist_from_opt_pct < -2) or                                   ((not is_long) and dist_from_opt_pct > 2)
+                        if can_dca:
+                            action_steps_smart.append({
+                                "icon": "💎",
+                                "text": f"Giá ở vùng entry tốt (chênh {dist_from_opt_pct:+.1f}%) — có thể DCA nhỏ",
+                                "color": "ok",
+                            })
+
+                # Append reversal signals breakdown như info (luôn hiển thị)
+                if rev_count > 0 and rev_detail:
+                    for rd in rev_detail:
                         action_steps_smart.append({
-                            "icon": "🛡️",
-                            "text": f"SL engine: {_fmt(eng_sl_f)} (cách {dist_to_sl:.1f}%) — cân nhắc dời SL theo nếu chưa",
-                            "color": "info",
+                            "icon": "🔍",
+                            "text": rd,
+                            "color": "warning" if rev_count >= 2 else "info",
                         })
 
                 # Append warnings từ engine vào action steps nếu là blocker
@@ -1805,6 +1995,21 @@ def position_analyze():
                     "steps":   action_steps_smart,
                     "pnl_pct": round(pnl_pct_now, 3),
                     "pnl_usd": pnl_usd_now,
+                    # v2 fields — đo lường framework mới
+                    "rev_count":         rev_count,
+                    "rev_signals": {
+                        "vol_exhaustion":   vol_exhaustion,
+                        "rsi_divergence":   rsi_divergence,
+                        "oi_shift_against": oi_shift_against,
+                    },
+                    "rev_detail":        rev_detail,
+                    "sl_zone":           sl_zone,
+                    "trail_sl_suggest":  _fmt(trail_sl_suggest) if trail_sl_suggest else None,
+                    "partial_level":     _fmt(partial_level) if partial_level else None,
+                    "swing_high_10":     _fmt(swing_high_10) if swing_high_10 else None,
+                    "swing_low_10":      _fmt(swing_low_10) if swing_low_10 else None,
+                    "swing_high_30":     _fmt(swing_high_30) if swing_high_30 else None,
+                    "swing_low_30":      _fmt(swing_low_30) if swing_low_30 else None,
                 }
 
             except Exception as _eng_e:

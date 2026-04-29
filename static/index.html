@@ -1893,20 +1893,77 @@ function renderPosResults(d) {
     }).join('');
     var pnlCol = (sa.pnl_pct >= 0) ? '#1D9E75' : '#E24B4A';
     var pnlSign = (sa.pnl_pct >= 0) ? '+' : '';
+
+    // Reversal signals breakdown — 3 dot indicator
+    var revHtml = '';
+    if (sa.rev_signals) {
+      var revs = [
+        {key:'vol_exhaustion',   label:'Vol exhaustion'},
+        {key:'rsi_divergence',   label:'RSI divergence'},
+        {key:'oi_shift_against', label:'OI shift'},
+      ];
+      var revDots = revs.map(function(r){
+        var on = sa.rev_signals[r.key];
+        var col = on ? '#E24B4A' : '#888780';
+        var bg  = on ? 'rgba(226,75,74,.12)' : 'rgba(136,135,128,.08)';
+        return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;background:'+bg+';font-size:11px;color:'+col+'">' +
+          '<span style="width:6px;height:6px;border-radius:50%;background:'+col+'"></span>' +
+          r.label +
+        '</span>';
+      }).join('');
+      revHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">' +
+        '<span style="font-size:11px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.04em">Reversal:</span>' +
+        revDots +
+        '<span style="font-size:11px;color:var(--color-text-secondary)">(' + (sa.rev_count||0) + '/3)</span>' +
+      '</div>';
+    }
+
+    // SL zone badge
+    var slZoneHtml = '';
+    if (sa.sl_zone) {
+      var zoneColors = { profit:'#1D9E75', be:'#378ADD', loss:'#E24B4A' };
+      var zoneLabels = { profit:'🔒 SL ở vùng PROFIT', be:'🛡️ SL ở BREAK-EVEN', loss:'⚠️ SL còn vùng LỖ' };
+      var zc = zoneColors[sa.sl_zone] || '#888780';
+      slZoneHtml = '<span style="display:inline-block;padding:3px 10px;border-radius:10px;background:'+zc+'22;color:'+zc+';font-size:11px;font-weight:500">' +
+        (zoneLabels[sa.sl_zone]||sa.sl_zone) + '</span>';
+    }
+
+    // Swing levels + suggestions strip
+    var swingHtml = '';
+    if (sa.trail_sl_suggest || sa.partial_level || sa.swing_high_10 || sa.swing_low_10) {
+      swingHtml = '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--color-border-tertiary)">';
+      if (sa.trail_sl_suggest) {
+        swingHtml += '<div style="font-size:11px;color:var(--color-text-secondary)">Trail SL → <span style="color:#E24B4A;font-weight:500">$' + sa.trail_sl_suggest + '</span></div>';
+      }
+      if (sa.partial_level) {
+        swingHtml += '<div style="font-size:11px;color:var(--color-text-secondary)">Partial level → <span style="color:#1D9E75;font-weight:500">$' + sa.partial_level + '</span></div>';
+      }
+      if (sa.swing_high_10) {
+        swingHtml += '<div style="font-size:11px;color:var(--color-text-secondary)">Swing H 10 nến: <span style="color:var(--color-text-primary);font-family:var(--mono,monospace)">$' + sa.swing_high_10 + '</span></div>';
+      }
+      if (sa.swing_low_10) {
+        swingHtml += '<div style="font-size:11px;color:var(--color-text-secondary)">Swing L 10 nến: <span style="color:var(--color-text-primary);font-family:var(--mono,monospace)">$' + sa.swing_low_10 + '</span></div>';
+      }
+      swingHtml += '</div>';
+    }
+
     smartActionHtml =
       '<div style="background:' + sac.bg + ';border:1.5px solid ' + sac.border + ';border-radius:var(--border-radius-lg);padding:14px 16px;margin-bottom:14px">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">' +
           '<div>' +
-            '<div style="font-size:11px;font-weight:500;color:' + sac.text + ';text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Smart Action (Engine + Position)</div>' +
+            '<div style="font-size:11px;font-weight:500;color:' + sac.text + ';text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Smart Action v2 (Engine + Reversal Signals)</div>' +
             '<div style="font-size:18px;font-weight:600;color:' + sac.text + '">' + sa.label + '</div>' +
           '</div>' +
           '<div style="text-align:right">' +
             '<div style="font-size:11px;color:var(--color-text-secondary)">P&L hiện tại</div>' +
             '<div style="font-size:16px;font-weight:600;color:' + pnlCol + '">' + pnlSign + sa.pnl_pct + '% &nbsp;(' + pnlSign + sa.pnl_usd + ' USDT)</div>' +
+            (slZoneHtml ? '<div style="margin-top:4px">' + slZoneHtml + '</div>' : '') +
           '</div>' +
         '</div>' +
+        revHtml +
         '<div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:10px;line-height:1.5">' + sa.detail + '</div>' +
         saStepsHtml +
+        swingHtml +
       '</div>';
   }
 

@@ -887,6 +887,12 @@ tbody td{padding:11px 12px;vertical-align:middle}
         <option value="v2.0">v2.0</option>
         <option value="legacy">Legacy (cũ)</option>
       </select>
+      <div style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 10px" title="Số lệnh tối đa chạy backtest (max 500)">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Max</span>
+        <input id="btMaxSignals" type="number" value="200" min="10" max="500" step="50"
+          style="width:60px;background:transparent;border:none;color:var(--text);font-family:var(--mono);font-size:13px;font-weight:700;text-align:right;outline:none">
+        <span style="font-size:11px;color:var(--muted)">lệnh</span>
+      </div>
       <button class="btn primary" id="btnBacktest" onclick="runBacktest()">&#9654; Run Backtest</button>
       <button class="btn" id="btnAutoAnalyze" onclick="runAutoAnalyze()" style="background:rgba(255,170,0,.12);border:1px solid rgba(255,170,0,.4);color:#ffaa00" title="Tự động phân tích backtest gần đây và đưa ra gợi ý cải thiện">&#129504; Auto Analyze</button>
       <button class="btn" id="btnExportAnalysis" onclick="exportAnalysis()" style="display:none;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);color:#818cf8">&#128229; Export Analysis</button>
@@ -3876,9 +3882,13 @@ function runBacktest() {
   document.getElementById('btSummary').style.display = 'none';
 
   var hoursAgo = parseInt(document.getElementById('btTimeRange').value) || 0;
+  var maxSignalsEl = document.getElementById('btMaxSignals');
+  var maxSignals = maxSignalsEl ? (parseInt(maxSignalsEl.value) || 200) : 200;
+  if (maxSignals < 10) maxSignals = 10;
+  if (maxSignals > 500) maxSignals = 500;
 
   var btController = new AbortController();
-  var btTimeout = setTimeout(function(){ btController.abort(); }, 120000); // 120s timeout
+  var btTimeout = setTimeout(function(){ btController.abort(); }, 200000); // 200s timeout (tăng cho max 500 signals)
 
   fetch('/api/backtest', {
     method: 'POST',
@@ -3888,6 +3898,7 @@ function runBacktest() {
       confidence:   conf,
       direction:    dir,
       hours_ago:    hoursAgo,
+      max_signals:  maxSignals,
       algo_version: document.getElementById('btAlgoVersion') ? document.getElementById('btAlgoVersion').value : ''
     })
   }).then(function(r){
@@ -4009,6 +4020,22 @@ function renderBtSummary(s, results, capital, leverage) {
   document.getElementById('btAvgLoss').textContent  = s.avg_loss_r + 'R';
   document.getElementById('btAvgWinC').textContent  = s.avg_candles_win ? '~'+s.avg_candles_win+'h' : '--';
   document.getElementById('btAvgLossC').textContent = s.avg_candles_loss ? '~'+s.avg_candles_loss+'h' : '--';
+
+  // Truncated banner — hiển thị nếu signal bị cắt do max_signals cap
+  var truncBanner = document.getElementById('btTruncatedBanner');
+  if (!truncBanner) {
+    truncBanner = document.createElement('div');
+    truncBanner.id = 'btTruncatedBanner';
+    truncBanner.style.cssText = 'margin-bottom:12px;padding:10px 14px;border-radius:8px;background:rgba(186,117,23,.12);border:1px solid #BA7517;color:#BA7517;font-size:12px;display:none';
+    var summaryEl = document.getElementById('btSummary');
+    if (summaryEl) summaryEl.parentNode.insertBefore(truncBanner, summaryEl);
+  }
+  if (s.truncated && s.truncated_note) {
+    truncBanner.innerHTML = '⚠️ <b>Bị giới hạn:</b> ' + s.truncated_note + ' (Tăng ô <b>Max</b> bên trên để chạy thêm)';
+    truncBanner.style.display = '';
+  } else {
+    truncBanner.style.display = 'none';
+  }
 
   // Equity curve
   drawEquityCurve(results);

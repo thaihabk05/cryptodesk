@@ -946,9 +946,11 @@ def backtest_signal(signal: dict) -> dict:
         hours_since = (now_ts - sig_ts) / 3600
 
         # ── Chọn timeframe backtest theo strategy ──
-        # Scalp: M5 (chính xác nhất, 5 phút/nến)
-        # Swing H1: M15
-        # Swing H4/FAM: H1
+        # Tất cả strategy đều dùng M15 hoặc nhỏ hơn để wick detection chính xác.
+        # H1 timeframe có thể MISS wick: nếu giá dip nhanh xuống SL trong vài phút
+        # rồi bounce, H1 low ghi nhận được nhưng nếu data H1 chưa close (live candle)
+        # thì có thể chưa cập nhật full wick → SL hit không được detect đúng.
+        # Scalp: M5 / Swing H1: M15 / Swing H4: M15 (thay vì H1 cũ — chính xác 4x hơn)
         strategy = signal.get("strategy", "SWING_H4")
         if strategy == "SCALP":
             bt_interval, bt_label = "5m", "M5"
@@ -957,8 +959,8 @@ def backtest_signal(signal: dict) -> dict:
             bt_interval, bt_label = "15m", "M15"
             minutes_per_candle = 15
         else:
-            bt_interval, bt_label = "1h", "H1"
-            minutes_per_candle = 60
+            bt_interval, bt_label = "15m", "M15"
+            minutes_per_candle = 15
 
         # Tính số nến cần fetch
         candles_needed = max(50, int(hours_since * 60 / minutes_per_candle) + 20)
@@ -1019,6 +1021,10 @@ def backtest_signal(signal: dict) -> dict:
         entry_filled   = not is_limit  # market order → đã khớp ngay
         entry_fill_idx = None          # nến nào giá chạm entry
 
+        # Track actual extremes after entry — diagnostic để user verify SL/TP detect
+        actual_low_after  = float("inf")
+        actual_high_after = float("-inf")
+
         for i, row in df_after.iterrows():
             high = float(row["high"])
             low  = float(row["low"])
@@ -1033,6 +1039,10 @@ def backtest_signal(signal: dict) -> dict:
                     entry_fill_idx = i
                 else:
                     continue  # chưa khớp → bỏ qua nến này
+
+            # Track giá max/min sau khi đã khớp entry
+            actual_low_after  = min(actual_low_after, low)
+            actual_high_after = max(actual_high_after, high)
 
             # ── Bước 2: Đã khớp entry → check TP/SL ──
             if direction == "LONG":
@@ -1118,14 +1128,30 @@ def backtest_signal(signal: dict) -> dict:
 
         sl_pct_val   = float(signal.get("sl_pct", 2))
         unrealized_r = round(unrealized / sl_pct_val, 2) if sl_pct_val > 0 else None
+
+        # Diagnostic: actual extremes after entry (giá đã đi tới đâu thực sự)
+        diag_low  = round(actual_low_after, 6)  if actual_low_after  != float("inf")  else None
+        diag_high = round(actual_high_after, 6) if actual_high_after != float("-inf") else None
+        diag_note = ""
+        if diag_low is not None and diag_high is not None:
+            if direction == "LONG":
+                # Đã đi gần tới SL chưa? Nếu low rất gần SL = sát kèo
+                gap_to_sl = round((diag_low - sl) / sl * 100, 2)
+                diag_note = f" | Low thực: {diag_low} (cách SL {sl}: {gap_to_sl:+.2f}%)"
+            else:
+                gap_to_sl = round((sl - diag_high) / sl * 100, 2)
+                diag_note = f" | High thực: {diag_high} (cách SL {sl}: {gap_to_sl:+.2f}%)"
+
         return {**signal,
-                "bt_result":         "OPEN",
-                "bt_note":           f"Đã khớp, chưa chạm SL/TP — giá {round(last_price,6)} ({unrealized:+.2f}%) [{bt_label}]",
-                "bt_candles":        len(df_after),
-                "bt_pnl_r":          None,
-                "bt_unrealized_pct": round(unrealized, 2),
-                "bt_unrealized_r":   unrealized_r,
-                "bt_exit_price":     round(last_price, 6)}
+                "bt_result":          "OPEN",
+                "bt_note":            f"Đã khớp, chưa chạm SL/TP — giá {round(last_price,6)} ({unrealized:+.2f}%) [{bt_label}]" + diag_note,
+                "bt_candles":         len(df_after),
+                "bt_pnl_r":           None,
+                "bt_unrealized_pct":  round(unrealized, 2),
+                "bt_unrealized_r":    unrealized_r,
+                "bt_exit_price":      round(last_price, 6),
+                "bt_actual_low":      diag_low,
+                "bt_actual_high":     diag_high}
 
     except Exception as e:
         return {**signal, "bt_result": "ERROR", "bt_note": str(e),
@@ -2461,6 +2487,7 @@ def run_backtest():
     dir_filter   = data.get("direction",    "ALL")    # LONG | SHORT | ALL
     hours_ago    = int(data.get("hours_ago", 8))       # mặc định 8 tiếng
     algo_version = data.get("algo_version", "")        # "" = tất cả versions
+    max_signals_req = int(data.get("max_signals", 200))  # default 200 (vs 50 cũ)
 
     history = load_history()
     if not history:
@@ -2492,12 +2519,15 @@ def run_backtest():
     signals.sort(key=lambda h: h.get("time", "")[:19], reverse=True)
 
     # Backtest parallel — tránh timeout khi có nhiều signal
+    # Cap dynamic theo request (default 200, max hard 500 để tránh OOM)
     results = []
-    max_signals = 50  # giới hạn 50 signal để tránh timeout
-    signals = signals[:max_signals]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        futures = {ex.submit(backtest_signal, sig): sig for sig in signals}
-        for fut in concurrent.futures.as_completed(futures, timeout=110):
+    total_available = len(signals)
+    max_signals = min(max(max_signals_req, 1), 500)
+    signals_to_run = signals[:max_signals]
+    truncated = total_available > max_signals
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(backtest_signal, sig): sig for sig in signals_to_run}
+        for fut in concurrent.futures.as_completed(futures, timeout=180):
             try:
                 results.append(fut.result())
             except Exception as e:
@@ -2533,7 +2563,10 @@ def run_backtest():
     expectancy = round((len(wins)/len(closed)) * avg_win_r + (len(losses)/len(closed)) * avg_loss_r, 2) if closed else 0
 
     summary = {
-        "total":            len(signals),
+        "total":            len(signals_to_run),
+        "total_available":  total_available,
+        "truncated":        truncated,
+        "max_signals_used": max_signals,
         "closed":           len(closed),
         "wins":             len(wins),
         "losses":           len(losses),
@@ -2550,6 +2583,7 @@ def run_backtest():
         "avg_candles_loss": avg_candles_loss,
         "stale_signals":    stale_count,
         "stale_note":       f"{stale_count} lệnh close-check (giá đã qua SL/TP trước khi backtest chạy)" if stale_count > 0 else "",
+        "truncated_note":   f"Có {total_available} signals trong khoảng thời gian này, chỉ chạy {max_signals} mới nhất. Tăng max_signals để chạy thêm." if truncated else "",
     }
 
     return jsonify({"results": results, "summary": summary})

@@ -29,6 +29,68 @@ def add_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     df["atr"] = df["high"].sub(df["low"]).rolling(period, min_periods=1).mean()
     return df
 
+
+def detect_exhaustion_short(df_h1, atr_mult: float = 1.5,
+                             vol_mult: float = 1.5, retrace_min: float = 0.5) -> tuple:
+    """
+    Phát hiện "Exhaustion candle" — nến H1 đỏ body lớn + volume cao + close gần đáy.
+    Verify backtest 2026-04-30 với threshold (1.5, 1.5, 0.5):
+      - SHORT-WIN hit: 5/25 (20%)  — CRCL +3.57R, OPG +2.16R, BASED +2.78R, ROBO +1.50R, MON +1.68R
+      - SHORT-LOSS:    1/10 (10%)
+      - LONG-LOSS:     1/30 (3%)  spurious
+      - Precision:     71%
+
+    Returns: (triggered: bool, note: str). Nến đánh giá là nến cuối df_h1 (đã close).
+    """
+    if df_h1 is None or len(df_h1) < 25:
+        return False, ""
+    last = df_h1.iloc[-1]
+    prev = df_h1.iloc[-25:-1]
+
+    last_open  = float(last["open"])
+    last_close = float(last["close"])
+    last_high  = float(last["high"])
+    last_low   = float(last["low"])
+    last_vol   = float(last.get("volume", 0))
+
+    # 1) Nến đỏ
+    if last_close >= last_open:
+        return False, ""
+
+    # 2) Body ≥ atr_mult × ATR(14)
+    if "atr" in df_h1.columns:
+        atr = float(df_h1["atr"].iloc[-15:-1].mean())
+    else:
+        prev_closes = prev["close"].tolist()
+        trs = []
+        for i in range(1, len(prev)):
+            h = float(prev["high"].iloc[i]); l = float(prev["low"].iloc[i])
+            pc = prev_closes[i-1]
+            trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        atr = sum(trs[-14:]) / max(1, min(14, len(trs)))
+    if atr <= 0:
+        return False, ""
+    body = abs(last_close - last_open)
+    if body < atr * atr_mult:
+        return False, ""
+
+    # 3) Volume ≥ vol_mult × avg 20 nến trước
+    vol_avg = float(prev["volume"].tail(20).mean()) if "volume" in prev.columns else 0
+    if vol_avg <= 0 or last_vol < vol_avg * vol_mult:
+        return False, ""
+
+    # 4) Close gần đáy: (high - close) / (high - low) ≥ retrace_min
+    rng = last_high - last_low
+    if rng <= 0:
+        return False, ""
+    retrace = (last_high - last_close) / rng
+    if retrace < retrace_min:
+        return False, ""
+
+    note = (f"Exhaustion H1: body {body/atr:.1f}×ATR, vol {last_vol/vol_avg:.1f}×, "
+            f"close {retrace*100:.0f}% từ đáy nến — buyer cạn lực")
+    return True, note
+
 def prepare(df: pd.DataFrame) -> pd.DataFrame:
     df = add_ma(df)
     df = add_rsi(df)

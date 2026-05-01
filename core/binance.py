@@ -97,6 +97,21 @@ def fetch_funding_rate(symbol: str):
     except: return None
 
 
+def fetch_all_funding_rates() -> dict:
+    """Lấy funding rate cho TẤT CẢ futures pairs trong 1 call.
+    Return dict {symbol: funding_pct}. Funding pct đã x100 (vd 0.0382 = 0.0382%).
+    """
+    try:
+        r = requests.get(FUTURES_BASE + "/fapi/v1/premiumIndex", timeout=10)
+        if r.status_code != 200: return {}
+        data = r.json()
+        if not isinstance(data, list): return {}
+        return {d["symbol"]: float(d.get("lastFundingRate", 0)) * 100
+                for d in data if d.get("symbol", "").endswith("USDT")}
+    except Exception:
+        return {}
+
+
 def fetch_oi_change(symbol: str, period: str = "1h", limit: int = 25):
     try:
         r = requests.get(FUTURES_BASE + "/futures/data/openInterestHist",

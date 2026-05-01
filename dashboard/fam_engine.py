@@ -14,6 +14,10 @@ from core.utils import sanitize, smart_round
 
 
 def _interpret_funding(funding, oi_change, direction):
+    """
+    SHORT booster (backtest 2026-04-30): SHORT-WIN có funding mean +0.025%, max +0.16% (CRCL).
+    Setup `fund_pos_oi_up` (longs FOMO + OI up) WR=90%. Funding > +0.05% là tín hiệu mạnh.
+    """
     warnings, adj = [], 0
     if funding is None: return warnings, adj
     if direction == "LONG":
@@ -26,6 +30,12 @@ def _interpret_funding(funding, oi_change, direction):
         if funding < -0.05:
             warnings.append(f"⚠️ Funding {funding:+.4f}% — Short overcrowded, rủi ro squeeze")
             adj -= 1
+        elif funding > 0.10:
+            warnings.append(f"🔥 Funding {funding:+.4f}% — longs trả phí CỰC cao, short-squeeze setup (case CRCL +3.57R)")
+            adj += 2
+        elif funding > 0.05:
+            warnings.append(f"🎯 Funding {funding:+.4f}% — longs overcrowded, có lợi mạnh cho SHORT")
+            adj += 1
         elif funding > 0.03:
             warnings.append(f"✅ Funding {funding:+.4f}% — Long overcrowded, có lợi cho SHORT")
     return warnings, adj
@@ -655,6 +665,17 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         all_warnings.append("⚠️ Confidence hạ xuống LOW do funding/volatility bất lợi")
     elif total_adj == -1 and confidence == "HIGH":
         confidence = "MEDIUM"
+    # SHORT funding-spike upgrade: lệnh kiểu CRCL (funding +0.16%) đáng được boost lên HIGH
+    if direction == "SHORT" and funding is not None and direction in ("LONG","SHORT"):
+        try:
+            if funding > 0.10 and confidence in ("MEDIUM",) and score >= 3:
+                confidence = "HIGH"
+                all_warnings.append(f"🚀 Auto-upgrade HIGH: SHORT + funding {funding:+.4f}% (long-trap, backtest WR=90%)")
+            elif funding > 0.05 and confidence == "LOW" and score >= 3:
+                confidence = "MEDIUM"
+                all_warnings.append(f"⬆️ Auto-upgrade MEDIUM: SHORT + funding {funding:+.4f}% (longs trả phí cao)")
+        except (TypeError, ValueError):
+            pass
 
     # ────────────────────────────────────────
     # SL / TP  (v3 — swing recent + Fib ext + entry optimal)

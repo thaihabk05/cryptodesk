@@ -22,7 +22,8 @@ from core.binance import (fetch_klines, fetch_funding_rate,
                            fetch_oi_change, fetch_btc_context)
 from core.indicators import (prepare, ma_slope, find_swing_points,
                               classify_structure, fib_retracement,
-                              fib_extension, is_no_trade_zone, calc_atr_context)
+                              fib_extension, is_no_trade_zone, calc_atr_context,
+                              detect_exhaustion_short)
 from core.utils import sanitize, smart_round
 
 
@@ -183,6 +184,7 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "HIGH" if score >= 5 else "MEDIUM" if score >= 3 else "LOW"
 
     # Funding / ATR adjustments
+    # SHORT booster (backtest 2026-04-30): funding > +0.05% là pattern thắng (CRCL +0.16% → +3.57R)
     def _interp_funding(funding, direction):
         w, adj = [], 0
         if funding is None: return w, adj
@@ -191,6 +193,8 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
             elif funding < -0.03: w.append(f"✅ Funding {funding:+.4f}% — có lợi LONG")
         elif direction == "SHORT":
             if funding < -0.05: w.append(f"⚠️ Funding {funding:+.4f}% — Short overcrowded"); adj -= 1
+            elif funding > 0.10: w.append(f"🔥 Funding {funding:+.4f}% — longs trả phí CỰC cao, short-squeeze setup"); adj += 2
+            elif funding > 0.05: w.append(f"🎯 Funding {funding:+.4f}% — longs overcrowded, có lợi mạnh cho SHORT"); adj += 1
             elif funding > 0.03: w.append(f"✅ Funding {funding:+.4f}% — có lợi SHORT")
         return w, adj
 
@@ -319,6 +323,33 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         all_warnings.append("⚠️ Confidence hạ LOW do funding/volatility bất lợi")
     elif total_adj == -1 and confidence == "HIGH":
         confidence = "MEDIUM"
+    # SHORT funding-spike upgrade (case CRCL pattern)
+    if direction == "SHORT" and funding is not None:
+        try:
+            if funding > 0.10 and confidence == "MEDIUM" and score >= 3:
+                confidence = "HIGH"
+                all_warnings.append(f"🚀 Auto-upgrade HIGH: SHORT + funding {funding:+.4f}% (long-trap, backtest WR=90%)")
+            elif funding > 0.05 and confidence == "LOW" and score >= 3:
+                confidence = "MEDIUM"
+                all_warnings.append(f"⬆️ Auto-upgrade MEDIUM: SHORT + funding {funding:+.4f}% cao")
+        except (TypeError, ValueError):
+            pass
+
+    # SHORT exhaustion candle detector (verify 2026-04-30: precision 71%, recall 20%)
+    # Chỉ áp khi engine đang ra SHORT để tránh spurious LONG-LOSS.
+    if direction == "SHORT":
+        try:
+            ex_ok, ex_note = detect_exhaustion_short(df_h1)
+            if ex_ok:
+                conditions.append("🔻 " + ex_note)
+                if confidence == "MEDIUM" and score >= 3:
+                    confidence = "HIGH"
+                    all_warnings.append(f"🔻 Auto-upgrade HIGH: SHORT + {ex_note}")
+                elif confidence == "LOW" and score >= 3:
+                    confidence = "MEDIUM"
+                    all_warnings.append(f"⬆️ Auto-upgrade MEDIUM: SHORT + {ex_note}")
+        except Exception:
+            pass
 
     # ────────────────────────────────────────
     # SL / TP — dựa ATR H1, swing H1 gần nhất

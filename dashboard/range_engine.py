@@ -2,7 +2,7 @@
 Range Scalp Engine v2 — CryptoDesk
 Logic: Chỉ range scalp khi D1+H4 KHÔNG downtrend mạnh + coin thực sự sideway
 """
-from core.indicators import prepare
+from core.indicators import prepare, detect_exhaustion_short
 from core.binance    import fetch_klines, fetch_funding_rate, fetch_oi_change, fetch_btc_context
 from core.utils      import smart_round
 
@@ -813,6 +813,29 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
     if corr_status == "UNDERPERFORM_LONG"  and direction == "LONG":   score -= 1  # penalty
     if corr_status == "UNDERPERFORM_SHORT" and direction == "SHORT":  score -= 1
 
+    # SHORT funding booster (backtest 2026-04-30): funding > +0.05% là pattern thắng mạnh
+    # CRCL: funding +0.16%, OI +1.06% → +3.57R. Setup `fund_pos_oi_up` WR=90%.
+    funding_short_boost = False
+    if direction == "SHORT" and funding is not None:
+        if funding > 0.10:
+            score += 2
+            conditions.append("🔥 Funding {:+.4f}% — longs trả phí CỰC cao".format(funding))
+            funding_short_boost = True
+        elif funding > 0.05:
+            score += 1
+            conditions.append("🎯 Funding {:+.4f}% — longs overcrowded".format(funding))
+            funding_short_boost = True
+
+    # SHORT exhaustion detector (verify 2026-04-30: precision 71%, recall 20% — booster phụ trợ)
+    # Chỉ áp khi engine đang ra SHORT để tránh spurious LONG-LOSS (UB/SIREN).
+    exhaustion_short_triggered = False
+    if direction == "SHORT":
+        ex_ok, ex_note = detect_exhaustion_short(df_h1)
+        if ex_ok:
+            score += 2
+            conditions.append("🔻 " + ex_note)
+            exhaustion_short_triggered = True
+
     if pump_block:
         direction  = "WAIT"
         confidence = "LOW"
@@ -826,6 +849,18 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "MEDIUM"
     else:
         confidence = "LOW"
+
+    # SHORT funding-spike upgrade: funding +0.10% + reversal_ok → ép HIGH
+    if (direction == "SHORT" and funding is not None
+            and funding > 0.10 and reversal_ok and score >= 4
+            and confidence == "MEDIUM"):
+        confidence = "HIGH"
+        warnings.append("🚀 Auto-upgrade HIGH: SHORT + funding cực cao + reversal candle (case CRCL)")
+    # SHORT exhaustion upgrade: detector trigger + score đủ → ép HIGH
+    if (direction == "SHORT" and exhaustion_short_triggered
+            and score >= 5 and confidence == "MEDIUM"):
+        confidence = "HIGH"
+        warnings.append("🔻 Auto-upgrade HIGH: SHORT + exhaustion candle (verify 71% precision)")
 
     entry_verdict = "GO" if (confidence in ("HIGH", "MEDIUM") and direction in ("LONG", "SHORT") and reversal_ok) else "WAIT"
 

@@ -5066,6 +5066,24 @@ function exportAnalysis() {
   var winOI  = avg(wins,   function(r){return r.oi_change;});
   var lossOI = avg(losses, function(r){return r.oi_change;});
 
+  // Confidence buckets (HIGH/MEDIUM/LOW) — fix: trước đây report skip vì confidence là string
+  var confBuckets = {HIGH:{w:0,l:0,sumR:0}, MEDIUM:{w:0,l:0,sumR:0}, LOW:{w:0,l:0,sumR:0}, UNKNOWN:{w:0,l:0,sumR:0}};
+  var CONF_NUM    = {HIGH:85, MEDIUM:70, LOW:55};  // numeric proxy cho ML/analytic
+  closed.forEach(function(r) {
+    var c = (r.confidence || 'UNKNOWN').toString().toUpperCase();
+    if (!confBuckets[c]) c = 'UNKNOWN';
+    if (r.bt_result==='WIN')  { confBuckets[c].w++; }
+    else                      { confBuckets[c].l++; }
+    if (typeof r.bt_pnl_r === 'number') confBuckets[c].sumR += r.bt_pnl_r;
+  });
+  Object.keys(confBuckets).forEach(function(k) {
+    var b = confBuckets[k];
+    var n = b.w + b.l;
+    b.n  = n;
+    b.wr = n > 0 ? Math.round(b.w / n * 100) : null;
+    b.sumR = Math.round(b.sumR * 100) / 100;
+  });
+
   var algoVer = document.getElementById('btAlgoVersion') ? (document.getElementById('btAlgoVersion').value || 'all') : 'all';
   var exportData = {
     generated_at:   new Date().toISOString(),
@@ -5086,14 +5104,17 @@ function exportAnalysis() {
     },
     direction_analysis: dirs,
     rr_buckets: rrBuckets,
+    confidence_buckets: confBuckets,
     oi_correlation: { win_avg_oi: winOI, loss_avg_oi: lossOI },
     symbol_stats: symStats,
     raw_signals: _btLastResults.map(function(r) {
+      var confStr = (r.confidence || '').toString().toUpperCase();
       return {
         time:        r.time,
         symbol:      r.symbol,
         direction:   r.direction,
         confidence:  r.confidence,
+        confidence_numeric: CONF_NUM[confStr] || null,
         entry:       r.entry,
         sl:          r.sl,
         sl_pct:      r.sl_pct,
@@ -5109,6 +5130,7 @@ function exportAnalysis() {
         bt_pnl_r:    r.bt_pnl_r,
         bt_candles:  r.bt_candles,
         bt_note:     r.bt_note,
+        bt_exit_reason: r.bt_exit_reason || null,
         num_conditions: r.num_conditions,
         num_warnings:   r.num_warnings,
       };

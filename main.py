@@ -127,6 +127,136 @@ scanner_running = False
 scanner_status  = {"is_scanning": False, "last_scan": None,
                    "next_scan": None, "scan_count": 0}
 
+_loss_cooldown_cache = {}  # (sym, dir) -> (checked_at_ts, loss_count)
+
+def _count_recent_losses(symbol: str, direction: str, hours: int = 12) -> int:
+    """
+    Đếm số LOSS gần đây cho (symbol, direction) bằng cách:
+      - Lọc history items cùng (symbol, direction) trong `hours` qua
+      - Nếu có ≥2 candidates, fetch M15 klines 1 lần và check SL hit
+    Cache 5 phút trong process để giảm API call.
+    """
+    if not symbol or direction not in ("LONG", "SHORT"):
+        return 0
+    import time as _t
+    now = _t.time()
+    key = (symbol, direction)
+    cached = _loss_cooldown_cache.get(key)
+    if cached and (now - cached[0]) < 300:
+        return cached[1]
+
+    cutoff = now - hours * 3600
+    try:
+        history = load_history()
+    except Exception:
+        history = []
+
+    recent = []
+    for h in history[-300:]:
+        if h.get("symbol") != symbol or h.get("direction") != direction:
+            continue
+        try:
+            ts = datetime.fromisoformat(h.get("time", "")).timestamp()
+        except Exception:
+            continue
+        if ts < cutoff:
+            continue
+        recent.append((ts, h))
+
+    if len(recent) < 2:
+        _loss_cooldown_cache[key] = (now, 0)
+        return 0
+
+    try:
+        from core.binance import fetch_klines
+        oldest_ts = min(ts for ts, _ in recent)
+        hours_back = max(1.0, (now - oldest_ts) / 3600 + 0.5)
+        candles_needed = min(int(hours_back * 4) + 5, 200)
+        df = fetch_klines(symbol, "15m", candles_needed, force_futures=True)
+        if df is None or len(df) == 0:
+            _loss_cooldown_cache[key] = (now, 0)
+            return 0
+        df = df.copy()
+        df["ts"] = df.index.astype("int64") // 10**9
+    except Exception:
+        _loss_cooldown_cache[key] = (now, 0)
+        return 0
+
+    loss_count = 0
+    for sig_ts, h in recent:
+        try:
+            sl = float(h.get("sl") or 0)
+        except (TypeError, ValueError):
+            continue
+        if sl <= 0:
+            continue
+        df_after = df[df["ts"] >= sig_ts - 60]
+        if df_after.empty:
+            continue
+        try:
+            if direction == "LONG":
+                if float(df_after["low"].min()) <= sl:
+                    loss_count += 1
+            else:
+                if float(df_after["high"].max()) >= sl:
+                    loss_count += 1
+        except Exception:
+            continue
+
+    _loss_cooldown_cache[key] = (now, loss_count)
+    return loss_count
+
+
+def _should_block_signal(r: dict):
+    """
+    Lọc signal dựa trên backtest 72h (báo cáo 2026-04-30):
+    - LONG + rr > 2.5         → TP quá xa cho LONG (WR 3-12%); nhưng SHORT RR≥3 WR=83% nên KHÔNG cap SHORT
+    - LONG + oi_change > 8%   → FOMO chase (WR=7-10% ở OI≥10%)
+    - LONG + funding < -0.01% → market đang bear-bias chưa squeeze (0W/19L)
+    - cooldown 12h: (symbol, direction) đã LOSS ≥2 lần → block (case AXL/ALGO 4L)
+    Trả về (block: bool, reason: str|None).
+    """
+    direction = r.get("direction", "")
+    try:
+        rr = float(r.get("rr") or 0)
+    except (TypeError, ValueError):
+        rr = 0
+    # RR cap CHỈ áp cho LONG (SHORT high-RR thắng nhiều — CRCL 3.57R, PNUT 6.99R)
+    if direction == "LONG" and rr > 2.5:
+        return True, f"LONG RR={rr:.2f} > 2.5 (TP xa, LONG-RR>2.5 backtest WR=3-12%)"
+
+    sym = r.get("symbol", "")
+    if sym and direction in ("LONG", "SHORT"):
+        recent_losses = _count_recent_losses(sym, direction, hours=12)
+        if recent_losses >= 2:
+            return True, f"{sym} {direction} đã LOSS {recent_losses}x trong 12h (cooldown)"
+
+    if direction != "LONG":
+        return False, None
+
+    mk = r.get("market") or {}
+    oi_change = mk.get("oi_change", r.get("oi_change"))
+    funding   = mk.get("funding",   r.get("funding"))
+
+    if oi_change is not None:
+        try:
+            oi_v = float(oi_change)
+            if oi_v > 8:
+                return True, f"LONG oi_change {oi_v:+.1f}% > 8% (FOMO, backtest WR=7-10%)"
+        except (TypeError, ValueError):
+            pass
+
+    if funding is not None:
+        try:
+            f_v = float(funding)
+            if f_v < -0.01:
+                return True, f"LONG funding {f_v:+.3f}% < -0.01% (heavy-short bias, backtest 0/19)"
+        except (TypeError, ValueError):
+            pass
+
+    return False, None
+
+
 def _is_duplicate_signal(result: dict, history: list, window_hours: int = 2) -> bool:
     """
     Kiểm tra signal có phải duplicate không.
@@ -337,6 +467,12 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
     if rr < 1.5:
         return
 
+    # Filter backtest 72h (2026-04-30): chặn LONG-FOMO/funding âm + RR quá xa
+    bt_block, bt_reason = _should_block_signal(result)
+    if bt_block:
+        print(f"[BT FILTER] {sym} {direction} watchlist alert blocked: {bt_reason}")
+        return
+
     # ── Alert types ──
     # 1. GO: vào ngay
     # 2. APPROACHING: giá đang tiến gần entry tốt (< 0.5%) — chuẩn bị vào
@@ -408,6 +544,78 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
 
 
 _watchlist_alert_cooldown = {}
+
+_funding_spike_last_run = {"ts": 0}
+
+def _auto_add_funding_spike_watchlist(cfg, min_volume: float = 20_000_000,
+                                       funding_threshold: float = 0.05,
+                                       max_add: int = 5,
+                                       run_interval_sec: int = 1800) -> list:
+    """
+    Tự động thêm vào watchlist các coin có funding spike — pattern thắng cao
+    (case CRCL: funding +0.16% → +3.57R; setup `fund_pos_oi_up` WR=90% trên backtest).
+
+    Logic:
+      - Throttle ≥30 phút giữa 2 lần chạy
+      - Lấy top-volume futures pairs (>= min_volume)
+      - Lấy tất cả funding rates trong 1 API call
+      - Lọc coin có |funding| > funding_threshold (mặc định 0.05%)
+      - Sort theo |funding| giảm dần, lấy max_add coin chưa có trong watchlist
+      - Add vào cfg["symbols"] với algo RANGE_SCALP (vì M15 reversal bắt setup nhanh)
+      - Save config
+
+    Returns: list các symbol vừa add (rỗng nếu không có / chưa đến lúc chạy).
+    """
+    import time as _t
+    now = _t.time()
+    if now - _funding_spike_last_run["ts"] < run_interval_sec:
+        return []
+    _funding_spike_last_run["ts"] = now
+
+    try:
+        from core.binance import fetch_all_futures_tickers, fetch_all_funding_rates
+        tickers  = fetch_all_futures_tickers(min_volume_usd=min_volume)
+        fundings = fetch_all_funding_rates()
+    except Exception as e:
+        print(f"[FUNDING SPIKE] Fetch error: {e}")
+        return []
+
+    if not tickers or not fundings:
+        return []
+
+    existing = set(cfg.get("symbols", []))
+    candidates = []
+    for t in tickers:
+        sym = t.get("symbol", "")
+        if sym in existing:
+            continue
+        f = fundings.get(sym)
+        if f is None:
+            continue
+        if abs(f) > funding_threshold:
+            candidates.append((sym, f, t.get("volume_24h", 0)))
+
+    if not candidates:
+        return []
+
+    # Ưu tiên |funding| lớn nhất
+    candidates.sort(key=lambda x: -abs(x[1]))
+    picked = candidates[:max_add]
+
+    if "watchlist_algos" not in cfg:
+        cfg["watchlist_algos"] = {}
+
+    added = []
+    for sym, f, vol in picked:
+        cfg["symbols"].append(sym)
+        cfg["watchlist_algos"][sym] = "RANGE_SCALP"
+        added.append(sym)
+        direction_hint = "SHORT" if f > 0 else "LONG"
+        print(f"[FUNDING SPIKE] +{sym} funding {f:+.4f}% vol {vol/1e6:.1f}M → watchlist (hint: {direction_hint})")
+
+    if added:
+        save_config(cfg)
+    return added
 
 
 def dashboard_scan_cycle(cfg):
@@ -489,6 +697,12 @@ def market_scan_cycle(cfg):
             continue
         if dirr == "SHORT" and d1_up and h4_up:
             print(f"[TELEGRAM BLOCK] {r.get('symbol')} SHORT blocked: D1={d1_b} H4={h4_b}")
+            continue
+
+        # Filter backtest 72h (2026-04-30): chặn LONG-FOMO/funding âm + RR quá xa
+        bt_block, bt_reason = _should_block_signal(r)
+        if bt_block:
+            print(f"[BT FILTER] {r.get('symbol')} {dirr} blocked: {bt_reason}")
             continue
 
         high_signals.append(r)
@@ -746,6 +960,15 @@ def dashboard_scanner_loop():
 
             scanner_status["is_scanning"] = True
             scanner_status["scan_start"]  = _local_isoformat()
+
+            # Auto-add coin có funding spike vào watchlist (throttle 30 phút bên trong)
+            if cfg.get("auto_funding_watchlist", True):
+                try:
+                    added = _auto_add_funding_spike_watchlist(cfg)
+                    if added:
+                        cfg = load_config()  # reload sau khi save
+                except Exception as e:
+                    print(f"[FUNDING SPIKE ERROR] {e}")
 
             # Scan toàn thị trường futures — alert + lưu history cho HIGH
             try:
@@ -1128,6 +1351,28 @@ def backtest_signal(signal: dict) -> dict:
 
         sl_pct_val   = float(signal.get("sl_pct", 2))
         unrealized_r = round(unrealized / sl_pct_val, 2) if sl_pct_val > 0 else None
+
+        # ── Force-close timeout: nếu signal sống quá lâu mà chưa TP/SL → close at market ──
+        # Backtest hiện có 53% signals OPEN sau 72h → expectancy không tin được.
+        # Sau timeout, classify theo PnL hiện tại: >0R = WIN, ≤0R = LOSS.
+        timeout_h_map = {
+            "SCALP":       8,
+            "RANGE_SCALP": 12,
+            "SWING_H1":    24,
+            "SWING_H4":    72,
+        }
+        timeout_h = timeout_h_map.get(strategy, 24)
+        if hours_since >= timeout_h and unrealized_r is not None:
+            forced_result = "WIN" if unrealized_r > 0 else "LOSS"
+            return {**signal,
+                    "bt_result":         forced_result,
+                    "bt_note":           f"TIMEOUT {timeout_h}h ({bt_label}) — force close @ {round(last_price,6)} ({unrealized:+.2f}% / {unrealized_r:+.2f}R)",
+                    "bt_candles":        len(df_after),
+                    "bt_pnl_r":          unrealized_r,
+                    "bt_exit_price":     round(last_price, 6),
+                    "bt_exit_reason":    "TIMEOUT",
+                    "bt_unrealized_pct": round(unrealized, 2),
+                    "bt_unrealized_r":   unrealized_r}
 
         # Diagnostic: actual extremes after entry (giá đã đi tới đâu thực sự)
         diag_low  = round(actual_low_after, 6)  if actual_low_after  != float("inf")  else None
@@ -3059,6 +3304,25 @@ def set_scan_modes():
     cfg["scan_modes"] = [m for m in modes if m in ("TREND", "RANGE_SCALP")]
     save_config(cfg)
     return jsonify({"ok": True, "scan_modes": cfg["scan_modes"]})
+
+
+@app.route("/api/watchlist/funding-spike-scan", methods=["POST"])
+def funding_spike_scan_now():
+    """Manual trigger quét funding spike + auto-add vào watchlist.
+    Body optional: {min_volume, funding_threshold, max_add}.
+    Bỏ throttle để test ngay.
+    """
+    data = request.get_json() or {}
+    cfg  = load_config()
+    _funding_spike_last_run["ts"] = 0  # reset throttle
+    added = _auto_add_funding_spike_watchlist(
+        cfg,
+        min_volume       = float(data.get("min_volume", 20_000_000)),
+        funding_threshold= float(data.get("funding_threshold", 0.05)),
+        max_add          = int(data.get("max_add", 5)),
+        run_interval_sec = 0,
+    )
+    return jsonify({"ok": True, "added": added, "total_watchlist": len(load_config().get("symbols", []))})
 
 
 @app.route("/api/config/watchlist-algo", methods=["POST"])

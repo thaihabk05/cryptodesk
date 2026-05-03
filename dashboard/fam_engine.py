@@ -411,6 +411,20 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến H1 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
+    # ── PATCH K: LONG funding hard block (data-driven, backtest 168h) ──
+    # LONG funding < -0.01% có WR=26%, sumR=-6.94R — vùng thực sự xấu.
+    if direction == "LONG" and funding is not None:
+        try:
+            if float(funding) < -0.01:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 BLOCK LONG — funding {float(funding):+.4f}% < -0.01% "
+                    f"(heavy-short bias, backtest WR=26%)"
+                )
+        except (TypeError, ValueError):
+            pass
+
     # ── PATCH A: BTC Hard Block ──
     # Không ra signal ngược chiều BTC macro — đây là nguyên nhân chính loss
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")

@@ -836,9 +836,18 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
             conditions.append("🔻 " + ex_note)
             exhaustion_short_triggered = True
 
+    # PATCH K: LONG funding hard block (data-driven, backtest 168h)
+    # LONG funding < -0.01% WR=26%, sumR=-6.94R — block trước khi xét confidence
+    funding_block_long = (direction == "LONG" and funding is not None
+                          and isinstance(funding, (int, float)) and funding < -0.01)
+
     if pump_block:
         direction  = "WAIT"
         confidence = "LOW"
+    elif funding_block_long:
+        direction  = "WAIT"
+        confidence = "LOW"
+        warnings.append(f"🚫 BLOCK LONG — funding {funding:+.4f}% < -0.01% (backtest WR=26%)")
     elif rr < 1.5:
         direction  = "WAIT"
         confidence = "LOW"

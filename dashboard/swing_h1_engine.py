@@ -230,6 +230,22 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến H1 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
+    # ── PATCH K: LONG funding hard block (data-driven, backtest 168h) ──
+    # LONG funding < -0.01% có WR=26%, sumR=-6.94R trên 57 signals — vùng thực sự xấu.
+    # Filter này đã có trong _should_block_signal (market_scan layer) nhưng không áp
+    # dụng cho dashboard analyze API → engine cần tự enforce.
+    if direction == "LONG" and funding is not None:
+        try:
+            if float(funding) < -0.01:
+                direction  = "WAIT"
+                confidence = "LOW"
+                all_warnings.insert(0,
+                    f"🚫 BLOCK LONG — funding {float(funding):+.4f}% < -0.01% "
+                    f"(heavy-short bias, backtest WR=26%)"
+                )
+        except (TypeError, ValueError):
+            pass
+
     # ── PATCH A: BTC counter-trend — DECOUPLE-AWARE (case ARB 30/4-3/5) ──
     # Cũ: hard block khi BTC ngược chiều → bỏ lỡ alt decoupled
     # Mới: nếu alt structure mạnh (score≥4) hoặc alt vs BTC 24h spread ≥ 2pp ngược chiều

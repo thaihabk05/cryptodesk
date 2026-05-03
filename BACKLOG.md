@@ -13,6 +13,14 @@
 - ✅ **Exhaustion candle detector (SHORT only)** — `core/indicators.py:detect_exhaustion_short`. Tích hợp vào `range_engine` + `swing_h1_engine`. Verify backtest 2026-04-30: precision 71%, recall 20% (5/25 SHORT-WIN: CRCL/OPG/BASED/ROBO/MON). Threshold: body ≥ 1.5×ATR(14), vol ≥ 1.5×avg(20), close ≥ 50% từ đáy nến. Guard: chỉ trigger khi engine đang ra SHORT (tránh spurious LONG-LOSS).
 - ✅ **Save history cho watchlist + position reversal** — `_check_watchlist_alert` + `_check_position_reversal` giờ save history với `source` tag. Bypass dedup vì cooldown đã handled ở caller. Schema thêm `source`, `algo`, `alert_type` (commit aa2e881).
 - ✅ **BTC counter-trend block decouple-aware** — `dashboard/swing_h1_engine.py` PATCH A. Trước: hard block SHORT/LONG khi BTC ngược chiều → bỏ lỡ alt decoupled. Sau: nếu alt structure mạnh (score≥4) hoặc spread alt-BTC 24h ≥ 2pp ngược chiều → giữ direction, hạ confidence 1 bậc. Bằng chứng case ARB 28/4-3/5: BTC +0.98%, ARB -6.16%, spread -7.14pp; 25/123 H1 candles "BTC up + ARB down". Verify ARB live: trigger "Alt decoupled bearish: -2.7% vs BTC -0.1% (-2.6pp) — giữ SHORT, conf hạ MEDIUM" ✅ (commit 92c49ff).
+- ✅ **Funding filter universal (3/5)** — `swing_h1_engine`, `range_engine`, `fam_engine` đều có PATCH K block LONG khi funding < -0.01% (data backtest 168h: WR=26%, sumR=-6.94R trên 57 signals). Trước đó filter chỉ áp dụng ở `_should_block_signal` (market_scan layer), không ở dashboard analyze API → signal APT hôm 3/5 (funding -0.0211%) lọt qua filter và ra HIGH confidence sai.
+- ❌ **Verify 4 fix khác — 3/4 ngược intuition (3/5)**: Sau case APT, em đề xuất 4 fix thêm. Verify trên 120-340 closed signals:
+  - **#2 Hammer + volume**: Trực giác "hammer cần vol cao". Data: hammer LONG vol<0.7× WR=67%, vol≥1.5× WR=50% — NGƯỢC. Skip.
+  - **#3 Range vs trending**: Trực giác "RANGE_SCALP cần sideways thực sự". Data: flush 2-3% WR=62%, sideways<1% WR=36% — NGƯỢC. Skip.
+  - **#5 M15 desc → block LONG**: Trực giác "LONG counter momentum M15". Data: M15 desc WR=57%, asc 44% — NGƯỢC. Skip.
+  - **#4 SL ATR floor**: Sample ATR field missing trong export. sl_pct buckets WR fairly equal (~38%) — chưa thấy pattern rõ. Skip.
+  - Bài học: trader real pattern (mean reversion, exhaustion) ngược "trend continuation logic". Luôn verify ≥50 samples trước build.
+
 - ✅ **Entry optimal — backtest fill rate verify** (Stage 0+1+2). Trước: backtest dùng giá market thời điểm signal làm entry → khác hoàn toàn cách user dùng limit order tại entry_opt. Sau:
   - Stage 0: `_save_signal_to_history` lưu `entry_opt`, `entry_opt_label`, `entry_opt_rr`. Frontend backtest export thêm các fields này + `bt_used_entry`, `bt_fill_candles`.
   - Stage 1: `backtest_signal` swap entry → entry_opt nếu có (chênh ≥0.05% và đúng phía). SL/TP giữ key levels, recompute sl_pct/tp1_pct từ entry mới. Status mới `EXPIRED` khi không chạm trong 8h.

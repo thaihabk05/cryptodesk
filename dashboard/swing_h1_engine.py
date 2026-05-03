@@ -461,6 +461,45 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
     tp1_pct = round(abs(tp1 - entry) / entry * 100, 2)      if entry != tp1 else 0
     rr      = round(tp1_pct / sl_pct, 2)                    if sl_pct > 0 else 0
 
+    # ── Entry optimal cho SWING_H1 (verify fill rate sau backtest) ──
+    # Pattern: Fib pullback H1 + MA34 H1 + MA89 H1, lấy gần price nhất, ≥ 0.3% off
+    def _calc_entry_opt_h1(price, fib_h1, ma34, ma89, direction):
+        candidates = []
+        if direction == "LONG":
+            for key in ["0.500", "0.618", "0.382"]:
+                v = fib_h1.get(key, 0)
+                if 0 < v < price * 0.997:
+                    candidates.append((abs(v - price), f"Fib {key} H1", v))
+            if 0 < ma34 < price * 0.997:
+                candidates.append((abs(ma34 - price), "MA34 H1", ma34))
+            if 0 < ma89 < price * 0.997:
+                candidates.append((abs(ma89 - price), "MA89 H1", ma89))
+        elif direction == "SHORT":
+            for key in ["0.500", "0.618", "0.382"]:
+                v = fib_h1.get(key, 0)
+                if v > price * 1.003:
+                    candidates.append((abs(v - price), f"Fib {key} H1", v))
+            if ma34 > price * 1.003:
+                candidates.append((abs(ma34 - price), "MA34 H1", ma34))
+            if ma89 > price * 1.003:
+                candidates.append((abs(ma89 - price), "MA89 H1", ma89))
+        if not candidates:
+            return None, None
+        candidates.sort(key=lambda x: x[0])
+        _, label, val = candidates[0]
+        return smart_round(val), label
+
+    entry_opt, entry_opt_label = _calc_entry_opt_h1(price, fib_h1_ret, ma34_h1, ma89_h1, direction) \
+        if direction in ("LONG", "SHORT") else (None, None)
+    entry_opt_rr = None
+    if entry_opt is not None:
+        try:
+            opt_sl_pct  = abs(entry_opt - sl_price) / entry_opt * 100
+            opt_tp1_pct = abs(tp1 - entry_opt) / entry_opt * 100
+            entry_opt_rr = round(opt_tp1_pct / opt_sl_pct, 2) if opt_sl_pct > 0 else None
+        except Exception:
+            entry_opt_rr = None
+
     # Drop nếu R:R < 1
     if direction in ("LONG", "SHORT") and rr < 1.5:
         all_warnings.append(f"❌ R:R {rr} < 1.5 — signal yếu, chờ H1 pullback về MA")
@@ -579,9 +618,9 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         "no_trade_zone": bool(no_trade),
         "entry":         smart_round(entry),
         "entry_now":     smart_round(entry),
-        "entry_opt":     None,
-        "entry_opt_label": None,
-        "entry_opt_rr":  None,
+        "entry_opt":     entry_opt,
+        "entry_opt_label": entry_opt_label,
+        "entry_opt_rr":  entry_opt_rr,
         "sl":            sl_price,
         "tp1":           tp1,
         "tp2":           tp2,

@@ -864,6 +864,27 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
 
     entry_verdict = "GO" if (confidence in ("HIGH", "MEDIUM") and direction in ("LONG", "SHORT") and reversal_ok) else "WAIT"
 
+    # ── Entry optimal cho RANGE_SCALP ──
+    # LONG: ưu tiên entry tại đáy range (range_low * 1.005) hoặc gần range_low
+    # SHORT: ưu tiên entry tại đỉnh range (range_high * 0.995) hoặc gần range_high
+    # Chỉ propose nếu khác price ≥ 0.3% (tránh trigger noise)
+    entry_opt = None
+    entry_opt_label = None
+    entry_opt_rr = None
+    if direction == "LONG" and range_low and range_low < price * 0.997:
+        entry_opt = smart_round(range_low * 1.005)
+        entry_opt_label = "Range bottom"
+    elif direction == "SHORT" and range_high and range_high > price * 1.003:
+        entry_opt = smart_round(range_high * 0.995)
+        entry_opt_label = "Range top"
+    if entry_opt is not None and sl is not None and tp1 is not None:
+        try:
+            opt_sl_pct  = abs(entry_opt - sl) / entry_opt * 100
+            opt_tp1_pct = abs(tp1 - entry_opt) / entry_opt * 100
+            entry_opt_rr = round(opt_tp1_pct / opt_sl_pct, 2) if opt_sl_pct > 0 else None
+        except Exception:
+            entry_opt_rr = None
+
     return {
         "symbol":          symbol,
         "strategy":        "RANGE_SCALP",
@@ -871,6 +892,9 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         "confidence":      confidence,
         "price":           smart_round(price),
         "entry":           smart_round(price),
+        "entry_opt":       entry_opt,
+        "entry_opt_label": entry_opt_label,
+        "entry_opt_rr":    entry_opt_rr,
         "sl":              sl,
         "sl_pct":          sl_pct,
         "tp1":             tp1,

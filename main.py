@@ -326,6 +326,10 @@ def _save_signal_to_history(result: dict):
         "tp1_pct":         result.get("tp1_pct", 0),
         "tp2":             result.get("tp2", 0),
         "rr":              result.get("rr", 0),
+        # ── Entry optimal — dùng cho backtest fill-rate verify ──
+        "entry_opt":       result.get("entry_opt"),
+        "entry_opt_label": result.get("entry_opt_label"),
+        "entry_opt_rr":    result.get("entry_opt_rr"),
         "d1_bias":         result.get("d1", {}).get("bias", "") or result.get("d1_bias", ""),
         "h4_bias":         result.get("h4", {}).get("bias", "") or result.get("h4_bias", ""),
         "score":           result.get("score", 0),
@@ -1180,10 +1184,35 @@ def backtest_signal(signal: dict) -> dict:
     if direction == "WAIT":
         return {**signal, "bt_result": "SKIP", "bt_note": "Direction=WAIT — không có lệnh thực tế",
                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
-    entry     = float(signal["entry"])
-    sl        = float(signal["sl"])
-    tp1       = float(signal["tp1"])
-    sig_time  = signal["time"]
+
+    # ── Entry optimal logic (verify fill rate của engine recommend) ──
+    # Nếu signal có entry_opt khác price → coi như limit order tại entry_opt
+    # SL/TP giữ nguyên giá tuyệt đối (key levels không đổi), chỉ tính lại sl_pct/tp1_pct từ entry mới
+    entry_orig = float(signal["entry"])
+    sl         = float(signal["sl"])
+    tp1        = float(signal["tp1"])
+    sig_time   = signal["time"]
+    sig_price  = float(signal.get("price", entry_orig))
+
+    entry_opt_raw = signal.get("entry_opt")
+    bt_used_entry = "MARKET"
+    if entry_opt_raw is not None:
+        try:
+            entry_opt_val = float(entry_opt_raw)
+            # Chỉ swap nếu entry_opt khác meaningful (>0.05%) so với sig_price
+            # và đúng phía (LONG: entry_opt < sig_price; SHORT: entry_opt > sig_price)
+            diff_pct = abs(entry_opt_val - sig_price) / sig_price * 100
+            valid_side = (direction == "LONG"  and entry_opt_val < sig_price) or \
+                         (direction == "SHORT" and entry_opt_val > sig_price)
+            if diff_pct >= 0.05 and valid_side:
+                entry = entry_opt_val
+                bt_used_entry = "OPT"
+            else:
+                entry = entry_orig
+        except (TypeError, ValueError):
+            entry = entry_orig
+    else:
+        entry = entry_orig
 
     try:
         ts_parsed = pd.Timestamp(sig_time)
@@ -1226,36 +1255,45 @@ def backtest_signal(signal: dict) -> dict:
 
         df_after = df[df["ts"] > sig_ts].reset_index(drop=True)
 
-        sl_pct  = float(signal.get("sl_pct", 2))
-        tp1_pct = float(signal.get("tp1_pct", 3))
+        # Recompute sl_pct / tp1_pct từ entry đang dùng (có thể là entry_opt)
+        if bt_used_entry == "OPT" and entry > 0:
+            sl_pct  = abs(entry - sl) / entry * 100
+            tp1_pct = abs(tp1 - entry) / entry * 100
+        else:
+            sl_pct  = float(signal.get("sl_pct", 2))
+            tp1_pct = float(signal.get("tp1_pct", 3))
+
+        # Timeout chờ entry_opt khớp — nếu là limit order qua entry_opt, max 8h chờ
+        FILL_TIMEOUT_HOURS = 8
 
         # ── Nếu không có nến nào sau signal → dùng nến cuối để check ──
         if len(df_after) == 0:
             last_price = float(df["close"].iloc[-1])
+            _ec = {"bt_used_entry": bt_used_entry, "bt_fill_candles": None}
             if direction == "LONG":
                 if last_price <= sl:
                     return {**signal, "bt_result": "LOSS",
                             "bt_note": f"Giá {round(last_price,6)} dưới SL {sl}",
                             "bt_candles": 0, "bt_pnl_r": -1.0,
-                            "bt_exit_price": round(sl, 6)}
+                            "bt_exit_price": round(sl, 6), "bt_exit_reason": "SL", **_ec}
                 if last_price >= tp1:
                     return {**signal, "bt_result": "WIN",
                             "bt_note": f"Giá {round(last_price,6)} trên TP1 {tp1}",
                             "bt_candles": 0,
                             "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
-                            "bt_exit_price": round(tp1, 6)}
+                            "bt_exit_price": round(tp1, 6), "bt_exit_reason": "TP", **_ec}
             else:
                 if last_price >= sl:
                     return {**signal, "bt_result": "LOSS",
                             "bt_note": f"Giá {round(last_price,6)} trên SL {sl}",
                             "bt_candles": 0, "bt_pnl_r": -1.0,
-                            "bt_exit_price": round(sl, 6)}
+                            "bt_exit_price": round(sl, 6), "bt_exit_reason": "SL", **_ec}
                 if last_price <= tp1:
                     return {**signal, "bt_result": "WIN",
                             "bt_note": f"Giá {round(last_price,6)} dưới TP1 {tp1}",
                             "bt_candles": 0,
                             "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
-                            "bt_exit_price": round(tp1, 6)}
+                            "bt_exit_price": round(tp1, 6), "bt_exit_reason": "TP", **_ec}
             # Chưa chạm → OPEN
             unrealized = round((last_price - entry) / entry * 100, 2) if direction == "LONG" \
                          else round((entry - last_price) / entry * 100, 2)
@@ -1264,10 +1302,9 @@ def backtest_signal(signal: dict) -> dict:
                     "bt_note": f"Giá hiện tại {round(last_price,6)} ({unrealized:+.2f}%) — dùng {bt_label}",
                     "bt_candles": 0, "bt_pnl_r": None,
                     "bt_unrealized_pct": unrealized, "bt_unrealized_r": unrealized_r,
-                    "bt_exit_price": round(last_price, 6)}
+                    "bt_exit_price": round(last_price, 6), **_ec}
 
         # ── Check SL/TP trên từng nến (market order = entry đã khớp ngay) ──
-        sig_price      = float(signal.get("price", entry))
         is_limit_long  = direction == "LONG"  and entry < sig_price * 0.999
         is_limit_short = direction == "SHORT" and entry > sig_price * 1.001
         is_limit       = is_limit_long or is_limit_short
@@ -1285,6 +1322,18 @@ def backtest_signal(signal: dict) -> dict:
 
             # Nếu là Limit, chờ giá chạm entry trước
             if not entry_filled:
+                # EXPIRED check: nếu vượt timeout chờ fill → cancel signal
+                elapsed_h = (i + 1) * minutes_per_candle / 60
+                if elapsed_h > FILL_TIMEOUT_HOURS:
+                    return {**signal,
+                            "bt_result":      "EXPIRED",
+                            "bt_note":        f"EXPIRED — không chạm {('entry_opt' if bt_used_entry=='OPT' else 'limit entry')} {entry} trong {FILL_TIMEOUT_HOURS}h ({i+1} nến {bt_label})",
+                            "bt_candles":     i + 1,
+                            "bt_pnl_r":       None,
+                            "bt_exit_price":  None,
+                            "bt_exit_reason": "EXPIRED",
+                            "bt_used_entry":  bt_used_entry,
+                            "bt_fill_candles": None}
                 if direction == "LONG"  and low  <= entry:
                     entry_filled   = True
                     entry_fill_idx = i
@@ -1325,26 +1374,42 @@ def backtest_signal(signal: dict) -> dict:
             fill_note = f" (khớp nến {entry_fill_idx+1})" if entry_fill_idx is not None else ""
             time_est = round((i+1) * minutes_per_candle / 60, 1)
             return {**signal,
-                    "bt_result":     result,
-                    "bt_note":       f"Chạm {'TP1' if result=='WIN' else 'SL'} sau {i+1} nến {bt_label} (~{time_est}h){fill_note}",
-                    "bt_candles":    i + 1,
-                    "bt_pnl_r":      pnl_r,
-                    "bt_exit_price": round(exit_price, 6)}
+                    "bt_result":       result,
+                    "bt_note":         f"Chạm {'TP1' if result=='WIN' else 'SL'} sau {i+1} nến {bt_label} (~{time_est}h){fill_note}",
+                    "bt_candles":      i + 1,
+                    "bt_pnl_r":        pnl_r,
+                    "bt_exit_price":   round(exit_price, 6),
+                    "bt_exit_reason":  "TP" if result == "WIN" else "SL",
+                    "bt_used_entry":   bt_used_entry,
+                    "bt_fill_candles": entry_fill_idx}
 
-        # ── Bước 3: Hết dữ liệu, chưa kết quả ──
+        # ── Bước 3: Hết dữ liệu ──
+        # 3a: Limit chưa fill → nếu hours_since vượt timeout → EXPIRED, ngược lại PENDING
         if not entry_filled:
-            # Lệnh Limit chưa được khớp lần nào
             last_price = float(df_after["close"].iloc[-1])
             dist_pct   = round((last_price - entry) / entry * 100, 2) if direction == "LONG" \
                          else round((entry - last_price) / entry * 100, 2)
+            if hours_since > FILL_TIMEOUT_HOURS:
+                return {**signal,
+                        "bt_result":      "EXPIRED",
+                        "bt_note":        f"EXPIRED — không chạm {('entry_opt' if bt_used_entry=='OPT' else 'limit entry')} {entry} sau {hours_since:.1f}h",
+                        "bt_candles":     len(df_after),
+                        "bt_pnl_r":       None,
+                        "bt_exit_price":  None,
+                        "bt_exit_reason": "EXPIRED",
+                        "bt_used_entry":  bt_used_entry,
+                        "bt_fill_candles": None,
+                        "bt_unrealized_pct": dist_pct}
             return {**signal,
                     "bt_result":         "PENDING",
-                    "bt_note":           f"Chưa khớp lệnh — giá hiện tại {round(last_price,6)}, entry {entry} chưa được chạm",
+                    "bt_note":           f"Chưa khớp lệnh — giá {round(last_price,6)}, chờ chạm {entry} (đã {hours_since:.1f}h / {FILL_TIMEOUT_HOURS}h timeout)",
                     "bt_candles":        len(df_after),
                     "bt_pnl_r":          None,
                     "bt_unrealized_pct": dist_pct,
                     "bt_unrealized_r":   None,
-                    "bt_exit_price":     round(last_price, 6)}
+                    "bt_exit_price":     round(last_price, 6),
+                    "bt_used_entry":     bt_used_entry,
+                    "bt_fill_candles":   None}
 
         # Đã khớp nhưng chưa chạm SL/TP — check lần cuối bằng close giá mới nhất
         last_price = float(df_after["close"].iloc[-1])
@@ -1352,36 +1417,37 @@ def backtest_signal(signal: dict) -> dict:
         last_low   = float(df_after["low"].iloc[-1])
 
         # Safety check: nếu giá hiện tại đã vượt TP1 hoặc SL → force result
+        _common = {"bt_used_entry": bt_used_entry, "bt_fill_candles": entry_fill_idx}
         if direction == "LONG":
             if last_high >= tp1:
                 return {**signal, "bt_result": "WIN",
                         "bt_note": f"TP1 chạm (close check) — giá {round(last_price,6)} vượt TP1 {tp1}",
                         "bt_candles": len(df_after), "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
-                        "bt_exit_price": round(tp1, 6)}
+                        "bt_exit_price": round(tp1, 6), "bt_exit_reason": "TP", **_common}
             if last_low <= sl:
                 return {**signal, "bt_result": "LOSS",
                         "bt_note": f"SL chạm (close check) — giá {round(last_price,6)} xuống SL {sl}",
                         "bt_candles": len(df_after), "bt_pnl_r": -1.0,
-                        "bt_exit_price": round(sl, 6)}
+                        "bt_exit_price": round(sl, 6), "bt_exit_reason": "SL", **_common}
         else:
             if last_low <= tp1:
                 return {**signal, "bt_result": "WIN",
                         "bt_note": f"TP1 chạm (close check) — giá {round(last_price,6)} xuống TP1 {tp1}",
                         "bt_candles": len(df_after), "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
-                        "bt_exit_price": round(tp1, 6)}
+                        "bt_exit_price": round(tp1, 6), "bt_exit_reason": "TP", **_common}
             if last_high >= sl:
                 return {**signal, "bt_result": "LOSS",
                         "bt_note": f"SL chạm (close check) — giá {round(last_price,6)} vượt SL {sl}",
                         "bt_candles": len(df_after), "bt_pnl_r": -1.0,
-                        "bt_exit_price": round(sl, 6)}
+                        "bt_exit_price": round(sl, 6), "bt_exit_reason": "SL", **_common}
 
         if direction == "LONG":
             unrealized = round((last_price - entry) / entry * 100, 2)
         else:
             unrealized = round((entry - last_price) / entry * 100, 2)
 
-        sl_pct_val   = float(signal.get("sl_pct", 2))
-        unrealized_r = round(unrealized / sl_pct_val, 2) if sl_pct_val > 0 else None
+        # Dùng sl_pct đã tính từ entry mới (entry_opt nếu có)
+        unrealized_r = round(unrealized / sl_pct, 2) if sl_pct > 0 else None
 
         # ── Force-close timeout: nếu signal sống quá lâu mà chưa TP/SL → close at market ──
         # Backtest hiện có 53% signals OPEN sau 72h → expectancy không tin được.
@@ -1403,7 +1469,9 @@ def backtest_signal(signal: dict) -> dict:
                     "bt_exit_price":     round(last_price, 6),
                     "bt_exit_reason":    "TIMEOUT",
                     "bt_unrealized_pct": round(unrealized, 2),
-                    "bt_unrealized_r":   unrealized_r}
+                    "bt_unrealized_r":   unrealized_r,
+                    "bt_used_entry":     bt_used_entry,
+                    "bt_fill_candles":   entry_fill_idx}
 
         # Diagnostic: actual extremes after entry (giá đã đi tới đâu thực sự)
         diag_low  = round(actual_low_after, 6)  if actual_low_after  != float("inf")  else None
@@ -1427,7 +1495,9 @@ def backtest_signal(signal: dict) -> dict:
                 "bt_unrealized_r":    unrealized_r,
                 "bt_exit_price":      round(last_price, 6),
                 "bt_actual_low":      diag_low,
-                "bt_actual_high":     diag_high}
+                "bt_actual_high":     diag_high,
+                "bt_used_entry":      bt_used_entry,
+                "bt_fill_candles":    entry_fill_idx}
 
     except Exception as e:
         return {**signal, "bt_result": "ERROR", "bt_note": str(e),

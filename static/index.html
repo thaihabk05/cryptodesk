@@ -3535,6 +3535,17 @@ function renderHistory() {
     var uid = d.symbol + '|' + d.time;
     var vol = d.volume_24h ? (d.volume_24h >= 1e6 ? (d.volume_24h/1e6).toFixed(1)+'M' : (d.volume_24h/1e3).toFixed(0)+'K') : '--';
     var strat = d.strategy === 'SCALP' ? '⚡' : d.strategy === 'SWING_H1' ? 'H1' : 'H4';
+    // Entry display: nếu có entry_opt → show 2 dòng (opt highlight + market dim)
+    var entryHtml;
+    if (d.entry_opt && d.entry_opt_rr) {
+      entryHtml = '<td style="line-height:1.3">' +
+        '<div class="mono" style="color:var(--accent);font-weight:700">🎯 '+fmt(d.entry_opt)+'</div>' +
+        '<div style="font-size:10px;color:var(--muted2)">RR 1:'+d.entry_opt_rr+' '+(d.entry_opt_label?'· '+d.entry_opt_label:'')+'</div>' +
+        '<div class="mono" style="font-size:10px;color:var(--muted2);margin-top:2px">M: '+fmt(d.entry)+'</div>' +
+        '</td>';
+    } else {
+      entryHtml = '<td class="mono" style="color:var(--accent)">'+fmt(d.entry)+'</td>';
+    }
     return '<tr id="hrow-'+i+'" style="cursor:pointer" onclick="showHistoryDetail('+i+')">' +
       '<td style="padding:6px 8px" onclick="event.stopPropagation()">' +
         '<input type="checkbox" data-uid="'+uid+'" data-idx="'+i+'" onchange="onHistCheck(this)"' +
@@ -3546,7 +3557,7 @@ function renderHistory() {
       '<td style="font-size:10px;color:var(--muted2)">'+strat+'</td>' +
       '<td>'+algoTag(d.algo)+'</td>' +
       '<td class="mono" style="color:var(--text)">'+fmt(d.price)+'</td>' +
-      '<td class="mono" style="color:var(--accent)">'+fmt(d.entry)+'</td>' +
+      entryHtml +
       '<td class="mono" style="color:var(--short)">'+fmt(d.sl)+' <span style="font-size:10px;color:var(--muted2)">-'+d.sl_pct+'%</span></td>' +
       '<td class="mono" style="color:var(--long)">'+fmt(d.tp1)+' <span style="font-size:10px;color:var(--muted2)">+'+d.tp1_pct+'%</span></td>' +
       '<td><span style="font-family:var(--mono);font-weight:800;color:'+rrColor(d.rr)+'">1:'+d.rr+'</span></td>' +
@@ -3565,8 +3576,12 @@ function renderHistory() {
     '</tr>';
   }).join('');
 
+  // Đếm signals có entry_opt
+  var withOpt = data.filter(function(d){return d.entry_opt && d.entry_opt_rr;}).length;
+  var optInfo = withOpt > 0 ? ' · '+withOpt+' có entry_opt' : '';
+
   document.getElementById('historyContent').innerHTML =
-    '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px">'+data.length+' signals — click để xem chi tiết</div>' +
+    '<div style="font-size:11px;color:var(--muted2);margin-bottom:8px">'+data.length+' signals — click để xem chi tiết'+optInfo+'</div>' +
     '<div class="table-wrap"><table>' +
     '<thead><tr>' +
       '<th style="width:28px"><input type="checkbox" id="histCheckAll" onchange="onHistCheckAll(this)"' +
@@ -3942,6 +3957,13 @@ function renderBtResultSummary(results, s, capital, leverage) {
   var losses  = results.filter(function(r){ return r.bt_result === 'LOSS'; });
   var opens   = results.filter(function(r){ return r.bt_result === 'OPEN'; });
   var pendings= results.filter(function(r){ return r.bt_result === 'PENDING'; });
+  var expired = results.filter(function(r){ return r.bt_result === 'EXPIRED'; });
+
+  // Entry optimal stats — fill rate + bt_used_entry
+  var withOpt    = results.filter(function(r){ return r.bt_used_entry === 'OPT'; });
+  var optFilled  = withOpt.filter(function(r){ return r.bt_fill_candles !== null && r.bt_fill_candles !== undefined; });
+  var optExpired = withOpt.filter(function(r){ return r.bt_result === 'EXPIRED'; });
+  var optFillRate = withOpt.length > 0 ? Math.round(optFilled.length / withOpt.length * 100) : null;
 
   // Tổng tiền thực tế từ từng lệnh
   var totalWinUsd  = Math.round(wins.reduce(function(a,r){
@@ -3975,6 +3997,8 @@ function renderBtResultSummary(results, s, capital, leverage) {
   ];
   if (opens.length)    items.push({ lbl: 'OPEN unrealized', val: unrealSign+totalUnrealUsd+'$ ('+opens.length+' lệnh)', color: unrealColor });
   if (pendings.length) items.push({ lbl: 'Chưa khớp',       val: pendings.length + ' lệnh',        color: 'var(--wait)' });
+  if (expired.length)  items.push({ lbl: '🟠 EXPIRED',      val: expired.length + ' (entry_opt không chạm 8h)', color: 'var(--short)' });
+  if (withOpt.length)  items.push({ lbl: '🎯 Entry_opt fill', val: optFillRate+'% ('+optFilled.length+'/'+withOpt.length+')', color: optFillRate>=60?'var(--long)':optFillRate>=40?'var(--wait)':'var(--short)' });
   if (hasClosed)       items.push({ lbl: 'Expectancy',       val: (s.expectancy>0?'+':'')+s.expectancy+'R/lệnh', color: netColor });
 
   box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:0;border-radius:8px;overflow:hidden;border:1px solid var(--border)">'
@@ -4107,8 +4131,8 @@ function renderBtTable(results, capital, leverage) {
   });
 
   var rows = results.map(function(r, i) {
-    var rc = r.bt_result==='WIN'?'var(--long)':r.bt_result==='LOSS'?'var(--short)':r.bt_result==='OPEN'?'var(--accent)':r.bt_result==='PENDING'?'var(--wait)':'var(--muted)';
-    var icon = r.bt_result==='WIN'?'✅':r.bt_result==='LOSS'?'❌':r.bt_result==='OPEN'?'⏳':r.bt_result==='PENDING'?'🕐':'⚠️';
+    var rc = r.bt_result==='WIN'?'var(--long)':r.bt_result==='LOSS'?'var(--short)':r.bt_result==='OPEN'?'var(--accent)':r.bt_result==='PENDING'?'var(--wait)':r.bt_result==='EXPIRED'?'var(--short)':'var(--muted)';
+    var icon = r.bt_result==='WIN'?'✅':r.bt_result==='LOSS'?'❌':r.bt_result==='OPEN'?'⏳':r.bt_result==='PENDING'?'🕐':r.bt_result==='EXPIRED'?'🟠':'⚠️';
     var pnl;
     if (r.bt_pnl_r !== null && r.bt_pnl_r !== undefined) {
       var usdPnl = r.bt_result === 'WIN'

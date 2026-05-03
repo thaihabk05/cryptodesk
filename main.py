@@ -413,17 +413,41 @@ def _send_high_alert(result: dict, token: str, chat_id: str):
     elif dirr == "SHORT" and any(x in d1_b+h4_b for x in ("UPTREND","BULLISH","LONG","BULL")):
         trend_warn = "!! CANH BAO: D1/H4 dang UP — Short counter-trend, rui ro cao"
 
+    # Entry optimal info (nếu có)
+    entry_opt       = result.get("entry_opt")
+    entry_opt_label = result.get("entry_opt_label")
+    entry_opt_rr    = result.get("entry_opt_rr")
+    has_entry_opt   = entry_opt is not None and entry_opt_rr is not None
+
+    # Status line: PENDING nếu có entry_opt, GO/WAIT theo verdict cũ
+    if has_entry_opt:
+        status_line = f"🟡 PENDING — cho gia cham entry toi uu trong 8h"
+    else:
+        status_line = verdict_line
+
     lines = [
         dir_emoji + " " + sym + " — " + dirr + " | HIGH",
-        verdict_line,
+        status_line,
     ]
     if trend_warn:
         lines.append(trend_warn)
     lines += [
         "--------------------",
         "Chien luoc: " + strat_label,
-        "Price: " + str(result.get("price","")) + " | R:R 1:" + str(result.get("rr","")),
-        "Entry: " + str(result.get("entry","")),
+        "Price hien tai: " + str(result.get("price","")),
+    ]
+    # Entry optimal nổi bật nếu có
+    if has_entry_opt:
+        lines += [
+            "🎯 ENTRY TOI UU: " + str(entry_opt) + " (" + str(entry_opt_label or "") + ")",
+            "   R:R 1:" + str(entry_opt_rr) + " — dat LIMIT cho gia cham",
+            "Hoac MARKET: " + str(result.get("entry","")) + " | R:R 1:" + str(result.get("rr","")),
+        ]
+    else:
+        lines += [
+            "Entry: " + str(result.get("entry","")) + " | R:R 1:" + str(result.get("rr","")),
+        ]
+    lines += [
         "SL: " + str(result.get("sl","")) + " (-" + str(result.get("sl_pct","")) + "%)",
         "TP1: " + str(result.get("tp1","")) + " (+" + str(result.get("tp1_pct","")) + "%) | TP2: " + str(result.get("tp2","")),
         "--------------------",
@@ -535,12 +559,26 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
     dir_emoji  = "🟢" if direction == "LONG" else "🔴"
     mk         = result.get("market", {})
 
-    type_emoji = "✅" if alert_type == "GO" else "⏰"
-    type_text  = "DA SAN SANG VAO LENH" if alert_type == "GO" else f"GIA SAP CHAM ENTRY {entry_opt}"
+    # Entry optimal info
+    entry_opt_label = result.get("entry_opt_label")
+    entry_opt_rr    = result.get("entry_opt_rr")
+    has_entry_opt   = entry_opt is not None and entry_opt_rr is not None
+
+    # Header status: PENDING nếu có entry_opt, GO nếu market entry là tốt rồi
+    if has_entry_opt:
+        status_emoji = "🟡"
+        status_text  = "PENDING — cho gia cham entry_opt (8h timeout)"
+    elif alert_type == "GO":
+        status_emoji = "✅"
+        status_text  = "DA SAN SANG VAO LENH (market)"
+    else:
+        status_emoji = "⏰"
+        status_text  = f"GIA SAP CHAM ENTRY {entry_opt}"
 
     lines = [
         f"📌 [WATCHLIST {alert_type}] {sym}",
         f"{dir_emoji} {direction} | {confidence} | [{algo_label}]",
+        f"{status_emoji} {status_text}",
         "--------------------",
     ]
 
@@ -551,14 +589,21 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
         rl  = result.get("range_low", "")
         lines.append(f"Gia cham {pos} | Range: {rl} - {rh}")
 
+    # Entry — ưu tiên entry_opt nếu có
+    lines.append(f"Price hien tai: {result.get('price','')}")
+    if has_entry_opt:
+        lines += [
+            f"🎯 ENTRY TOI UU: {entry_opt} ({entry_opt_label or ''})",
+            f"   R:R 1:{entry_opt_rr} — dat LIMIT cho gia cham",
+            f"Hoac MARKET: {result.get('entry','')} | R:R 1:{rr}",
+        ]
+    else:
+        lines.append(f"Entry: {result.get('entry','')} | R:R 1:{rr}")
     lines += [
-        f"Price: {result.get('price','')} | R:R 1:{rr}",
-        f"Entry: {result.get('entry','')}",
         f"SL: {result.get('sl','')} (-{result.get('sl_pct','')}%)",
         f"TP1: {result.get('tp1','')} (+{result.get('tp1_pct','')}%)",
         "--------------------",
         f"Funding: {mk.get('funding_pct','N/A')} | OI: {mk.get('oi_str','N/A')}",
-        f"{type_emoji} {type_text}",
     ]
 
     send_telegram(token, chat_id, chr(10).join(lines))

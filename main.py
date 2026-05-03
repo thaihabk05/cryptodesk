@@ -209,21 +209,16 @@ def _count_recent_losses(symbol: str, direction: str, hours: int = 12) -> int:
 
 def _should_block_signal(r: dict):
     """
-    Lọc signal dựa trên backtest 72h (báo cáo 2026-04-30):
-    - LONG + rr > 2.5         → TP quá xa cho LONG (WR 3-12%); nhưng SHORT RR≥3 WR=83% nên KHÔNG cap SHORT
-    - LONG + oi_change > 8%   → FOMO chase (WR=7-10% ở OI≥10%)
-    - LONG + funding < -0.01% → market đang bear-bias chưa squeeze (0W/19L)
-    - cooldown 12h: (symbol, direction) đã LOSS ≥2 lần → block (case AXL/ALGO 4L)
+    Lọc signal dựa trên backtest 168h (revise 2026-05-03 từ 500 signals):
+    - LONG + oi_change > 10%  → FOMO chase (≥10% WR=22%, sumR=-12.5R)
+                                 (cũ: >8% bị revise vì OI 8-10% có WR=89%, sumR=+18R)
+    - LONG + funding < -0.01% → vẫn giữ (WR=26%, sumR=-6.9R trên 57 signals — confirm)
+    - cooldown 12h: (symbol, direction) đã LOSS ≥2 lần → block
+    - rr cap đã bỏ: LONG RR≥3 thực tế WR=42% sumR=+57R (data 7 ngày ngược dự đoán cũ)
+
     Trả về (block: bool, reason: str|None).
     """
     direction = r.get("direction", "")
-    try:
-        rr = float(r.get("rr") or 0)
-    except (TypeError, ValueError):
-        rr = 0
-    # RR cap CHỈ áp cho LONG (SHORT high-RR thắng nhiều — CRCL 3.57R, PNUT 6.99R)
-    if direction == "LONG" and rr > 2.5:
-        return True, f"LONG RR={rr:.2f} > 2.5 (TP xa, LONG-RR>2.5 backtest WR=3-12%)"
 
     sym = r.get("symbol", "")
     if sym and direction in ("LONG", "SHORT"):
@@ -241,8 +236,8 @@ def _should_block_signal(r: dict):
     if oi_change is not None:
         try:
             oi_v = float(oi_change)
-            if oi_v > 8:
-                return True, f"LONG oi_change {oi_v:+.1f}% > 8% (FOMO, backtest WR=7-10%)"
+            if oi_v > 10:
+                return True, f"LONG oi_change {oi_v:+.1f}% > 10% (FOMO, backtest WR=22%)"
         except (TypeError, ValueError):
             pass
 
@@ -250,7 +245,7 @@ def _should_block_signal(r: dict):
         try:
             f_v = float(funding)
             if f_v < -0.01:
-                return True, f"LONG funding {f_v:+.3f}% < -0.01% (heavy-short bias, backtest 0/19)"
+                return True, f"LONG funding {f_v:+.3f}% < -0.01% (heavy-short bias, WR=26%)"
         except (TypeError, ValueError):
             pass
 

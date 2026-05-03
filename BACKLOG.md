@@ -13,6 +13,11 @@
 - ✅ **Exhaustion candle detector (SHORT only)** — `core/indicators.py:detect_exhaustion_short`. Tích hợp vào `range_engine` + `swing_h1_engine`. Verify backtest 2026-04-30: precision 71%, recall 20% (5/25 SHORT-WIN: CRCL/OPG/BASED/ROBO/MON). Threshold: body ≥ 1.5×ATR(14), vol ≥ 1.5×avg(20), close ≥ 50% từ đáy nến. Guard: chỉ trigger khi engine đang ra SHORT (tránh spurious LONG-LOSS).
 - ✅ **Save history cho watchlist + position reversal** — `_check_watchlist_alert` + `_check_position_reversal` giờ save history với `source` tag. Bypass dedup vì cooldown đã handled ở caller. Schema thêm `source`, `algo`, `alert_type` (commit aa2e881).
 - ✅ **BTC counter-trend block decouple-aware** — `dashboard/swing_h1_engine.py` PATCH A. Trước: hard block SHORT/LONG khi BTC ngược chiều → bỏ lỡ alt decoupled. Sau: nếu alt structure mạnh (score≥4) hoặc spread alt-BTC 24h ≥ 2pp ngược chiều → giữ direction, hạ confidence 1 bậc. Bằng chứng case ARB 28/4-3/5: BTC +0.98%, ARB -6.16%, spread -7.14pp; 25/123 H1 candles "BTC up + ARB down". Verify ARB live: trigger "Alt decoupled bearish: -2.7% vs BTC -0.1% (-2.6pp) — giữ SHORT, conf hạ MEDIUM" ✅ (commit 92c49ff).
+- ✅ **REVISE filter LONG (5/3) dựa data 168h backtest 500 signals** — `_should_block_signal`. Phát hiện 2 filter cũ sai sau 7 ngày live:
+  - **OI threshold 8% → 10%**: bucket OI 8-10% có WR=89%, sumR=+18R (8W/1L) — vùng vàng bị filter cũ chặn nhầm. Vùng OI≥10% mới thực sự xấu (WR=22%, -12.5R).
+  - **BỎ filter `LONG rr > 2.5`**: data 7 ngày cho thấy LONG RR≥3 có WR=42%, sumR=+57R (53 signals) — ngược hoàn toàn dự đoán cũ. RR cao trong LONG thực ra là TỐT.
+  - Funding<-0.01% giữ (WR=26%, sumR=-6.9R trên 57 signals — confirm đúng).
+  - Tổng hệ thống cải thiện: WR 30% → 37%, total R -0.34 → +94.63, expectancy 0 → +0.28.
 
 ---
 

@@ -230,17 +230,58 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         confidence = "LOW"
         all_warnings.insert(0, f"🚫 SPIKE FILTER — Nến H1 {_spike_which} body {_spike_body:.5f} > 2x ATR ({_spike_threshold:.5f}) — pump/dump đột ngột, chờ confirmation")
 
-    # ── PATCH A: BTC Hard Block ──
+    # ── PATCH A: BTC counter-trend — DECOUPLE-AWARE (case ARB 30/4-3/5) ──
+    # Cũ: hard block khi BTC ngược chiều → bỏ lỡ alt decoupled
+    # Mới: nếu alt structure mạnh (score≥4) hoặc alt vs BTC 24h spread ≥ 2pp ngược chiều
+    #      → giảm confidence chứ không block. Chỉ block khi alt structure yếu.
     btc_sent = btc_ctx.get("sentiment", "NEUTRAL")
     btc_d1   = btc_ctx.get("d1_trend", "")
+    btc_24h  = btc_ctx.get("chg_24h") or 0
+    alt_24h  = 0
+    if len(df_h1) >= 24:
+        try:
+            _p_now = float(df_h1["close"].iloc[-1])
+            _p_24h = float(df_h1["close"].iloc[-24])
+            alt_24h = (_p_now - _p_24h) / _p_24h * 100 if _p_24h > 0 else 0
+        except Exception:
+            alt_24h = 0
+    spread_24h = alt_24h - btc_24h
+
+    def _downgrade(c):
+        return {"HIGH": "MEDIUM", "MEDIUM": "LOW"}.get(c, c)
+
     if direction == "LONG" and btc_sent in ("RISK_OFF", "DUMP") and btc_d1 == "BEAR":
-        direction  = "WAIT"
-        confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK LONG — BTC D1 BEAR + {btc_sent}: {btc_ctx.get('note','')}")
+        if score >= 4 and spread_24h >= 2:
+            confidence = _downgrade(confidence)
+            all_warnings.append(
+                f"⚠️ Alt decoupled bullish: {alt_24h:+.1f}% vs BTC {btc_24h:+.1f}% (+{spread_24h:.1f}pp) "
+                f"— giữ LONG, conf hạ {confidence}"
+            )
+        elif score >= 4:
+            confidence = _downgrade(confidence)
+            all_warnings.insert(0,
+                f"⚠️ BTC BEAR nhưng alt {score} bull conditions — giữ LONG conf={confidence}"
+            )
+        else:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK LONG — BTC D1 BEAR + {btc_sent}: {btc_ctx.get('note','')}")
     elif direction == "SHORT" and btc_sent == "RISK_ON" and btc_d1 == "BULL":
-        direction  = "WAIT"
-        confidence = "LOW"
-        all_warnings.insert(0, f"🚫 BLOCK SHORT — BTC D1 BULL + {btc_sent}: {btc_ctx.get('note','')}")
+        if score >= 4 and spread_24h <= -2:
+            confidence = _downgrade(confidence)
+            all_warnings.append(
+                f"⚠️ Alt decoupled bearish: {alt_24h:+.1f}% vs BTC {btc_24h:+.1f}% ({spread_24h:.1f}pp) "
+                f"— giữ SHORT, conf hạ {confidence} (case ARB 30/4-3/5)"
+            )
+        elif score >= 4:
+            confidence = _downgrade(confidence)
+            all_warnings.insert(0,
+                f"⚠️ BTC BULL nhưng alt {score} bear conditions — giữ SHORT conf={confidence}"
+            )
+        else:
+            direction  = "WAIT"
+            confidence = "LOW"
+            all_warnings.insert(0, f"🚫 BLOCK SHORT — BTC D1 BULL + {btc_sent}: {btc_ctx.get('note','')}")
 
     # ── PATCH E: OI Hard Block ──
     if oi_change is not None and direction == "LONG" and oi_change < -3:

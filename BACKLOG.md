@@ -11,35 +11,12 @@
 - ✅ **Force-close timeout backtest**: 8h/12h/24h/72h theo strategy.
 - ✅ **Confidence buckets** trong export backtest JSON + `confidence_numeric`.
 - ✅ **Exhaustion candle detector (SHORT only)** — `core/indicators.py:detect_exhaustion_short`. Tích hợp vào `range_engine` + `swing_h1_engine`. Verify backtest 2026-04-30: precision 71%, recall 20% (5/25 SHORT-WIN: CRCL/OPG/BASED/ROBO/MON). Threshold: body ≥ 1.5×ATR(14), vol ≥ 1.5×avg(20), close ≥ 50% từ đáy nến. Guard: chỉ trigger khi engine đang ra SHORT (tránh spurious LONG-LOSS).
+- ✅ **Save history cho watchlist + position reversal** — `_check_watchlist_alert` + `_check_position_reversal` giờ save history với `source` tag. Bypass dedup vì cooldown đã handled ở caller. Schema thêm `source`, `algo`, `alert_type` (commit aa2e881).
+- ✅ **BTC counter-trend block decouple-aware** — `dashboard/swing_h1_engine.py` PATCH A. Trước: hard block SHORT/LONG khi BTC ngược chiều → bỏ lỡ alt decoupled. Sau: nếu alt structure mạnh (score≥4) hoặc spread alt-BTC 24h ≥ 2pp ngược chiều → giữ direction, hạ confidence 1 bậc. Bằng chứng case ARB 28/4-3/5: BTC +0.98%, ARB -6.16%, spread -7.14pp; 25/123 H1 candles "BTC up + ARB down". Verify ARB live: trigger "Alt decoupled bearish: -2.7% vs BTC -0.1% (-2.6pp) — giữ SHORT, conf hạ MEDIUM" ✅ (commit 92c49ff).
 
 ---
 
 ## Chưa làm — ưu tiên cao
-
-### 🔥 CRITICAL: BTC counter-trend filter quá nghiêm (case ARB 30/4-3/5)
-**Bug**: `swing_h1_engine` BLOCK hoàn toàn SHORT khi BTC RISK_ON, kể cả khi alt có cấu trúc downtrend rõ ràng.
-
-**Bằng chứng** (debug live 03/05/2026):
-- ARB engine output: 5/5 conditions bearish (H4<MA34, H4<MA89, H4 DOWNTREND LH LL, H1<MA34, MA34 slope↓), D1=SHORT, H4=SHORT
-- BTC sentiment: RISK_ON
-- Engine override: `direction = WAIT` + warning "🚫 BLOCK SHORT — BTC D1 BULL + RISK_ON"
-- **Hậu quả**: 4 ngày silence cho ARB từ 30/4 dù giá rớt từ 0.124 → 0.119 (-4%) với cú dump rõ
-
-**Fix đề xuất**:
-```python
-# Trong swing_h1_engine — soften BTC counter-trend block
-bearish_score = count(H4<MA34, H4<MA89, H4_DOWNTREND, H1<MA34, MA34↓)
-if direction == "SHORT" and btc_sentiment == "RISK_ON":
-    if bearish_score >= 4:  # alt decoupled rõ ràng
-        confidence = max(confidence-1, "MEDIUM")  # giảm conf, không block
-        warnings.append("⚠️ BTC bull — alt decoupled, giảm size")
-    else:
-        direction = "WAIT"  # block như cũ
-```
-
-**Verify trước khi build**: chạy backtest 72h xem có bao nhiêu LONG-LOSS đang trong condition `BTC=RISK_ON + alt structure SHORT >= 4 conditions` để tính WR pattern này.
-
----
 
 ### REVERSAL engine — RSI 33 không phải oversold
 **Bug**: `reversal_engine` ra "đang theo dõi LONG bounce" khi RSI H1 = 33, nhưng trong downtrend mạnh RSI có thể đi 25-30 hàng tuần.

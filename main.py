@@ -309,9 +309,13 @@ def _fetch_vol_safe(symbol: str) -> float:
 
 
 def _save_signal_to_history(result: dict):
-    """Lưu signal vào history — dedup chặt theo symbol+direction+entry±1% trong 2 giờ."""
+    """Lưu signal vào history — dedup chặt theo symbol+direction+entry±1% trong 2 giờ.
+    Bypass dedup cho watchlist/position-reversal save (cooldown đã handled ở caller).
+    """
     history = load_history()
-    if _is_duplicate_signal(result, history, window_hours=2):
+    source  = result.get("source", "market_scan")
+    bypass  = source in ("watchlist_go", "watchlist_approaching", "position_reversal")
+    if not bypass and _is_duplicate_signal(result, history, window_hours=2):
         print(f"[DEDUP] Skip {result.get('symbol')} {result.get('direction')} — duplicate trong 2h")
         return
     history.append({
@@ -351,6 +355,10 @@ def _save_signal_to_history(result: dict):
         "btc_d1_trend":    result.get("btc_context", {}).get("d1_trend", ""),
         "num_conditions":  len(result.get("conditions", [])),
         "num_warnings":    len(result.get("warnings", [])),
+        # ── Source tracking — phân biệt market_scan / watchlist / position_reversal
+        "source":          source,
+        "algo":            result.get("algo", ""),
+        "alert_type":      result.get("alert_type", ""),
         # ── Algorithm version tracking ──
         "algo_version":    ALGO_VERSION,
         "algo_date":       ALGO_DATE,
@@ -502,6 +510,20 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
     if now - last_alert < 900:  # cooldown 15 phút
         return
     _watchlist_alert_cooldown[cooldown_key] = now
+
+    # Save vào history với tag source — trước đây watchlist alert không lưu nên
+    # backtest + dashboard history không phản ánh đầy đủ những signal engine đã ra
+    # (case ARB 30/4-3/5: nhiều SHORT MEDIUM gửi Telegram nhưng history trống).
+    try:
+        _save_signal_to_history({
+            **result,
+            "source":     f"watchlist_{alert_type.lower()}",
+            "algo":       algo_key,
+            "alert_type": alert_type,
+            "timestamp":  result.get("timestamp", _local_isoformat()),
+        })
+    except Exception as e:
+        print(f"[WATCHLIST SAVE ERROR] {sym}: {e}")
 
     strat_labels = {
         "TREND": "Trend " + cfg.get("strategy", "SWING_H4"),
@@ -806,6 +828,20 @@ def _check_position_reversal(pos: dict, cfg: dict):
 
     send_telegram(token, chat_id, chr(10).join(lines))
     print(f"[POS ALERT] {sym} {pos_dir} → reversal {rev_dir} alert sent")
+
+    # Save vào history với tag source — track lại các reversal alert cho lệnh đang mở
+    try:
+        _save_signal_to_history({
+            **r,
+            "source":      "position_reversal",
+            "algo":        "REVERSAL",
+            "alert_type":  "POSITION_FLIP",
+            "position_id": pos.get("id", sym),
+            "position_entry": pos.get("entry"),
+            "timestamp":   _local_isoformat(),
+        })
+    except Exception as e:
+        print(f"[POS ALERT SAVE ERROR] {sym}: {e}")
 
 
 def _check_position_sl_tp(pos: dict, cfg: dict) -> str:

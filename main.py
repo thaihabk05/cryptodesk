@@ -63,6 +63,8 @@ DEFAULT_CONFIG = {
     "alert_rr":         1.5,        # min R:R để gửi alert
     "rr_ratio":         1.5,        # min R:R để hiện signal trên Dashboard
     "strategy":         "SWING_H4",  # SWING_H4 | SWING_H1 | SCALP
+    # Auto-add coin có funding spike vào watchlist (3/5: OFF default vì spam ~50 coins)
+    "auto_funding_watchlist": False,
 }
 
 def load_config():
@@ -1042,7 +1044,8 @@ def dashboard_scanner_loop():
             scanner_status["scan_start"]  = _local_isoformat()
 
             # Auto-add coin có funding spike vào watchlist (throttle 30 phút bên trong)
-            if cfg.get("auto_funding_watchlist", True):
+            # Default OFF — anh user feedback 4/5: spam ~50 coins, không pass ROI bar
+            if cfg.get("auto_funding_watchlist", False):
                 try:
                     added = _auto_add_funding_spike_watchlist(cfg)
                     if added:
@@ -3450,6 +3453,19 @@ def set_scan_modes():
     cfg["scan_modes"] = [m for m in modes if m in ("TREND", "RANGE_SCALP")]
     save_config(cfg)
     return jsonify({"ok": True, "scan_modes": cfg["scan_modes"]})
+
+
+@app.route("/api/config/auto-funding-watchlist", methods=["POST"])
+def toggle_auto_funding_watchlist():
+    """Toggle ON/OFF auto-add coin funding spike vào watchlist.
+    Body: {"enabled": true|false}. Default sau update code = False.
+    """
+    data = request.get_json() or {}
+    enabled = bool(data.get("enabled", False))
+    cfg = load_config()
+    cfg["auto_funding_watchlist"] = enabled
+    save_config(cfg)
+    return jsonify({"ok": True, "auto_funding_watchlist": enabled})
 
 
 @app.route("/api/watchlist/funding-spike-scan", methods=["POST"])

@@ -10,7 +10,7 @@ from core.indicators import (prepare, ma_slope, find_swing_points,
                               classify_structure, fib_retracement,
                               fib_extension, is_no_trade_zone, calc_atr_context,
                               weekly_macro_bias)
-from core.utils import sanitize, smart_round, recommended_size
+from core.utils import sanitize, smart_round, recommended_size, short_context_check
 
 
 def _interpret_funding(funding, oi_change, direction):
@@ -968,4 +968,7 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
     result["recommended_size_pct"]     = _size["size_pct"]
     result["recommended_size_tier"]    = _size["tier"]
     result["recommended_size_reasons"] = _size["reasons"]
+    result["short_context"]            = short_context_check(
+        direction, df_h1, funding=funding, atr_value=atr_h1
+    )
     return sanitize(result)

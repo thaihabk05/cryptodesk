@@ -175,6 +175,42 @@ Hiện alert HIGH chung 1 template. Có thể chia:
 
 ---
 
+## Setup persistence tracking + Live re-validation
+
+**Vấn đề** (case SNX 5/5/2026 12:04 → 12:24): cùng strategy SWING_H4, snapshot HIGH conf 7/7 conditions → 20 phút sau live LOW conf 3/7. Trader không biết: lệnh snapshot có còn valid không? Conditions nào đã expire? Có nên execute hay cancel?
+
+**Root cause**:
+- Snapshot moment có conditions ngắn hạn (Bullish Engulfing H1, vol spike) — chỉ valid trong cây đó
+- 20 phút sau cây mới đóng → các conditions ngắn hạn expire → score sụt
+- Engine không track historical setup, mỗi lần phân tích là "fresh evaluation"
+- D1+H4 bias vẫn LONG (3 conditions còn) — trend chính không đổi, nhưng score gộp giảm mạnh
+
+**Đề xuất**:
+1. **Conditions list explicit trong snapshot** — lưu list 7 conditions với timestamp:
+   ```
+   [
+     {cond: "D1 LONG", expires: "PERSISTENT"},
+     {cond: "BullEng H1", expires: "2026-05-05T01:00:00", expired: true},
+     {cond: "Vol 1.5x avg", expires: "NEXT_CANDLE", expired: true},
+     ...
+   ]
+   ```
+2. **Live re-validation endpoint** `/api/signal/revalidate` — input: snapshot signal + current time → output:
+   - `still_valid: bool`
+   - `conditions_changed: [{cond, was, now}]`
+   - `price_drift_pct` từ entry
+   - `recommendation`: "EXECUTE" | "WAIT_PULLBACK" | "CANCEL"
+3. **UI snapshot card** thêm nút "🔄 Re-validate now" — hiển thị diff với màu sắc:
+   - 🟢 Conditions giữ nguyên + giá quanh entry → EXECUTE
+   - 🟡 Mất 2-3 conditions ngắn hạn nhưng trend còn → WAIT_PULLBACK
+   - 🔴 Mất D1/H4 bias hoặc giá > 2% từ entry → CANCEL
+
+**Verify trước khi build**: chạy 50 historical signals, đếm % case "snapshot HIGH 20 phút sau LOW" có outcome khác nhau (hit TP vs hit SL). Nếu re-validation đúng > 70% → triển khai.
+
+**Điểm gắn**: `_save_signal_to_history` thêm field `conditions_with_meta`, endpoint mới trong `main.py`, UI snapshot drawer.
+
+---
+
 ## Nice-to-have
 
 ### 10. Backtest auto-run định kỳ

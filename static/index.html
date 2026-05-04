@@ -2847,6 +2847,24 @@ function buildCard(d) {
         '<span style="font-family:var(--mono);font-weight:700;color:'+col+'">'+sz+'% account · '+tier+'</span>'+
       '</div>';
     })() : '') +
+    (dir==='SHORT' && d.short_context ? (function(){
+      var sc = d.short_context;
+      var tcol = sc.trust==='HIGH' ? 'var(--short)' : sc.trust==='MEDIUM' ? 'var(--wait)' : 'var(--muted)';
+      var ticon = sc.trust==='HIGH' ? '🎯' : sc.trust==='MEDIUM' ? '⚠️' : '🚫';
+      var allMsgs = (sc.signals||[]).map(function(s){return '✓ '+s;})
+                     .concat((sc.warnings||[]).map(function(w){return '✗ '+w;}));
+      var tooltipTxt = allMsgs.join(' · ');
+      return '<div title="'+tooltipTxt+'" style="display:flex;align-items:center;justify-content:space-between;'+
+        'background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;'+
+        'padding:5px 10px;margin-bottom:8px;font-size:11px">'+
+        '<span style="color:var(--muted)">'+ticon+' SHORT trust</span>'+
+        '<span style="font-family:var(--mono);font-weight:700;color:'+tcol+'">'+sc.trust+' · '+sc.score+'/100</span>'+
+      '</div>'+
+      ((sc.warnings||[]).length > 0 ?
+        '<div style="font-size:10px;color:var(--wait);margin-bottom:8px;line-height:1.5">'+
+        sc.warnings.map(function(w){return '⚠ '+w;}).join('<br>')+
+        '</div>' : '');
+    })() : '') +
     (dir!=='WAIT' ?
     '<div class="levels-row">' +
       '<div class="level"><div class="level-lbl">Entry</div>' +
@@ -3475,7 +3493,8 @@ function showScanDrawer(idx) {
     fib_ext: d.fib_ext || {},
     recommended_size_pct:     d.recommended_size_pct,
     recommended_size_tier:    d.recommended_size_tier,
-    recommended_size_reasons: d.recommended_size_reasons || []
+    recommended_size_reasons: d.recommended_size_reasons || [],
+    short_context:            d.short_context || null
   };
 
   // Đưa vào signalCache để showDetail + btn-try hoạt động

@@ -28,7 +28,7 @@ from core.binance import (fetch_klines, fetch_funding_rate,
 from core.indicators import (prepare, ma_slope, find_swing_points,
                               classify_structure, fib_retracement,
                               fib_extension, calc_atr_context)
-from core.utils import sanitize, smart_round, recommended_size
+from core.utils import sanitize, smart_round, recommended_size, short_context_check
 
 
 def scalp_analyze(symbol: str, cfg: dict) -> dict:
@@ -836,7 +836,8 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
                  for _, r in chart_df.iterrows()]
 
     _size = recommended_size(confidence, rr, direction,
-                              funding=funding, atr_state=atr_ctx.get("atr_state"))
+                              funding=funding, atr_state=atr_state)
+    _short_ctx = short_context_check(direction, df_m15, funding=funding, atr_value=atr_m15)
     return sanitize({
         "symbol":        symbol,
         "strategy":      "SCALP",
@@ -846,6 +847,7 @@ def scalp_analyze(symbol: str, cfg: dict) -> dict:
         "recommended_size_pct":     _size["size_pct"],
         "recommended_size_tier":    _size["tier"],
         "recommended_size_reasons": _size["reasons"],
+        "short_context":            _short_ctx,
         "score":         int(score),
         "conditions":    conditions,
         "warnings":      all_warnings,

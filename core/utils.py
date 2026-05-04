@@ -104,3 +104,92 @@ def recommended_size(confidence, rr, direction=None, funding=None, atr_state=Non
         reasons.append(f"ATR HIGH → -{penalty}% (volatile)")
 
     return {"size_pct": round(size, 1), "tier": tier, "reasons": reasons}
+
+
+def short_context_check(direction, df_recent, funding=None, atr_value=None, lookback=5):
+    """Đánh giá độ tin cậy của SHORT signal dựa context volume/funding/wick.
+
+    KHÔNG thay đổi direction/confidence của engine — chỉ trả thêm meta info để UI
+    hiển thị warning, giúp trader phân biệt SHORT thật vs false signal trong
+    uptrend mạnh.
+
+    Returns dict (None nếu direction != "SHORT"):
+      - trust:    "HIGH" | "MEDIUM" | "LOW"
+      - score:    0-100 (raw)
+      - warnings: list[str] — context red flags
+      - signals:  list[str] — context green flags (ủng hộ SHORT)
+
+    Args:
+      df_recent:  DataFrame có cols open, high, low, close, volume (theo nến)
+      funding:    %-form (0.05 = 0.05%)
+      atr_value:  ATR cùng timeframe với df_recent
+    """
+    if direction != "SHORT" or df_recent is None or len(df_recent) < lookback:
+        return None
+
+    score    = 60  # base score MEDIUM trust
+    warnings = []
+    signals  = []
+
+    last_n = df_recent.tail(lookback)
+
+    # 1. Volume context: nến gần đây xanh > đỏ → uptrend chưa hết → SHORT risky
+    try:
+        green = int((last_n["close"] > last_n["open"]).sum())
+        if green >= lookback - 1:
+            warnings.append(f"Volume: {green}/{lookback} nến gần xanh — uptrend chưa hết")
+            score -= 25
+        elif green <= 1:
+            signals.append(f"Volume: {lookback - green}/{lookback} nến gần đỏ — momentum đang yếu")
+            score += 15
+    except Exception:
+        pass
+
+    # 2. Funding chưa crowded long → top chưa thật sự → SHORT yếu
+    if funding is not None:
+        if -0.005 < funding < 0.02:
+            warnings.append(f"Funding {funding:+.4f}% chưa crowded long — top chưa rõ")
+            score -= 20
+        elif funding >= 0.05:
+            signals.append(f"Funding {funding:+.4f}% extreme — long crowded, SHORT có lợi")
+            score += 20
+        elif funding >= 0.02:
+            signals.append(f"Funding {funding:+.4f}% dương — long bắt đầu crowded")
+            score += 10
+
+    # 3. Rejection wick check trên cây gần nhất
+    try:
+        last = df_recent.iloc[-1]
+        body_top = max(float(last["open"]), float(last["close"]))
+        upper_wick = float(last["high"]) - body_top
+        if atr_value is not None and atr_value > 0:
+            wick_ratio = upper_wick / atr_value
+            if wick_ratio >= 1.5:
+                signals.append(f"Rejection wick mạnh {wick_ratio:.1f}× ATR — top confirmation")
+                score += 20
+            elif wick_ratio < 0.3:
+                warnings.append("Không có rejection wick ở cây gần nhất")
+                score -= 10
+    except Exception:
+        pass
+
+    # 4. Volume divergence: 3 nến gần price up nhưng volume giảm dần → distribution
+    try:
+        last3 = df_recent.tail(3)
+        all_green = bool((last3["close"] > last3["open"]).all())
+        vol_descending = bool(last3["volume"].iloc[-1] < last3["volume"].iloc[-2] < last3["volume"].iloc[-3])
+        if all_green and vol_descending:
+            signals.append("Volume divergence: giá lên / vol giảm — distribution rõ")
+            score += 15
+    except Exception:
+        pass
+
+    score = max(0, min(100, score))
+    if score >= 70:
+        trust = "HIGH"
+    elif score >= 40:
+        trust = "MEDIUM"
+    else:
+        trust = "LOW"
+
+    return {"trust": trust, "score": score, "warnings": warnings, "signals": signals}

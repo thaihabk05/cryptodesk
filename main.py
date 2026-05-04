@@ -1588,6 +1588,12 @@ def save_position_entry():
         "margin":     data.get("margin", 0),
         "leverage":   data.get("leverage", 1),
         "symbol":     data.get("symbol", ""),
+        # Phase A — Live Positions tab fields
+        "sl":         data.get("sl"),
+        "tp1":        data.get("tp1"),
+        "tp2":        data.get("tp2"),
+        "size_usdt":  data.get("size_usdt"),
+        "notes":      data.get("notes", ""),
     }
     positions.insert(0, new_pos)
     save_positions(positions)
@@ -1601,11 +1607,181 @@ def delete_position(pos_id):
     save_positions(positions)
     return jsonify({"status": "deleted"})
 
+@app.route("/api/positions/<int:pos_id>", methods=["PATCH"])
+def update_position(pos_id):
+    """Update fields của 1 position (sl, tp1, tp2, notes, size_usdt)."""
+    positions = load_positions()
+    pos = next((p for p in positions if p.get("id") == pos_id), None)
+    if not pos:
+        return jsonify({"error": "Không tìm thấy position"}), 404
+    data = request.json or {}
+    for k in ("sl", "tp1", "tp2", "size_usdt", "notes", "leverage"):
+        if k in data:
+            pos[k] = data[k]
+    save_positions(positions)
+    return jsonify({"status": "updated", "position": pos})
+
 @app.route("/api/positions/clear", methods=["POST"])
 def clear_positions():
     """Xóa toàn bộ positions."""
     save_positions([])
     return jsonify({"status": "cleared"})
+
+
+@app.route("/api/positions/monitor", methods=["GET"])
+def positions_monitor():
+    """Phase A — Live Positions monitor:
+    Với mỗi position trong DB → fetch giá hiện tại, chạy engine analysis,
+    tính PnL/distance to SL/TP, recommend action.
+
+    Returns: list positions enriched với:
+      - current_price, pnl_pct (raw + leveraged), pnl_usd
+      - distance_to_sl_pct, distance_to_tp1_pct
+      - engine_direction, engine_confidence, engine_rr
+      - short_trust, recommendation_action, recommendation_reasons
+    """
+    import concurrent.futures
+    from core.binance import fetch_klines, fetch_funding_rate
+    from core.indicators import prepare
+    from dashboard.fam_engine      import fam_analyze
+    from dashboard.swing_h1_engine import swing_h1_analyze
+    from dashboard.scalp_engine    import scalp_analyze
+
+    cfg = load_config()
+    positions = load_positions()
+    if not positions:
+        return jsonify({"positions": [], "ts": _local_isoformat()})
+
+    # Filter positions có symbol để monitor được (cũ không có symbol → skip)
+    monitored = [p for p in positions if p.get("symbol")]
+    if not monitored:
+        return jsonify({"positions": [], "ts": _local_isoformat(),
+                        "note": "Không có position nào có symbol để monitor"})
+
+    def _enrich(pos):
+        sym       = pos.get("symbol", "").upper().strip()
+        direction = (pos.get("direction") or "LONG").upper()
+        entry     = float(pos.get("entry") or 0)
+        sl        = float(pos.get("sl"))  if pos.get("sl")  else None
+        tp1       = float(pos.get("tp1")) if pos.get("tp1") else None
+        size_usdt = float(pos.get("size_usdt") or pos.get("margin") or 0) * float(pos.get("leverage") or 1)
+        out = dict(pos)
+
+        if not sym or not entry:
+            out["error"] = "Thiếu symbol hoặc entry"
+            return out
+
+        try:
+            # Fetch giá hiện tại + chạy 3 engines song song
+            df_h1 = prepare(fetch_klines(sym, "1h", 50, force_futures=True))
+            current = float(df_h1["close"].iloc[-1])
+            out["current_price"] = round(current, 8)
+
+            # PnL
+            if direction == "LONG":
+                pnl_raw_pct = (current - entry) / entry * 100
+            else:
+                pnl_raw_pct = (entry - current) / entry * 100
+            out["pnl_raw_pct"] = round(pnl_raw_pct, 3)
+            out["pnl_lev_pct"] = round(pnl_raw_pct * float(pos.get("leverage") or 1), 2)
+            if size_usdt > 0:
+                out["pnl_usd"] = round(size_usdt * pnl_raw_pct / 100, 2)
+
+            # Distance to SL/TP
+            if sl:
+                if direction == "LONG":
+                    out["distance_to_sl_pct"] = round((current - sl) / current * 100, 2)
+                else:
+                    out["distance_to_sl_pct"] = round((sl - current) / current * 100, 2)
+            if tp1:
+                if direction == "LONG":
+                    out["distance_to_tp1_pct"] = round((tp1 - current) / current * 100, 2)
+                else:
+                    out["distance_to_tp1_pct"] = round((current - tp1) / current * 100, 2)
+
+            # Chạy 3 engines lấy result tốt nhất
+            best = None
+            for fn in (fam_analyze, swing_h1_analyze, scalp_analyze):
+                try:
+                    r = fn(sym, {**cfg, "force_futures": True})
+                    if best is None:
+                        best = r
+                        continue
+                    # Ưu tiên direction != WAIT, sau đó confidence cao, sau RR cao
+                    rank = lambda x: (
+                        0 if x.get("direction") in ("LONG", "SHORT") else 1,
+                        0 if x.get("confidence") == "HIGH" else 1 if x.get("confidence") == "MEDIUM" else 2,
+                        -(x.get("rr") or 0)
+                    )
+                    if rank(r) < rank(best):
+                        best = r
+                except Exception:
+                    continue
+
+            if best:
+                out["engine_strategy"]   = best.get("strategy")
+                out["engine_direction"]  = best.get("direction")
+                out["engine_confidence"] = best.get("confidence")
+                out["engine_rr"]         = best.get("rr")
+                out["engine_funding"]    = (best.get("market") or {}).get("funding_pct")
+                sc = best.get("short_context")
+                if sc:
+                    out["short_trust"] = sc.get("trust")
+                    out["short_score"] = sc.get("score")
+
+            # ── Recommendation logic ──
+            action = "HOLD"
+            reasons = []
+            engine_dir  = (best or {}).get("direction") if best else None
+            engine_conf = (best or {}).get("confidence") if best else None
+            d2sl = out.get("distance_to_sl_pct")
+            pnl_lev = out.get("pnl_lev_pct") or 0
+
+            # Critical: giá rất gần SL
+            if d2sl is not None and d2sl < 1.0:
+                action = "CLOSE_NOW"
+                reasons.append(f"Giá cách SL chỉ {d2sl}% — risk hit SL cao")
+            # Engine flip direction (đang LONG mà engine cấp SHORT, hoặc ngược lại)
+            elif engine_dir and engine_dir != direction and engine_dir in ("LONG", "SHORT"):
+                if engine_conf in ("HIGH", "MEDIUM"):
+                    action = "CLOSE_NOW"
+                    reasons.append(f"Engine cấp {engine_dir} {engine_conf} — đảo chiều rõ")
+                else:
+                    action = "TIGHTEN_SL"
+                    reasons.append(f"Engine ngược chiều ({engine_dir} {engine_conf}) — siết SL")
+            # PnL tốt + engine không cấp tiếp setup cùng chiều → trim
+            elif pnl_lev >= 30 and (not engine_dir or engine_dir == "WAIT" or engine_dir != direction):
+                action = "TRIM_70"
+                reasons.append(f"PnL +{pnl_lev}% và engine không confirm tiếp — chốt 70%")
+            elif pnl_lev >= 15 and (not engine_dir or engine_dir == "WAIT"):
+                action = "TRIM_50"
+                reasons.append(f"PnL +{pnl_lev}% và engine WAIT — chốt 50%, trail SL")
+            elif pnl_lev >= 5:
+                if d2sl is not None and d2sl > 5:
+                    action = "TIGHTEN_SL"
+                    reasons.append(f"PnL +{pnl_lev}% và SL còn xa {d2sl}% — kéo SL về break-even")
+            # Engine confirm tiếp setup cùng chiều
+            elif engine_dir == direction and engine_conf in ("HIGH", "MEDIUM"):
+                reasons.append(f"Engine vẫn cấp {direction} {engine_conf} — giữ position")
+
+            if not reasons:
+                reasons.append("Chưa có signal cần action")
+
+            out["recommendation_action"]  = action
+            out["recommendation_reasons"] = reasons
+
+        except Exception as e:
+            out["error"] = f"Lỗi monitor: {str(e)[:120]}"
+
+        return out
+
+    # Parallel fetch — 4 workers (tránh rate limit)
+    enriched = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        for r in ex.map(_enrich, monitored):
+            enriched.append(r)
+
+    return jsonify({"positions": enriched, "ts": _local_isoformat()})
 
 @app.route("/api/position/analyze", methods=["POST"])
 def position_analyze():

@@ -500,6 +500,7 @@ tbody td{padding:11px 12px;vertical-align:middle}
     <button class="tab" onclick="switchTab('history')" data-tab="history">&#128203; History</button>
     <button class="tab" onclick="switchTab('backtest')" data-tab="backtest">&#128200; Backtest</button>
     <button class="tab" onclick="switchTab('position')" data-tab="position">&#9654; Position</button>
+    <button class="tab" onclick="switchTab('live')" data-tab="live">&#128300; Live</button>
   </div>
   <div class="header-right">
     <div class="status-dot" id="statusDot"></div>
@@ -827,6 +828,92 @@ tbody td{padding:11px 12px;vertical-align:middle}
         <button onclick="posClearAll()" style="font-size:11px;padding:3px 10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);cursor:pointer">Xóa tất cả</button>
       </div>
       <div id="posSavedList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ LIVE POSITIONS MONITOR ══════════════ -->
+<div class="page" id="page-live">
+  <div style="max-width:1200px;margin:0 auto;padding:8px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:18px;font-weight:800">📡 Live Positions Monitor</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">Track positions đang mở — auto chạy engine analysis + recommend action mỗi 60s</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="liveLastUpdate" style="font-size:11px;color:var(--muted2)"></span>
+        <button class="btn" id="liveRefreshBtn" onclick="liveRefresh()">↻ Refresh now</button>
+        <button class="btn primary" onclick="document.getElementById('liveAddForm').style.display=document.getElementById('liveAddForm').style.display==='none'?'':'none'">+ Add Position</button>
+      </div>
+    </div>
+
+    <!-- Add position form -->
+    <div id="liveAddForm" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px">Thêm position mới</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">Symbol *</div>
+          <input id="liveAddSymbol" type="text" placeholder="ARBUSDT"
+            style="width:100%;text-transform:uppercase;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none"
+            oninput="this.value=this.value.toUpperCase()">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">Direction *</div>
+          <select id="liveAddDir"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">Entry price *</div>
+          <input id="liveAddEntry" type="number" step="any" placeholder="0.1187"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">Stop Loss</div>
+          <input id="liveAddSL" type="number" step="any" placeholder="0.1230"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">TP1</div>
+          <input id="liveAddTP1" type="number" step="any" placeholder="0.1100"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">TP2</div>
+          <input id="liveAddTP2" type="number" step="any" placeholder="0.1050"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">Size USDT (margin)</div>
+          <input id="liveAddSize" type="number" step="any" placeholder="100"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">Leverage</div>
+          <input id="liveAddLev" type="number" step="1" value="10"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:3px">Notes</div>
+        <input id="liveAddNotes" type="text" placeholder="Lệnh swing H1, breakout EMA89..."
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:12px;outline:none">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn primary" onclick="liveAddPosition()">Lưu position</button>
+        <button class="btn" onclick="document.getElementById('liveAddForm').style.display='none'">Hủy</button>
+      </div>
+    </div>
+
+    <!-- Positions list -->
+    <div id="liveContent">
+      <div class="empty-state">
+        <div class="empty-icon">📊</div>
+        <div class="empty-title">Chưa có position nào</div>
+        <div style="font-size:13px">Bấm "+ Add Position" để bắt đầu monitor — hệ thống auto chạy engine analysis mỗi 60s</div>
+      </div>
     </div>
   </div>
 </div>
@@ -1775,12 +1862,14 @@ function slopeArrow(s) { return s==='UP'?'↑':s==='DOWN'?'↓':'→'; }
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
   document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active'); });
-  var idx = {dashboard:0,scanner:1,history:2,backtest:3}[tab]||0;
+  var idx = {dashboard:0,scanner:1,history:2,backtest:3,position:4,live:5}[tab]||0;
   document.querySelectorAll('.tab')[idx].classList.add('active');
   document.getElementById('page-'+tab).classList.add('active');
   if (tab === 'history')  loadHistory();
   if (tab === 'scanner')  loadScanOnTabSwitch();
   if (tab === 'position') loadPositions();
+  if (tab === 'live')     liveStart();
+  else                    liveStop();
 }
 
 function loadScanOnTabSwitch() {
@@ -6102,6 +6191,221 @@ function clearRangeOverride(symbol) {
     var panel = document.getElementById('range-panel-'+symbol);
     if (panel) { panel.dataset.loaded = '0'; checkRange({style:{background:''}}, symbol); }
   });
+}
+
+
+// ═══════════════════════════════════════════════
+// LIVE POSITIONS MONITOR (Phase A — manual entry)
+// ═══════════════════════════════════════════════
+var _liveTimer = null;
+var _liveLoading = false;
+
+function liveStart() {
+  liveRefresh();
+  if (_liveTimer) clearInterval(_liveTimer);
+  _liveTimer = setInterval(liveRefresh, 60000);
+}
+
+function liveStop() {
+  if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
+}
+
+function liveAddPosition() {
+  var sym  = (document.getElementById('liveAddSymbol').value || '').trim().toUpperCase();
+  var dir  = document.getElementById('liveAddDir').value;
+  var entry= parseFloat(document.getElementById('liveAddEntry').value);
+  var sl   = parseFloat(document.getElementById('liveAddSL').value)  || null;
+  var tp1  = parseFloat(document.getElementById('liveAddTP1').value) || null;
+  var tp2  = parseFloat(document.getElementById('liveAddTP2').value) || null;
+  var size = parseFloat(document.getElementById('liveAddSize').value) || 0;
+  var lev  = parseFloat(document.getElementById('liveAddLev').value)  || 1;
+  var notes= document.getElementById('liveAddNotes').value || '';
+
+  if (!sym || !entry) {
+    showToast('⚠️ Cần Symbol và Entry price');
+    return;
+  }
+  if (sl && dir === 'LONG' && sl >= entry) { showToast('⚠️ LONG: SL phải < Entry'); return; }
+  if (sl && dir === 'SHORT' && sl <= entry) { showToast('⚠️ SHORT: SL phải > Entry'); return; }
+
+  fetch('/api/positions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      symbol: sym, direction: dir, entry: entry,
+      sl: sl, tp1: tp1, tp2: tp2,
+      size_usdt: size, leverage: lev, margin: size, notes: notes,
+      base_mode: 'sl', base_value: sl || 0
+    })
+  }).then(function(r){return r.json();}).then(function(res) {
+    if (res.error) { showToast('❌ ' + res.error); return; }
+    showToast('✅ Đã thêm ' + sym + ' ' + dir);
+    document.getElementById('liveAddForm').style.display = 'none';
+    // Reset form
+    ['liveAddSymbol','liveAddEntry','liveAddSL','liveAddTP1','liveAddTP2','liveAddSize','liveAddNotes']
+      .forEach(function(id){ document.getElementById(id).value = ''; });
+    liveRefresh();
+  });
+}
+
+function liveDelete(posId, sym) {
+  if (!confirm('Xóa position ' + sym + '?')) return;
+  fetch('/api/positions/' + posId, {method: 'DELETE'})
+    .then(function(r){return r.json();})
+    .then(function(){ showToast('🗑 Đã xóa'); liveRefresh(); });
+}
+
+function liveEditField(posId, field, currentVal, sym) {
+  var label = {sl: 'Stop Loss', tp1: 'Take Profit 1', tp2: 'Take Profit 2', notes: 'Notes'}[field] || field;
+  var v = prompt('Edit ' + label + ' cho ' + sym + ':', currentVal || '');
+  if (v === null) return;
+  var payload = {};
+  if (field === 'notes') payload[field] = v;
+  else {
+    var num = parseFloat(v);
+    if (isNaN(num) && v !== '') { showToast('⚠️ Giá trị không hợp lệ'); return; }
+    payload[field] = isNaN(num) ? null : num;
+  }
+  fetch('/api/positions/' + posId, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){return r.json();}).then(function(res) {
+    if (res.error) { showToast('❌ ' + res.error); return; }
+    showToast('✅ Đã update ' + label);
+    liveRefresh();
+  });
+}
+
+function liveRefresh() {
+  if (_liveLoading) return;
+  _liveLoading = true;
+  var btn = document.getElementById('liveRefreshBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Loading...'; }
+
+  fetch('/api/positions/monitor')
+    .then(function(r){return r.json();})
+    .then(function(data) {
+      var positions = data.positions || [];
+      var ts = data.ts || '';
+      document.getElementById('liveLastUpdate').textContent = positions.length
+        ? '🕐 Last update: ' + ts.slice(11,19) : '';
+      renderLivePositions(positions);
+    })
+    .catch(function(e) {
+      document.getElementById('liveContent').innerHTML =
+        '<div style="color:var(--short);padding:20px">Lỗi: ' + (e.message || e) + '</div>';
+    })
+    .finally(function() {
+      _liveLoading = false;
+      if (btn) { btn.disabled = false; btn.innerHTML = '↻ Refresh now'; }
+    });
+}
+
+function renderLivePositions(positions) {
+  var box = document.getElementById('liveContent');
+  if (!positions.length) {
+    box.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div>' +
+      '<div class="empty-title">Chưa có position nào</div>' +
+      '<div style="font-size:13px">Bấm "+ Add Position" để bắt đầu monitor</div></div>';
+    return;
+  }
+
+  // Action color/label map
+  var actionMap = {
+    'CLOSE_NOW':    {color: 'var(--short)', icon: '🚨', label: 'CLOSE NOW'},
+    'TIGHTEN_SL':   {color: '#ffaa00',      icon: '⚠️', label: 'TIGHTEN SL'},
+    'TRIM_70':      {color: 'var(--accent)',icon: '✂️', label: 'TRIM 70%'},
+    'TRIM_50':      {color: 'var(--accent)',icon: '✂️', label: 'TRIM 50%'},
+    'HOLD':         {color: 'var(--long)',  icon: '✅', label: 'HOLD'}
+  };
+
+  var html = positions.map(function(p) {
+    var dirCol = p.direction === 'LONG' ? 'var(--long)' : 'var(--short)';
+    var pnlLev = p.pnl_lev_pct;
+    var pnlCol = pnlLev > 0 ? 'var(--long)' : pnlLev < 0 ? 'var(--short)' : 'var(--muted)';
+    var pnlSign = pnlLev > 0 ? '+' : '';
+    var pnlUsd = p.pnl_usd !== undefined && p.pnl_usd !== null ?
+      ' (' + (p.pnl_usd >= 0 ? '+' : '') + p.pnl_usd + ' USDT)' : '';
+    var act = actionMap[p.recommendation_action] || actionMap['HOLD'];
+    var sym = p.symbol || '?';
+    var fmt = function(v){ if(v===null||v===undefined) return '—'; var n=Math.abs(v); var d=n<0.0001?8:n<0.01?6:n<1?4:2; return Number(v).toFixed(d); };
+
+    var d2sl = p.distance_to_sl_pct;
+    var d2tp = p.distance_to_tp1_pct;
+    var d2slCol = d2sl !== undefined && d2sl < 1 ? 'var(--short)' : d2sl !== undefined && d2sl < 3 ? 'var(--wait)' : 'var(--muted)';
+    var d2tpCol = d2tp !== undefined && d2tp < 1 ? 'var(--long)' : 'var(--muted)';
+
+    var engineBadge = '';
+    if (p.engine_direction) {
+      var edCol = p.engine_direction === p.direction ? 'var(--long)' : p.engine_direction === 'WAIT' ? 'var(--muted)' : 'var(--short)';
+      var ecCol = p.engine_confidence === 'HIGH' ? 'var(--long)' : p.engine_confidence === 'MEDIUM' ? 'var(--accent)' : 'var(--muted)';
+      engineBadge = '<div style="font-size:11px;margin-top:4px">' +
+        '<span style="color:var(--muted)">Engine ' + (p.engine_strategy || '') + ':</span> ' +
+        '<span style="color:' + edCol + ';font-weight:700">' + p.engine_direction + '</span>' +
+        ' · <span style="color:' + ecCol + '">' + (p.engine_confidence || '?') + '</span>' +
+        (p.engine_rr ? ' · RR ' + p.engine_rr : '') +
+        (p.engine_funding ? ' · fund ' + p.engine_funding : '') +
+      '</div>';
+    }
+
+    var shortTrustBadge = '';
+    if (p.short_trust && p.direction === 'SHORT') {
+      var stCol = p.short_trust === 'HIGH' ? 'var(--short)' : p.short_trust === 'MEDIUM' ? 'var(--wait)' : 'var(--muted)';
+      shortTrustBadge = '<span style="font-size:10px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;padding:2px 6px;margin-left:6px;color:' + stCol + '">SHORT trust ' + p.short_trust + ' ' + p.short_score + '/100</span>';
+    }
+
+    var reasonsHtml = (p.recommendation_reasons || []).map(function(r){
+      return '<div style="font-size:11px;color:var(--muted2);line-height:1.5">· ' + r + '</div>';
+    }).join('');
+
+    var errorHtml = p.error ? '<div style="font-size:11px;color:var(--short);margin-top:4px">⚠ ' + p.error + '</div>' : '';
+
+    return '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid ' + act.color + ';' +
+      'border-radius:10px;padding:14px 18px;margin-bottom:10px">' +
+      // Header row
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+          '<span style="font-size:16px;font-weight:800;font-family:var(--mono)">' + sym + '</span>' +
+          '<span style="font-size:11px;font-weight:700;background:' + dirCol + '22;color:' + dirCol + ';padding:2px 8px;border-radius:4px">' + p.direction + '</span>' +
+          (p.leverage ? '<span style="font-size:10px;color:var(--muted)">' + p.leverage + 'x</span>' : '') +
+          shortTrustBadge +
+        '</div>' +
+        '<div style="display:flex;gap:6px;align-items:center">' +
+          '<span style="font-size:11px;font-weight:800;background:' + act.color + '22;color:' + act.color + ';padding:4px 10px;border-radius:6px">' +
+            act.icon + ' ' + act.label + '</span>' +
+          '<button onclick="liveDelete(' + p.id + ',\'' + sym + '\')" title="Xóa position" ' +
+            'style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer">🗑</button>' +
+        '</div>' +
+      '</div>' +
+      // Reasons
+      reasonsHtml +
+      errorHtml +
+      // Stats row
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:10px;font-size:11px">' +
+        '<div><div style="color:var(--muted);font-size:10px">Entry</div>' +
+          '<div style="font-family:var(--mono);font-weight:700">' + fmt(p.entry) + '</div></div>' +
+        '<div><div style="color:var(--muted);font-size:10px">Current</div>' +
+          '<div style="font-family:var(--mono);font-weight:700;color:var(--accent)">' + fmt(p.current_price) + '</div></div>' +
+        '<div><div style="color:var(--muted);font-size:10px">PnL %</div>' +
+          '<div style="font-family:var(--mono);font-weight:700;color:' + pnlCol + '">' + (pnlLev !== undefined ? pnlSign + pnlLev + '%' : '—') + pnlUsd + '</div></div>' +
+        '<div onclick="liveEditField(' + p.id + ',\'sl\',' + (p.sl||'null') + ',\'' + sym + '\')" style="cursor:pointer" title="Click để edit SL">' +
+          '<div style="color:var(--muted);font-size:10px">SL ' + (d2sl !== undefined ? '(' + d2sl + '% xa)' : '') + '</div>' +
+          '<div style="font-family:var(--mono);font-weight:700;color:' + d2slCol + '">' + fmt(p.sl) + '</div></div>' +
+        '<div onclick="liveEditField(' + p.id + ',\'tp1\',' + (p.tp1||'null') + ',\'' + sym + '\')" style="cursor:pointer" title="Click để edit TP1">' +
+          '<div style="color:var(--muted);font-size:10px">TP1 ' + (d2tp !== undefined ? '(' + d2tp + '% xa)' : '') + '</div>' +
+          '<div style="font-family:var(--mono);font-weight:700;color:' + d2tpCol + '">' + fmt(p.tp1) + '</div></div>' +
+        '<div onclick="liveEditField(' + p.id + ',\'tp2\',' + (p.tp2||'null') + ',\'' + sym + '\')" style="cursor:pointer" title="Click để edit TP2">' +
+          '<div style="color:var(--muted);font-size:10px">TP2</div>' +
+          '<div style="font-family:var(--mono);font-weight:700;color:var(--muted)">' + fmt(p.tp2) + '</div></div>' +
+      '</div>' +
+      // Engine analysis
+      engineBadge +
+      (p.notes ? '<div style="font-size:11px;color:var(--muted);margin-top:6px;font-style:italic">📝 ' + p.notes + '</div>' : '') +
+    '</div>';
+  }).join('');
+
+  box.innerHTML = html;
 }
 
 

@@ -893,6 +893,15 @@ tbody td{padding:11px 12px;vertical-align:middle}
           style="width:60px;background:transparent;border:none;color:var(--text);font-family:var(--mono);font-size:13px;font-weight:700;text-align:right;outline:none">
         <span style="font-size:11px;color:var(--muted)">lệnh</span>
       </div>
+      <div style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 10px"
+           title="Entry mode:&#10;MARKET = vào ngay khi alert ra (sig_price)&#10;LIMIT = chờ pullback Fib (entry_opt)&#10;COMPARE = chạy cả 2 song song">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Entry</span>
+        <select id="btMode" style="background:transparent;border:none;color:var(--text);font-family:var(--mono);font-size:13px;font-weight:700;outline:none;cursor:pointer">
+          <option value="MARKET" selected>MARKET</option>
+          <option value="LIMIT">LIMIT (entry_opt)</option>
+          <option value="COMPARE">COMPARE</option>
+        </select>
+      </div>
       <button class="btn primary" id="btnBacktest" onclick="runBacktest()">&#9654; Run Backtest</button>
       <button class="btn" id="btnAutoAnalyze" onclick="runAutoAnalyze()" style="background:rgba(255,170,0,.12);border:1px solid rgba(255,170,0,.4);color:#ffaa00" title="Tự động phân tích backtest gần đây và đưa ra gợi ý cải thiện">&#129504; Auto Analyze</button>
       <button class="btn" id="btnExportAnalysis" onclick="exportAnalysis()" style="display:none;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);color:#818cf8">&#128229; Export Analysis</button>
@@ -941,6 +950,9 @@ tbody td{padding:11px 12px;vertical-align:middle}
       <canvas id="btChart" height="80"></canvas>
     </div>
   </div>
+
+  <!-- COMPARE panel: MARKET vs LIMIT side-by-side -->
+  <div id="btCompare" style="display:none;background:var(--bg2);border:1px solid rgba(255,170,0,.3);border-radius:12px;padding:14px 20px;margin-bottom:14px"></div>
 
   <!-- Compact result summary — ngay trên bảng -->
   <div id="btResultSummary" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 20px;margin-bottom:14px">
@@ -3724,11 +3736,13 @@ function runBacktestWithSignals(signals, label) {
   var btSigCtrl = new AbortController();
   var btSigTimeout = setTimeout(function(){ btSigCtrl.abort(); }, 120000);
 
+  var btMode = (document.getElementById('btMode') || {}).value || 'MARKET';
+  var modeForCall = (btMode === 'COMPARE') ? 'MARKET' : btMode;
   fetch('/api/backtest/signals', {
     method: 'POST',
     signal: btSigCtrl.signal,
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({signals: signals})
+    body: JSON.stringify({signals: signals, bt_mode: modeForCall})
   }).then(function(r){ clearTimeout(btSigTimeout); return r.json(); }).then(function(data) {
     if (data.error) {
       document.getElementById('btResults').innerHTML =
@@ -3889,12 +3903,17 @@ function runBacktest() {
   var dir      = document.getElementById('btDir').value;
   var capital  = parseFloat(document.getElementById('btCapital').value) || 1000;
   var leverage = parseFloat(document.getElementById('btLeverage').value) || 5;
+  var btMode   = (document.getElementById('btMode') || {}).value || 'MARKET';
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Running...';
   document.getElementById('btResults').innerHTML =
-    '<div class="empty-state"><span class="spinner"></span><div style="margin-top:12px;color:var(--muted)">Đang fetch data và backtest từng signal...</div></div>';
+    '<div class="empty-state"><span class="spinner"></span><div style="margin-top:12px;color:var(--muted)">Đang fetch data và backtest từng signal' +
+    (btMode === 'COMPARE' ? ' (MARKET + LIMIT song song)' : ' (' + btMode + ')') + '...</div></div>';
   document.getElementById('btSummary').style.display = 'none';
+  // Clear COMPARE panel from previous run
+  var cmpEl = document.getElementById('btCompare');
+  if (cmpEl) cmpEl.style.display = 'none';
 
   var hoursAgo = parseInt(document.getElementById('btTimeRange').value) || 0;
   var maxSignalsEl = document.getElementById('btMaxSignals');
@@ -3902,47 +3921,131 @@ function runBacktest() {
   if (maxSignals < 10) maxSignals = 10;
   if (maxSignals > 500) maxSignals = 500;
 
-  var btController = new AbortController();
-  var btTimeout = setTimeout(function(){ btController.abort(); }, 200000); // 200s timeout (tăng cho max 500 signals)
+  var algoVer = document.getElementById('btAlgoVersion') ? document.getElementById('btAlgoVersion').value : '';
 
-  fetch('/api/backtest', {
-    method: 'POST',
-    signal: btController.signal,
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      confidence:   conf,
-      direction:    dir,
-      hours_ago:    hoursAgo,
-      max_signals:  maxSignals,
-      algo_version: document.getElementById('btAlgoVersion') ? document.getElementById('btAlgoVersion').value : ''
-    })
-  }).then(function(r){
-    clearTimeout(btTimeout);
-    if (!r.ok) throw new Error('Server error ' + r.status);
-    return r.json();
-  }).then(function(data) {
-    if (data.error) {
-      document.getElementById('btResults').innerHTML =
-        '<div class="empty-state"><div class="empty-icon">&#128203;</div>' +
-        '<div class="empty-title">'+data.error+'</div>' +
-        '<div style="font-size:13px">Bật auto-scanner để tích lũy signal history</div></div>';
-      return;
-    }
+  function callBT(mode) {
+    var ctl = new AbortController();
+    var to  = setTimeout(function(){ ctl.abort(); }, 200000);
+    return fetch('/api/backtest', {
+      method: 'POST',
+      signal: ctl.signal,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        confidence:   conf,
+        direction:    dir,
+        hours_ago:    hoursAgo,
+        max_signals:  maxSignals,
+        algo_version: algoVer,
+        bt_mode:      mode
+      })
+    }).then(function(r){
+      clearTimeout(to);
+      if (!r.ok) throw new Error('Server error ' + r.status);
+      return r.json();
+    });
+  }
+
+  function showError(msg) {
+    document.getElementById('btResults').innerHTML =
+      '<div class="empty-state"><div class="empty-icon">&#128203;</div>' +
+      '<div class="empty-title">'+msg+'</div>' +
+      '<div style="font-size:13px">Bật auto-scanner để tích lũy signal history</div></div>';
+  }
+
+  function renderSingle(data) {
+    if (data.error) { showError(data.error); return; }
     _btLastResults = data.results;
     _btLastSummary = data.summary;
     renderBtSummary(data.summary, data.results, capital, leverage);
     renderBtResultSummary(data.results, data.summary, capital, leverage);
     renderBtTable(data.results, capital, leverage);
     renderBtAnalysis(data.results, data.summary);
-  }).catch(function(e) {
-    document.getElementById('btResults').innerHTML =
-      '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
-  }).finally(function() {
+  }
+
+  function finish() {
     btn.disabled = false;
     btn.innerHTML = '&#9654; Run Backtest';
     var exportBtn = document.getElementById('btnExportAnalysis');
     if (exportBtn) exportBtn.style.display = '';
-  });
+  }
+
+  if (btMode === 'COMPARE') {
+    Promise.all([callBT('MARKET'), callBT('LIMIT')]).then(function(results) {
+      var mk = results[0], lm = results[1];
+      if (mk.error && lm.error) { showError(mk.error); finish(); return; }
+      // Render COMPARE panel side-by-side
+      renderBtCompare(mk, lm, capital, leverage);
+      // Default detail table = MARKET (realistic)
+      renderSingle(mk);
+    }).catch(function(e) {
+      document.getElementById('btResults').innerHTML =
+        '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
+    }).finally(finish);
+  } else {
+    callBT(btMode).then(renderSingle).catch(function(e) {
+      document.getElementById('btResults').innerHTML =
+        '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
+    }).finally(finish);
+  }
+}
+
+function renderBtCompare(mk, lm, capital, leverage) {
+  var el = document.getElementById('btCompare');
+  if (!el) return;
+  function statRow(label, valM, valL, color) {
+    color = color || 'var(--text)';
+    return '<tr>' +
+      '<td style="padding:6px 12px;color:var(--muted);font-size:12px">'+label+'</td>' +
+      '<td style="padding:6px 12px;text-align:right;font-family:var(--mono);font-weight:700;color:'+color+'">'+valM+'</td>' +
+      '<td style="padding:6px 12px;text-align:right;font-family:var(--mono);font-weight:700;color:'+color+'">'+valL+'</td>' +
+      '</tr>';
+  }
+  function pickBetter(m, l, higherBetter) {
+    if (m === l) return [m, l];
+    var betterMk = higherBetter ? (m > l) : (m < l);
+    var mkColor = betterMk ? 'var(--long)' : 'var(--muted)';
+    var lmColor = betterMk ? 'var(--muted)' : 'var(--long)';
+    return [
+      '<span style="color:'+mkColor+'">'+m+'</span>',
+      '<span style="color:'+lmColor+'">'+l+'</span>'
+    ];
+  }
+  var sM = mk.summary || {}, sL = lm.summary || {};
+  var rM = mk.results || [], rL = lm.results || [];
+  // Fill rate (LIMIT only has meaning)
+  var optL    = rL.filter(function(r){ return r.bt_used_entry === 'OPT'; });
+  var optFilL = optL.filter(function(r){ return r.bt_fill_candles !== null && r.bt_fill_candles !== undefined; });
+  var fillRateL = optL.length > 0 ? Math.round(optFilL.length / optL.length * 100) + '% ('+optFilL.length+'/'+optL.length+')' : '—';
+  var expiredL  = rL.filter(function(r){ return r.bt_result === 'EXPIRED'; }).length;
+
+  var wrPair      = pickBetter(sM.win_rate || 0, sL.win_rate || 0, true);
+  var totalRPair  = pickBetter(sM.total_r || 0, sL.total_r || 0, true);
+  var expectPair  = pickBetter(sM.expectancy || 0, sL.expectancy || 0, true);
+
+  el.innerHTML =
+    '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">' +
+    '⚖️ COMPARE — MARKET (vào ngay) vs LIMIT (chờ entry_opt)</div>' +
+    '<table style="width:100%;border-collapse:collapse">' +
+      '<thead><tr style="border-bottom:1px solid var(--border)">' +
+        '<th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600">Metric</th>' +
+        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--accent);font-weight:700">🟢 MARKET</th>' +
+        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:#ffaa00;font-weight:700">🟠 LIMIT (entry_opt)</th>' +
+      '</tr></thead><tbody>' +
+      statRow('Total signals',  sM.total || 0, sL.total || 0) +
+      statRow('Closed (W+L)',   sM.closed || 0, sL.closed || 0) +
+      statRow('Win Rate',       wrPair[0]+'%', wrPair[1]+'%') +
+      statRow('Wins / Losses',  (sM.wins||0)+' / '+(sM.losses||0), (sL.wins||0)+' / '+(sL.losses||0)) +
+      statRow('OPEN / PENDING / EXPIRED', (sM.opens||0)+' / '+(sM.pending||0)+' / 0',
+                                          (sL.opens||0)+' / '+(sL.pending||0)+' / '+expiredL) +
+      statRow('Total R',        totalRPair[0], totalRPair[1]) +
+      statRow('Expectancy (R)', expectPair[0], expectPair[1]) +
+      statRow('LIMIT fill rate', '— (always fills)', fillRateL) +
+    '</tbody></table>' +
+    '<div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.5">' +
+    '💡 <b>MARKET</b> = vào ngay khi alert ra, phản ánh thực tế trader. ' +
+    '<b>LIMIT</b> = chờ pullback Fib/MA (entry_opt) — RR đẹp hơn nhưng chỉ fill khi giá quay đầu. ' +
+    'Bảng dưới hiển thị MARKET (realistic).</div>';
+  el.style.display = '';
 }
 
 function renderBtResultSummary(results, s, capital, leverage) {

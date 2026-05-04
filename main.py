@@ -1218,10 +1218,15 @@ def clear_history():
 
 
 # ── Backtest ──────────────────────────────────
-def backtest_signal(signal: dict) -> dict:
+def backtest_signal(signal: dict, bt_mode: str = "MARKET") -> dict:
     """
     Backtest signal: dùng M5 cho scalp, M15 cho swing H1, H1 cho swing H4.
-    Market order → entry đã khớp ngay → check SL/TP liên tục trên nến nhỏ.
+
+    bt_mode:
+      - "MARKET" (default, realistic): entry = sig_price, market fill ngay khi alert ra.
+        Phản ánh đúng khi trader nhận signal và vào MARKET ngay.
+      - "LIMIT": entry = entry_opt (Fib pullback recommend) nếu hợp lệ, chờ giá chạm để fill.
+        Verify fill-rate của engine recommend pullback entry.
     """
     from core.binance import fetch_klines, fetch_volume_24h
     import pandas as pd
@@ -1233,34 +1238,33 @@ def backtest_signal(signal: dict) -> dict:
         return {**signal, "bt_result": "SKIP", "bt_note": "Direction=WAIT — không có lệnh thực tế",
                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
 
-    # ── Entry optimal logic (verify fill rate của engine recommend) ──
-    # Nếu signal có entry_opt khác price → coi như limit order tại entry_opt
-    # SL/TP giữ nguyên giá tuyệt đối (key levels không đổi), chỉ tính lại sl_pct/tp1_pct từ entry mới
+    # ── Entry resolution dựa vào bt_mode ──
+    # MARKET: dùng sig_price (entry hiển thị UI), không quan tâm entry_opt
+    # LIMIT:  swap sang entry_opt nếu hợp lệ (chờ pullback fill)
     entry_orig = float(signal["entry"])
     sl         = float(signal["sl"])
     tp1        = float(signal["tp1"])
     sig_time   = signal["time"]
     sig_price  = float(signal.get("price", entry_orig))
 
-    entry_opt_raw = signal.get("entry_opt")
     bt_used_entry = "MARKET"
-    if entry_opt_raw is not None:
-        try:
-            entry_opt_val = float(entry_opt_raw)
-            # Chỉ swap nếu entry_opt khác meaningful (>0.05%) so với sig_price
-            # và đúng phía (LONG: entry_opt < sig_price; SHORT: entry_opt > sig_price)
-            diff_pct = abs(entry_opt_val - sig_price) / sig_price * 100
-            valid_side = (direction == "LONG"  and entry_opt_val < sig_price) or \
-                         (direction == "SHORT" and entry_opt_val > sig_price)
-            if diff_pct >= 0.05 and valid_side:
-                entry = entry_opt_val
-                bt_used_entry = "OPT"
-            else:
-                entry = entry_orig
-        except (TypeError, ValueError):
-            entry = entry_orig
-    else:
-        entry = entry_orig
+    entry = entry_orig
+
+    if bt_mode == "LIMIT":
+        entry_opt_raw = signal.get("entry_opt")
+        if entry_opt_raw is not None:
+            try:
+                entry_opt_val = float(entry_opt_raw)
+                # Chỉ swap nếu entry_opt khác meaningful (>0.05%) so với sig_price
+                # và đúng phía (LONG: entry_opt < sig_price; SHORT: entry_opt > sig_price)
+                diff_pct = abs(entry_opt_val - sig_price) / sig_price * 100
+                valid_side = (direction == "LONG"  and entry_opt_val < sig_price) or \
+                             (direction == "SHORT" and entry_opt_val > sig_price)
+                if diff_pct >= 0.05 and valid_side:
+                    entry = entry_opt_val
+                    bt_used_entry = "OPT"
+            except (TypeError, ValueError):
+                pass
 
     try:
         ts_parsed = pd.Timestamp(sig_time)
@@ -1314,43 +1318,35 @@ def backtest_signal(signal: dict) -> dict:
         # Timeout chờ entry_opt khớp — nếu là limit order qua entry_opt, max 8h chờ
         FILL_TIMEOUT_HOURS = 8
 
-        # ── Nếu không có nến nào sau signal → dùng nến cuối để check ──
+        # ── Không có nến sau signal → không thể backtest chính xác → PENDING ──
+        # Nguyên nhân: clock skew, signal time future-dated, hoặc data chưa kịp catch up.
+        # Dùng entry_orig (entry hiển thị UI) để compute unrealized — đảm bảo nhất quán
+        # giữa cột Entry trên dashboard và % PnL trong note.
         if len(df_after) == 0:
             last_price = float(df["close"].iloc[-1])
-            _ec = {"bt_used_entry": bt_used_entry, "bt_fill_candles": None}
+            last_ts    = int(df["ts"].iloc[-1])
+            mins_gap   = max(0, int((sig_ts - last_ts) / 60))
+
+            # Recompute sl_pct/tp1_pct từ entry_orig (không dùng entry_opt swap)
+            sl_pct_orig  = abs(entry_orig - sl)  / entry_orig * 100 if entry_orig > 0 else 0
+            tp1_pct_orig = abs(tp1 - entry_orig) / entry_orig * 100 if entry_orig > 0 else 0
+
             if direction == "LONG":
-                if last_price <= sl:
-                    return {**signal, "bt_result": "LOSS",
-                            "bt_note": f"Giá {round(last_price,6)} dưới SL {sl}",
-                            "bt_candles": 0, "bt_pnl_r": -1.0,
-                            "bt_exit_price": round(sl, 6), "bt_exit_reason": "SL", **_ec}
-                if last_price >= tp1:
-                    return {**signal, "bt_result": "WIN",
-                            "bt_note": f"Giá {round(last_price,6)} trên TP1 {tp1}",
-                            "bt_candles": 0,
-                            "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
-                            "bt_exit_price": round(tp1, 6), "bt_exit_reason": "TP", **_ec}
+                unrealized = round((last_price - entry_orig) / entry_orig * 100, 2) if entry_orig > 0 else 0
             else:
-                if last_price >= sl:
-                    return {**signal, "bt_result": "LOSS",
-                            "bt_note": f"Giá {round(last_price,6)} trên SL {sl}",
-                            "bt_candles": 0, "bt_pnl_r": -1.0,
-                            "bt_exit_price": round(sl, 6), "bt_exit_reason": "SL", **_ec}
-                if last_price <= tp1:
-                    return {**signal, "bt_result": "WIN",
-                            "bt_note": f"Giá {round(last_price,6)} dưới TP1 {tp1}",
-                            "bt_candles": 0,
-                            "bt_pnl_r": round(tp1_pct / sl_pct, 2) if sl_pct > 0 else 0,
-                            "bt_exit_price": round(tp1, 6), "bt_exit_reason": "TP", **_ec}
-            # Chưa chạm → OPEN
-            unrealized = round((last_price - entry) / entry * 100, 2) if direction == "LONG" \
-                         else round((entry - last_price) / entry * 100, 2)
-            unrealized_r = round(unrealized / sl_pct, 2) if sl_pct > 0 else None
-            return {**signal, "bt_result": "OPEN",
-                    "bt_note": f"Giá hiện tại {round(last_price,6)} ({unrealized:+.2f}%) — dùng {bt_label}",
-                    "bt_candles": 0, "bt_pnl_r": None,
-                    "bt_unrealized_pct": unrealized, "bt_unrealized_r": unrealized_r,
-                    "bt_exit_price": round(last_price, 6), **_ec}
+                unrealized = round((entry_orig - last_price) / entry_orig * 100, 2) if entry_orig > 0 else 0
+            unrealized_r = round(unrealized / sl_pct_orig, 2) if sl_pct_orig > 0 else None
+
+            return {**signal, "bt_result": "PENDING",
+                    "bt_note":          f"Chưa có nến sau signal time (last candle trước signal {mins_gap}p) — không backtest được. "
+                                        f"Dự kiến PnL nếu fill ngay: {round(last_price,6)} vs entry {entry_orig} ({unrealized:+.2f}%)",
+                    "bt_candles":       0,
+                    "bt_pnl_r":         None,
+                    "bt_unrealized_pct": unrealized,
+                    "bt_unrealized_r":   unrealized_r,
+                    "bt_exit_price":    round(last_price, 6),
+                    "bt_used_entry":    "ORIG",
+                    "bt_fill_candles":  None}
 
         # ── Check SL/TP trên từng nến (market order = entry đã khớp ngay) ──
         is_limit_long  = direction == "LONG"  and entry < sig_price * 0.999
@@ -2882,6 +2878,9 @@ def run_backtest():
     hours_ago    = int(data.get("hours_ago", 8))       # mặc định 8 tiếng
     algo_version = data.get("algo_version", "")        # "" = tất cả versions
     max_signals_req = int(data.get("max_signals", 200))  # default 200 (vs 50 cũ)
+    bt_mode      = data.get("bt_mode", "MARKET")       # MARKET (default) | LIMIT
+    if bt_mode not in ("MARKET", "LIMIT"):
+        bt_mode = "MARKET"
 
     history = load_history()
     if not history:
@@ -2920,7 +2919,7 @@ def run_backtest():
     signals_to_run = signals[:max_signals]
     truncated = total_available > max_signals
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(backtest_signal, sig): sig for sig in signals_to_run}
+        futures = {ex.submit(backtest_signal, sig, bt_mode): sig for sig in signals_to_run}
         for fut in concurrent.futures.as_completed(futures, timeout=180):
             try:
                 results.append(fut.result())
@@ -2988,12 +2987,15 @@ def run_backtest_signals():
     """Backtest danh sách signals cụ thể truyền thẳng từ frontend (history selection)."""
     data    = request.json or {}
     signals = data.get("signals", [])
+    bt_mode = data.get("bt_mode", "MARKET")
+    if bt_mode not in ("MARKET", "LIMIT"):
+        bt_mode = "MARKET"
     if not signals:
         return jsonify({"results": [], "summary": {}, "error": "Không có signal"})
 
     results = []
     for sig in signals:
-        r = backtest_signal(sig)
+        r = backtest_signal(sig, bt_mode)
         results.append(r)
 
     wins     = [r for r in results if r["bt_result"] == "WIN"]
@@ -3034,6 +3036,9 @@ def auto_analyze_backtest():
 
     data = request.json or {}
     hours_ago = int(data.get("hours_ago", 24))
+    bt_mode = data.get("bt_mode", "MARKET")
+    if bt_mode not in ("MARKET", "LIMIT"):
+        bt_mode = "MARKET"
 
     # Load & filter history
     history = load_history()
@@ -3053,7 +3058,7 @@ def auto_analyze_backtest():
     signals_to_bt = sorted(signals, key=lambda h: h.get("time", "")[:19], reverse=True)[:50]
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        futures = {ex.submit(backtest_signal, sig): sig for sig in signals_to_bt}
+        futures = {ex.submit(backtest_signal, sig, bt_mode): sig for sig in signals_to_bt}
         for fut in concurrent.futures.as_completed(futures, timeout=110):
             try:
                 results.append(fut.result())

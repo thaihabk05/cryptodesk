@@ -959,6 +959,33 @@ tbody td{padding:11px 12px;vertical-align:middle}
     <div id="btResultSummaryContent"></div>
   </div>
 
+  <!-- Pivot tables: Per-coin & Per-strategy -->
+  <div id="btPivot" style="display:none;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px">
+      <details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">
+          📊 Per-coin breakdown
+          <span id="btPivotCoinMeta" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px"></span>
+        </summary>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted)">
+          Min signals:
+          <input id="btPivotMinSignals" type="number" value="3" min="1" max="50"
+            style="width:50px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none"
+            onchange="renderBtPivot(_btLastSummary)">
+          <span style="color:var(--muted2)">· click cột để sort</span>
+        </div>
+        <div style="overflow-x:auto;margin-top:8px"><table id="btPivotCoin" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>
+        <div id="btPivotCoinFooter" style="margin-top:6px;font-size:10px;color:var(--muted2)"></div>
+      </details>
+      <details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">
+          🎯 Per-strategy breakdown
+        </summary>
+        <div style="overflow-x:auto;margin-top:10px"><table id="btPivotStrat" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>
+      </details>
+    </div>
+  </div>
+
   <!-- Analysis Panel -->
   <div id="btAnalysis" style="display:none;margin-bottom:16px"></div>
 
@@ -2807,6 +2834,19 @@ function buildCard(d) {
     })() : '') +
     (dir!=='WAIT' ? '<div class="rr-row" style="color:'+rrColor+'">R:R 1:'+d.rr+
       '<span class="rr-label">UP '+d.tp1_pct+'% TP / '+d.sl_pct+'% SL</span></div>' : '') +
+    (dir!=='WAIT' && d.recommended_size_pct !== undefined && d.recommended_size_pct !== null ? (function(){
+      var sz   = d.recommended_size_pct;
+      var tier = d.recommended_size_tier || 'STANDARD';
+      var col  = sz >= 2.5 ? 'var(--long)' : sz >= 1.5 ? 'var(--accent)' : sz > 0 ? 'var(--wait)' : 'var(--muted)';
+      var icon = tier==='AGGRESSIVE'?'🔥':tier==='STANDARD'?'💰':tier==='CONSERVATIVE'?'🛡️':'⏭️';
+      var reasonsTxt = (d.recommended_size_reasons||[]).join(' · ');
+      return '<div title="'+reasonsTxt+'" style="display:flex;align-items:center;justify-content:space-between;'+
+        'background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;'+
+        'padding:5px 10px;margin-bottom:8px;font-size:11px">'+
+        '<span style="color:var(--muted)">'+icon+' Size đề xuất</span>'+
+        '<span style="font-family:var(--mono);font-weight:700;color:'+col+'">'+sz+'% account · '+tier+'</span>'+
+      '</div>';
+    })() : '') +
     (dir!=='WAIT' ?
     '<div class="levels-row">' +
       '<div class="level"><div class="level-lbl">Entry</div>' +
@@ -3432,7 +3472,10 @@ function showScanDrawer(idx) {
     h4: d.h4 || {},
     h1: d.h1 || {},
     fib_ret: d.fib_ret || {},
-    fib_ext: d.fib_ext || {}
+    fib_ext: d.fib_ext || {},
+    recommended_size_pct:     d.recommended_size_pct,
+    recommended_size_tier:    d.recommended_size_tier,
+    recommended_size_reasons: d.recommended_size_reasons || []
   };
 
   // Đưa vào signalCache để showDetail + btn-try hoạt động
@@ -3732,6 +3775,8 @@ function runBacktestWithSignals(signals, label) {
     '<div style="margin-top:12px;color:var(--muted)">Backtest: '+label+'...</div></div>';
   document.getElementById('btSummary').style.display = 'none';
   document.getElementById('btResultSummary').style.display = 'none';
+  var pvEl = document.getElementById('btPivot');
+  if (pvEl) pvEl.style.display = 'none';
 
   var btSigCtrl = new AbortController();
   var btSigTimeout = setTimeout(function(){ btSigCtrl.abort(); }, 120000);
@@ -3754,6 +3799,7 @@ function runBacktestWithSignals(signals, label) {
     _btLastSummary = data.summary;
     renderBtSummary(data.summary, data.results, capital, leverage);
     renderBtResultSummary(data.results, data.summary, capital, leverage);
+    renderBtPivot(data.summary);
     renderBtTable(data.results, capital, leverage);
     renderBtAnalysis(data.results, data.summary);
   }).catch(function(e) {
@@ -3911,9 +3957,11 @@ function runBacktest() {
     '<div class="empty-state"><span class="spinner"></span><div style="margin-top:12px;color:var(--muted)">Đang fetch data và backtest từng signal' +
     (btMode === 'COMPARE' ? ' (MARKET + LIMIT song song)' : ' (' + btMode + ')') + '...</div></div>';
   document.getElementById('btSummary').style.display = 'none';
-  // Clear COMPARE panel from previous run
+  // Clear COMPARE + Pivot panels from previous run
   var cmpEl = document.getElementById('btCompare');
   if (cmpEl) cmpEl.style.display = 'none';
+  var pvEl2 = document.getElementById('btPivot');
+  if (pvEl2) pvEl2.style.display = 'none';
 
   var hoursAgo = parseInt(document.getElementById('btTimeRange').value) || 0;
   var maxSignalsEl = document.getElementById('btMaxSignals');
@@ -3958,6 +4006,7 @@ function runBacktest() {
     _btLastSummary = data.summary;
     renderBtSummary(data.summary, data.results, capital, leverage);
     renderBtResultSummary(data.results, data.summary, capital, leverage);
+    renderBtPivot(data.summary);
     renderBtTable(data.results, capital, leverage);
     renderBtAnalysis(data.results, data.summary);
   }
@@ -4116,6 +4165,126 @@ function renderBtResultSummary(results, s, capital, leverage) {
     + '</div>';
 
   bar.style.display = 'block';
+}
+
+// Sort state for per-coin pivot
+var _btPivotCoinSortKey = 'total_r';
+var _btPivotCoinSortDir = 'desc';
+
+function _btSortCoin(key) {
+  if (_btPivotCoinSortKey === key) {
+    _btPivotCoinSortDir = (_btPivotCoinSortDir === 'desc') ? 'asc' : 'desc';
+  } else {
+    _btPivotCoinSortKey = key;
+    _btPivotCoinSortDir = 'desc';
+  }
+  renderBtPivot(_btLastSummary);
+}
+
+function renderBtPivot(summary) {
+  if (!summary) return;
+  var pc = summary.per_coin || [];
+  var ps = summary.per_strategy || [];
+  var box = document.getElementById('btPivot');
+  if (!box) return;
+  if (!pc.length && !ps.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+
+  // ── Per-coin table ──
+  var minSig = parseInt((document.getElementById('btPivotMinSignals') || {}).value || 3) || 3;
+  var hidden = pc.filter(function(r){ return r.signals < minSig; }).length;
+  var visible = pc.filter(function(r){ return r.signals >= minSig; });
+
+  // Sort
+  var key = _btPivotCoinSortKey, dir = _btPivotCoinSortDir;
+  visible.sort(function(a,b) {
+    var av = a[key], bv = b[key];
+    if (av === null || av === undefined) av = -Infinity;
+    if (bv === null || bv === undefined) bv = -Infinity;
+    if (typeof av === 'string') return dir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
+    return dir === 'desc' ? (bv - av) : (av - bv);
+  });
+
+  var verdictColor = {
+    'TRADE':       'var(--long)',
+    'AVOID':       'var(--short)',
+    'NEUTRAL':     'var(--wait)',
+    'INSUFFICIENT':'var(--muted2)',
+    'PENDING':     'var(--muted)'
+  };
+  var verdictLabel = {
+    'TRADE':       '✅ TRADE',
+    'AVOID':       '❌ AVOID',
+    'NEUTRAL':     '⚪ NEUTRAL',
+    'INSUFFICIENT':'⚠ LOW SAMPLE',
+    'PENDING':     '⏳ PENDING'
+  };
+  function wrColor(wr) {
+    if (wr === null || wr === undefined) return 'var(--muted)';
+    if (wr >= 55) return 'var(--long)';
+    if (wr >= 40) return 'var(--wait)';
+    return 'var(--short)';
+  }
+  function rColor(r) { return (r > 0) ? 'var(--long)' : (r < 0) ? 'var(--short)' : 'var(--muted)'; }
+  function fmtR(r) { return (r === null || r === undefined) ? '—' : (r > 0 ? '+' : '') + r; }
+  function fmtPct(p) { return (p === null || p === undefined) ? '—' : p + '%'; }
+  function arrow(k) { return key === k ? (dir === 'desc' ? ' ↓' : ' ↑') : ''; }
+
+  var th = function(label, k) {
+    return '<th onclick="_btSortCoin(\''+k+'\')" style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);font-weight:600;cursor:pointer;border-bottom:1px solid var(--border);user-select:none">'+label+arrow(k)+'</th>';
+  };
+  var html = '<thead><tr>' +
+    '<th onclick="_btSortCoin(\'symbol\')" style="padding:6px 8px;text-align:left;font-size:10px;color:var(--muted);font-weight:600;cursor:pointer;border-bottom:1px solid var(--border);user-select:none">Symbol'+arrow('symbol')+'</th>' +
+    th('Signals',  'signals') +
+    th('W / L',    'wins') +
+    th('WR',       'wr') +
+    th('Avg R',    'avg_r') +
+    th('Total R',  'total_r') +
+    '<th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">Best strat</th>' +
+    '<th style="padding:6px 8px;text-align:center;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">Verdict</th>' +
+    '</tr></thead><tbody>';
+  visible.forEach(function(r) {
+    var wrTxt = fmtPct(r.wr);
+    if (r.sample_size_warning && r.wr !== null) wrTxt = wrTxt + '*';
+    html += '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">' +
+      '<td style="padding:5px 8px;font-family:var(--mono);font-weight:700">'+r.symbol+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+r.signals+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-size:11px"><span style="color:var(--long)">'+r.wins+'</span> / <span style="color:var(--short)">'+r.losses+'</span></td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+wrColor(r.wr)+'" title="'+(r.sample_size_warning ? 'Low sample (<3 closed)' : '')+'">'+wrTxt+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);color:'+rColor(r.avg_r)+'">'+fmtR(r.avg_r)+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+rColor(r.total_r)+'">'+fmtR(r.total_r)+'</td>' +
+      '<td style="padding:5px 8px;font-family:var(--mono);font-size:11px;color:var(--muted)">'+r.best_strategy+(r.best_strategy_r !== null ? ' <span style="color:'+rColor(r.best_strategy_r)+'">('+fmtR(r.best_strategy_r)+')</span>' : '')+'</td>' +
+      '<td style="padding:5px 8px;text-align:center;font-size:10px;font-weight:700;color:'+verdictColor[r.verdict]+'">'+verdictLabel[r.verdict]+'</td>' +
+      '</tr>';
+  });
+  html += '</tbody>';
+  document.getElementById('btPivotCoin').innerHTML = html;
+  document.getElementById('btPivotCoinMeta').textContent = '· '+visible.length+' coins'+(hidden ? ' ('+hidden+' ẩn)' : '');
+  document.getElementById('btPivotCoinFooter').textContent = hidden > 0 ? hidden+' coins ẩn vì <'+minSig+' signals' : '';
+
+  // ── Per-strategy table ──
+  var sh = '<thead><tr>' +
+    '<th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">Strategy</th>' +
+    '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">Signals</th>' +
+    '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">W / L</th>' +
+    '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">WR</th>' +
+    '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">Avg R</th>' +
+    '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">Total R</th>' +
+    '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)">Avg holding</th>' +
+    '</tr></thead><tbody>';
+  ps.forEach(function(r) {
+    sh += '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">' +
+      '<td style="padding:5px 8px;font-family:var(--mono);font-weight:700">'+r.strategy+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+r.signals+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-size:11px"><span style="color:var(--long)">'+r.wins+'</span> / <span style="color:var(--short)">'+r.losses+'</span></td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+wrColor(r.wr)+'">'+fmtPct(r.wr)+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);color:'+rColor(r.avg_r)+'">'+fmtR(r.avg_r)+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+rColor(r.total_r)+'">'+fmtR(r.total_r)+'</td>' +
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);color:var(--muted)">'+(r.avg_holding_h !== null ? r.avg_holding_h + 'h' : '—')+'</td>' +
+      '</tr>';
+  });
+  sh += '</tbody>';
+  document.getElementById('btPivotStrat').innerHTML = sh;
 }
 
 function renderBtSummary(s, results, capital, leverage) {

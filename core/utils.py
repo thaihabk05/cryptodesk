@@ -50,3 +50,57 @@ def smart_round(val):
         return round(val, 8)
     except Exception:
         return round(val, 6)
+
+
+def recommended_size(confidence, rr, direction=None, funding=None, atr_state=None):
+    """Đề xuất % vốn account cho 1 lệnh dựa trên confidence + RR + market context.
+
+    Trả về dict:
+      - size_pct: float — % vốn account (0 = skip)
+      - tier: "AGGRESSIVE" | "STANDARD" | "CONSERVATIVE" | "SKIP"
+      - reasons: list[str] — giải thích adjustments
+
+    Base tiers:
+      HIGH + RR>=2.5  → 3.0% (AGGRESSIVE)
+      HIGH + RR>=1.5  → 2.0% (STANDARD)
+      MEDIUM + RR>=2  → 1.5% (STANDARD)
+      MEDIUM + RR>=1.5→ 1.0% (CONSERVATIVE)
+      LOW hoặc RR<1.5 → 0%   (SKIP)
+
+    Adjust:
+      |funding| >= 0.05%  → -0.5% (crowded)
+      atr_state == "HIGH" → -0.5% (volatile, slippage rủi ro)
+    """
+    if direction == "WAIT" or confidence == "LOW" or (rr is not None and rr < 1.5):
+        return {"size_pct": 0, "tier": "SKIP",
+                "reasons": ["Confidence/RR không đủ để vào lệnh"]}
+
+    rr = rr or 0
+    if confidence == "HIGH" and rr >= 2.5:
+        size, tier = 3.0, "AGGRESSIVE"
+    elif confidence == "HIGH" and rr >= 1.5:
+        size, tier = 2.0, "STANDARD"
+    elif confidence == "MEDIUM" and rr >= 2.0:
+        size, tier = 1.5, "STANDARD"
+    elif confidence == "MEDIUM" and rr >= 1.5:
+        size, tier = 1.0, "CONSERVATIVE"
+    else:
+        return {"size_pct": 0, "tier": "SKIP",
+                "reasons": ["Setup không đạt tier tối thiểu"]}
+
+    reasons = [f"Base: {tier} ({confidence}, RR {rr})"]
+
+    # Adjust funding crowded — funding stored as %-value directly (0.05 means 0.05%)
+    if funding is not None:
+        if abs(funding) >= 0.05:
+            penalty = 0.5
+            size = max(0.5, size - penalty)
+            reasons.append(f"Funding {funding:+.4f}% extreme → -{penalty}% (crowded)")
+
+    # Adjust ATR volatile
+    if atr_state == "HIGH":
+        penalty = 0.5
+        size = max(0.5, size - penalty)
+        reasons.append(f"ATR HIGH → -{penalty}% (volatile)")
+
+    return {"size_pct": round(size, 1), "tier": tier, "reasons": reasons}

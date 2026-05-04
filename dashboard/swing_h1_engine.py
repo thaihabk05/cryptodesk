@@ -24,7 +24,7 @@ from core.indicators import (prepare, ma_slope, find_swing_points,
                               classify_structure, fib_retracement,
                               fib_extension, is_no_trade_zone, calc_atr_context,
                               detect_exhaustion_short)
-from core.utils import sanitize, smart_round
+from core.utils import sanitize, smart_round, recommended_size
 
 
 def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
@@ -622,12 +622,17 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
                   "vol_ratio": round(r["vol_ratio"], 2)}
                  for _, r in chart_df.iterrows()]
 
+    _size = recommended_size(confidence, rr, direction,
+                              funding=funding, atr_state=atr_ctx.get("atr_state"))
     return sanitize({
         "symbol":        symbol,
         "strategy":      "SWING_H1",
         "price":         smart_round(price),
         "direction":     direction,
         "confidence":    confidence,
+        "recommended_size_pct":     _size["size_pct"],
+        "recommended_size_tier":    _size["tier"],
+        "recommended_size_reasons": _size["reasons"],
         "score":         int(score),
         "conditions":    conditions,
         "warnings":      all_warnings,

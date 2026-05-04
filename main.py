@@ -2865,6 +2865,109 @@ def btc_trend():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+def _aggregate_pivot(results):
+    """Aggregate backtest results thành 2 pivot tables: per-coin & per-strategy.
+    Trả về (per_coin_list, per_strategy_list) sorted by total_r desc.
+    """
+    from collections import defaultdict
+    # Map strategy → giờ/nến để tính avg_holding_h
+    candle_h_map = {"SCALP": 5/60, "SWING_H1": 0.25, "SWING_H4": 0.25}  # SCALP M5, SWING M15
+
+    # ── Per-coin ──
+    by_coin = defaultdict(list)
+    for r in results:
+        if r.get("bt_result") == "ERROR":
+            continue
+        sym = r.get("symbol") or "UNKNOWN"
+        by_coin[sym].append(r)
+
+    per_coin = []
+    for sym, rs in by_coin.items():
+        wins   = [r for r in rs if r.get("bt_result") == "WIN"]
+        losses = [r for r in rs if r.get("bt_result") == "LOSS"]
+        closed = wins + losses
+        wr     = round(len(wins) / len(closed) * 100, 1) if closed else None
+        prs    = [r["bt_pnl_r"] for r in closed if r.get("bt_pnl_r") is not None]
+        total_r = round(sum(prs), 2) if prs else 0
+        avg_r   = round(sum(prs) / len(prs), 2) if prs else 0
+
+        # Best strategy: total_r cao nhất với min 2 closed trades, tiebreak by wr
+        by_strat = defaultdict(list)
+        for r in rs:
+            by_strat[r.get("strategy") or "LEGACY"].append(r)
+        best_strat, best_strat_r = "—", None
+        candidates = []
+        for s, srs in by_strat.items():
+            sw = [r for r in srs if r.get("bt_result") == "WIN"]
+            sl = [r for r in srs if r.get("bt_result") == "LOSS"]
+            sclosed = sw + sl
+            if len(sclosed) < 2:
+                continue
+            sprs = [r["bt_pnl_r"] for r in sclosed if r.get("bt_pnl_r") is not None]
+            if not sprs:
+                continue
+            stotal_r = round(sum(sprs), 2)
+            swr      = round(len(sw) / len(sclosed) * 100, 1)
+            candidates.append((s, stotal_r, swr))
+        if candidates:
+            candidates.sort(key=lambda x: (-x[1], -x[2]))
+            best_strat, best_strat_r = candidates[0][0], candidates[0][1]
+
+        # Verdict
+        sample_warn = len(closed) < 3
+        if not closed:
+            verdict = "PENDING"
+        elif len(closed) < 3:
+            verdict = "INSUFFICIENT"
+        elif len(closed) >= 5 and wr >= 55 and total_r > 0:
+            verdict = "TRADE"
+        elif len(closed) >= 5 and (wr < 35 or total_r < -2):
+            verdict = "AVOID"
+        else:
+            verdict = "NEUTRAL"
+
+        per_coin.append({
+            "symbol": sym, "signals": len(rs), "closed": len(closed),
+            "wins": len(wins), "losses": len(losses),
+            "wr": wr, "avg_r": avg_r, "total_r": total_r,
+            "best_strategy": best_strat, "best_strategy_r": best_strat_r,
+            "verdict": verdict, "sample_size_warning": sample_warn,
+        })
+    per_coin.sort(key=lambda x: -(x["total_r"] or 0))
+
+    # ── Per-strategy ──
+    by_strat = defaultdict(list)
+    for r in results:
+        if r.get("bt_result") == "ERROR":
+            continue
+        s = r.get("strategy") or "LEGACY"
+        by_strat[s].append(r)
+
+    per_strategy = []
+    for s, rs in by_strat.items():
+        wins   = [r for r in rs if r.get("bt_result") == "WIN"]
+        losses = [r for r in rs if r.get("bt_result") == "LOSS"]
+        closed = wins + losses
+        wr     = round(len(wins) / len(closed) * 100, 1) if closed else None
+        prs    = [r["bt_pnl_r"] for r in closed if r.get("bt_pnl_r") is not None]
+        total_r = round(sum(prs), 2) if prs else 0
+        avg_r   = round(sum(prs) / len(prs), 2) if prs else 0
+        # Avg holding h
+        cands = [r.get("bt_candles") for r in closed if r.get("bt_candles")]
+        ch    = candle_h_map.get(s, 0.25)
+        avg_holding_h = round(sum(cands) / len(cands) * ch, 1) if cands else None
+
+        per_strategy.append({
+            "strategy": s, "signals": len(rs), "closed": len(closed),
+            "wins": len(wins), "losses": len(losses),
+            "wr": wr, "avg_r": avg_r, "total_r": total_r,
+            "avg_holding_h": avg_holding_h,
+        })
+    per_strategy.sort(key=lambda x: -(x["total_r"] or 0))
+
+    return per_coin, per_strategy
+
+
 @app.route("/api/backtest", methods=["POST"])
 def run_backtest():
     """Backtest signals trong history, hỗ trợ filter theo khoảng thời gian."""
@@ -2979,6 +3082,11 @@ def run_backtest():
         "truncated_note":   f"Có {total_available} signals trong khoảng thời gian này, chỉ chạy {max_signals} mới nhất. Tăng max_signals để chạy thêm." if truncated else "",
     }
 
+    # ── Per-coin & Per-strategy pivot ──
+    per_coin, per_strategy = _aggregate_pivot(results)
+    summary["per_coin"]     = per_coin
+    summary["per_strategy"] = per_strategy
+
     return jsonify({"results": results, "summary": summary})
 
 
@@ -3024,6 +3132,9 @@ def run_backtest_signals():
         "expectancy": expectancy,
         "avg_candles_win": avg_candles_win, "avg_candles_loss": avg_candles_loss,
     }
+    per_coin, per_strategy = _aggregate_pivot(results)
+    summary["per_coin"]     = per_coin
+    summary["per_strategy"] = per_strategy
     return jsonify({"results": results, "summary": summary})
 
 @app.route("/api/backtest/auto-analyze", methods=["POST"])

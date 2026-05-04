@@ -10,7 +10,7 @@ from core.indicators import (prepare, ma_slope, find_swing_points,
                               classify_structure, fib_retracement,
                               fib_extension, is_no_trade_zone, calc_atr_context,
                               weekly_macro_bias)
-from core.utils import sanitize, smart_round
+from core.utils import sanitize, smart_round, recommended_size
 
 
 def _interpret_funding(funding, oi_change, direction):
@@ -963,4 +963,9 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         "entry_opt_label":  entry_opt_label,
         "entry_opt_rr":     entry_opt_rr,
     }
+    _size = recommended_size(confidence, rr, direction,
+                              funding=funding, atr_state=atr_ctx.get("atr_state"))
+    result["recommended_size_pct"]     = _size["size_pct"]
+    result["recommended_size_tier"]    = _size["tier"]
+    result["recommended_size_reasons"] = _size["reasons"]
     return sanitize(result)

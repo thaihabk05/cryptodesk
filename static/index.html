@@ -842,17 +842,8 @@ tbody td{padding:11px 12px;vertical-align:middle}
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span id="liveLastUpdate" style="font-size:11px;color:var(--muted2)"></span>
-        <select id="liveInterval" onchange="liveStart()" title="Tần suất auto-refresh"
-          style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:11px;outline:none;cursor:pointer">
-          <option value="60">Auto 60s</option>
-          <option value="120" selected>Auto 2 phút</option>
-          <option value="300">Auto 5 phút</option>
-          <option value="0">Tắt auto</option>
-        </select>
-        <button class="btn" id="liveRefreshBtn" onclick="liveRefresh()" title="Cập nhật giá (engine cached 5p)">↻ Refresh</button>
-        <button class="btn" id="liveForceBtn" onclick="liveRefresh(true)" title="Buộc rerun engine analysis (bypass cache)"
-          style="background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.3);color:#ffaa00">⚡ Force engine</button>
-        <button class="btn primary" onclick="document.getElementById('liveAddForm').style.display=document.getElementById('liveAddForm').style.display==='none'?'':'none'">+ Add</button>
+        <button class="btn primary" id="liveRefreshBtn" onclick="liveRefresh()" title="Phân tích deep tất cả positions: engine, market context, BTC, recommend action + SL/TP">⚡ Phân tích ngay</button>
+        <button class="btn" onclick="document.getElementById('liveAddForm').style.display=document.getElementById('liveAddForm').style.display==='none'?'':'none'">+ Add</button>
         <button class="btn" id="liveClearAllBtn" onclick="liveClearAll()"
           style="background:rgba(255,61,90,.1);border:1px solid rgba(255,61,90,.3);color:var(--short)">🗑 Clear all</button>
       </div>
@@ -6208,21 +6199,46 @@ function clearRangeOverride(symbol) {
 // ═══════════════════════════════════════════════
 // LIVE POSITIONS MONITOR (Phase A — manual entry)
 // ═══════════════════════════════════════════════
-var _liveTimer = null;
 var _liveLoading = false;
 
 function liveStart() {
-  if (_liveTimer) clearInterval(_liveTimer);
-  liveRefresh();
-  var sel = document.getElementById('liveInterval');
-  var sec = sel ? parseInt(sel.value || '120') : 120;
-  if (sec > 0) {
-    _liveTimer = setInterval(function(){ liveRefresh(); }, sec * 1000);
-  }
+  // Khi mở tab, render positions từ DB (không phân tích engine — đợi user bấm)
+  liveLoadList();
 }
 
 function liveStop() {
-  if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
+  // No-op — không có timer chạy ngầm
+}
+
+function liveLoadList() {
+  // Load list positions từ DB không phân tích engine — chỉ hiển thị cards lite
+  fetch('/api/positions')
+    .then(function(r){return r.json();})
+    .then(function(positions){
+      if (!positions.length) {
+        document.getElementById('liveContent').innerHTML =
+          '<div class="empty-state"><div class="empty-icon">📊</div>' +
+          '<div class="empty-title">Chưa có position nào</div>' +
+          '<div style="font-size:13px">Bấm "+ Add" để thêm position, sau đó bấm "⚡ Phân tích ngay" để chạy engine analysis</div></div>';
+        return;
+      }
+      // Render lite cards (không có engine data)
+      var liteCards = positions.filter(function(p){return p.symbol;}).map(function(p){
+        var dirCol = p.direction === 'LONG' ? 'var(--long)' : 'var(--short)';
+        return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">' +
+          '<div>' +
+            '<span style="font-family:var(--mono);font-weight:700;font-size:14px">' + p.symbol + '</span> ' +
+            '<span style="font-size:10px;font-weight:700;background:' + dirCol + '22;color:' + dirCol + ';padding:2px 6px;border-radius:4px;margin-left:6px">' + p.direction + '</span>' +
+            '<span style="font-size:11px;color:var(--muted);margin-left:8px">Entry ' + p.entry + (p.sl ? ' · SL ' + p.sl : '') + (p.tp1 ? ' · TP1 ' + p.tp1 : '') + '</span>' +
+          '</div>' +
+          '<button onclick="liveDelete(' + p.id + ',\'' + p.symbol + '\')" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer">🗑</button>' +
+        '</div>';
+      }).join('');
+      document.getElementById('liveContent').innerHTML =
+        '<div style="background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--wait)">' +
+        '💡 ' + positions.length + ' positions đang track. Bấm <b>"⚡ Phân tích ngay"</b> để chạy deep analysis (engine + market + recommend SL/TP).' +
+        '</div>' + liteCards;
+    });
 }
 
 function liveAddPosition() {
@@ -6259,7 +6275,7 @@ function liveAddPosition() {
     // Reset form
     ['liveAddSymbol','liveAddEntry','liveAddSL','liveAddTP1','liveAddTP2','liveAddSize','liveAddNotes']
       .forEach(function(id){ document.getElementById(id).value = ''; });
-    liveRefresh();
+    liveLoadList();  // reload list lite, không chạy phân tích
   });
 }
 
@@ -6267,7 +6283,7 @@ function liveDelete(posId, sym) {
   if (!confirm('Xóa position ' + sym + '?')) return;
   fetch('/api/positions/' + posId, {method: 'DELETE'})
     .then(function(r){return r.json();})
-    .then(function(){ showToast('🗑 Đã xóa'); liveRefresh(); });
+    .then(function(){ showToast('🗑 Đã xóa'); liveLoadList(); });
 }
 
 function liveClearAll() {
@@ -6279,7 +6295,7 @@ function liveClearAll() {
     .then(function(res){
       if (res.error) { showToast('❌ ' + res.error); return; }
       showToast('🗑 Đã xóa tất cả positions');
-      liveRefresh();
+      liveLoadList();
     })
     .finally(function(){
       if (btn) { btn.disabled = false; btn.innerHTML = '🗑 Clear all'; }
@@ -6304,26 +6320,25 @@ function liveEditField(posId, field, currentVal, sym) {
   }).then(function(r){return r.json();}).then(function(res) {
     if (res.error) { showToast('❌ ' + res.error); return; }
     showToast('✅ Đã update ' + label);
-    liveRefresh();
+    liveLoadList();  // reload list lite — user bấm Phân tích nếu cần re-analyze
   });
 }
 
-function liveRefresh(forceEngine) {
+function liveRefresh() {
   if (_liveLoading) return;
   _liveLoading = true;
-  var btn  = document.getElementById('liveRefreshBtn');
-  var fbtn = document.getElementById('liveForceBtn');
-  if (btn)  { btn.disabled = true;  btn.innerHTML  = '<span class="spinner"></span>'; }
-  if (fbtn) { fbtn.disabled = true; }
+  var btn = document.getElementById('liveRefreshBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Đang phân tích...'; }
+  document.getElementById('liveContent').innerHTML =
+    '<div class="empty-state"><span class="spinner"></span><div style="margin-top:12px;color:var(--muted)">Đang chạy engine + fetch market context cho từng position...</div></div>';
 
-  var url = '/api/positions/monitor' + (forceEngine ? '?force_refresh=1' : '');
-  fetch(url)
+  fetch('/api/positions/monitor')
     .then(function(r){return r.json();})
     .then(function(data) {
       var positions = data.positions || [];
       var ts = data.ts || '';
       document.getElementById('liveLastUpdate').textContent = positions.length
-        ? '🕐 ' + ts.slice(11,19) + (forceEngine ? ' (engine refreshed)' : '') : '';
+        ? '🕐 Phân tích lúc ' + ts.slice(11,19) : '';
       renderLivePositions(positions);
     })
     .catch(function(e) {
@@ -6332,8 +6347,7 @@ function liveRefresh(forceEngine) {
     })
     .finally(function() {
       _liveLoading = false;
-      if (btn)  { btn.disabled = false; btn.innerHTML  = '↻ Refresh'; }
-      if (fbtn) { fbtn.disabled = false; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '⚡ Phân tích ngay'; }
     });
 }
 
@@ -6341,111 +6355,179 @@ function renderLivePositions(positions) {
   var box = document.getElementById('liveContent');
   if (!positions.length) {
     box.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div>' +
-      '<div class="empty-title">Chưa có position nào</div>' +
-      '<div style="font-size:13px">Bấm "+ Add Position" để bắt đầu monitor</div></div>';
+      '<div class="empty-title">Chưa có position nào</div></div>';
     return;
   }
 
-  // Action color/label map
+  // Action map với urgency color
   var actionMap = {
-    'CLOSE_NOW':    {color: 'var(--short)', icon: '🚨', label: 'CLOSE NOW'},
-    'TIGHTEN_SL':   {color: '#ffaa00',      icon: '⚠️', label: 'TIGHTEN SL'},
-    'TRIM_70':      {color: 'var(--accent)',icon: '✂️', label: 'TRIM 70%'},
-    'TRIM_50':      {color: 'var(--accent)',icon: '✂️', label: 'TRIM 50%'},
-    'HOLD':         {color: 'var(--long)',  icon: '✅', label: 'HOLD'}
+    'CLOSE_NOW':  {icon: '🚨', label: 'CLOSE NOW'},
+    'TIGHTEN_SL': {icon: '⚠️', label: 'TIGHTEN SL'},
+    'TRIM_70':    {icon: '✂️', label: 'TRIM 70%'},
+    'TRIM_50':    {icon: '✂️', label: 'TRIM 50%'},
+    'HOLD':       {icon: '✅', label: 'HOLD'}
   };
+  function urgencyColor(urg, action) {
+    if (urg === 'CRITICAL') return 'var(--short)';
+    if (urg === 'HIGH')     return 'var(--short)';
+    if (action === 'TIGHTEN_SL') return '#ffaa00';
+    if (action === 'TRIM_70' || action === 'TRIM_50') return 'var(--accent)';
+    return 'var(--long)';
+  }
+
+  var fmt = function(v){ if(v===null||v===undefined) return '—'; var n=Math.abs(v); var d=n<0.0001?8:n<0.01?6:n<1?4:2; return Number(v).toFixed(d); };
+  var fmtPct = function(v){ if(v===null||v===undefined) return '—'; return (v>=0?'+':'') + v + '%'; };
 
   var html = positions.map(function(p) {
+    var sym = p.symbol || '?';
     var dirCol = p.direction === 'LONG' ? 'var(--long)' : 'var(--short)';
     var pnlLev = p.pnl_lev_pct;
     var pnlCol = pnlLev > 0 ? 'var(--long)' : pnlLev < 0 ? 'var(--short)' : 'var(--muted)';
     var pnlSign = pnlLev > 0 ? '+' : '';
     var pnlUsd = p.pnl_usd !== undefined && p.pnl_usd !== null ?
-      ' (' + (p.pnl_usd >= 0 ? '+' : '') + p.pnl_usd + ' USDT)' : '';
-    var act = actionMap[p.recommendation_action] || actionMap['HOLD'];
-    var sym = p.symbol || '?';
-    var fmt = function(v){ if(v===null||v===undefined) return '—'; var n=Math.abs(v); var d=n<0.0001?8:n<0.01?6:n<1?4:2; return Number(v).toFixed(d); };
+      ' (' + (p.pnl_usd >= 0 ? '+' : '') + p.pnl_usd + ')' : '';
+
+    if (p.error) {
+      return '<div style="background:var(--bg2);border:1px solid var(--short);border-radius:10px;padding:14px 18px;margin-bottom:10px">' +
+        '<div style="font-family:var(--mono);font-weight:700;color:var(--short)">' + sym + ' — ' + p.error + '</div></div>';
+    }
+
+    var rec = p.recommendation || {};
+    var act = actionMap[rec.action] || actionMap['HOLD'];
+    var urgCol = urgencyColor(rec.urgency, rec.action);
 
     var d2sl = p.distance_to_sl_pct;
     var d2tp = p.distance_to_tp1_pct;
     var d2slCol = d2sl !== undefined && d2sl < 1 ? 'var(--short)' : d2sl !== undefined && d2sl < 3 ? 'var(--wait)' : 'var(--muted)';
     var d2tpCol = d2tp !== undefined && d2tp < 1 ? 'var(--long)' : 'var(--muted)';
 
-    var engineBadge = '';
-    if (p.engine_direction) {
-      var edCol = p.engine_direction === p.direction ? 'var(--long)' : p.engine_direction === 'WAIT' ? 'var(--muted)' : 'var(--short)';
-      var ecCol = p.engine_confidence === 'HIGH' ? 'var(--long)' : p.engine_confidence === 'MEDIUM' ? 'var(--accent)' : 'var(--muted)';
-      var cacheAgo = '';
-      if (p.engine_cached_at !== undefined && p.engine_cached_at !== null) {
-        var ago = p.engine_cached_at;
-        cacheAgo = ' · <span style="color:var(--muted2)" title="Engine cached ' + ago + 's trước. Click ⚡ Force engine để rerun ngay">cached ' +
-          (ago < 60 ? ago + 's' : Math.round(ago/60) + 'm') + ' ago</span>';
-      }
-      engineBadge = '<div style="font-size:11px;margin-top:4px">' +
-        '<span style="color:var(--muted)">Engine ' + (p.engine_strategy || '') + ':</span> ' +
-        '<span style="color:' + edCol + ';font-weight:700">' + p.engine_direction + '</span>' +
-        ' · <span style="color:' + ecCol + '">' + (p.engine_confidence || '?') + '</span>' +
-        (p.engine_rr ? ' · RR ' + p.engine_rr : '') +
-        (p.engine_funding ? ' · fund ' + p.engine_funding : '') +
-        cacheAgo +
+    // ── Recommendation block ──
+    var recHtml = '';
+    var slSugg = rec.sl_suggestion;
+    var tpSugg = rec.tp_suggestion;
+    var slSuggHtml = '', tpSuggHtml = '';
+    if (slSugg) {
+      slSuggHtml = '<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:11px">' +
+        '<div style="color:#ffaa00;font-weight:700;margin-bottom:3px">📝 SL gợi ý: ' + fmt(slSugg.current) + ' → <span style="font-family:var(--mono)">' + fmt(slSugg.suggested) + '</span></div>' +
+        '<div style="color:var(--muted2);line-height:1.4">' + slSugg.reason + '</div></div>';
+    }
+    if (tpSugg) {
+      tpSuggHtml = '<div style="background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:11px">' +
+        '<div style="color:var(--long);font-weight:700;margin-bottom:3px">📝 TP gợi ý: ' + fmt(tpSugg.current) + ' → <span style="font-family:var(--mono)">' + fmt(tpSugg.suggested) + '</span></div>' +
+        '<div style="color:var(--muted2);line-height:1.4">' + tpSugg.reason + '</div></div>';
+    }
+    var prosHtml = (rec.pros || []).map(function(x){ return '<div style="font-size:11px;color:var(--long);line-height:1.5">✅ ' + x + '</div>'; }).join('');
+    var consHtml = (rec.cons || []).map(function(x){ return '<div style="font-size:11px;color:var(--short);line-height:1.5">❌ ' + x + '</div>'; }).join('');
+    var timeNote = rec.time_note ? '<div style="font-size:11px;color:var(--wait);margin-top:4px;line-height:1.5">⏰ ' + rec.time_note + '</div>' : '';
+
+    recHtml =
+      '<div style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Recommendation</div>' +
+          '<span style="font-size:11px;font-weight:800;background:' + urgCol + '22;color:' + urgCol + ';padding:4px 10px;border-radius:6px">' + act.icon + ' ' + act.label + (rec.urgency && rec.urgency !== 'NORMAL' ? ' · ' + rec.urgency : '') + '</span>' +
+        '</div>' +
+        prosHtml + consHtml + timeNote +
+        slSuggHtml + tpSuggHtml +
       '</div>';
-    } else if (p.engine_error) {
-      engineBadge = '<div style="font-size:11px;margin-top:4px;color:var(--wait)">⚠ Engine: ' + p.engine_error + '</div>';
+
+    // ── Engine row ──
+    var e = p.engine || {};
+    var edCol = e.direction === p.direction ? 'var(--long)' : e.direction === 'WAIT' ? 'var(--muted)' : 'var(--short)';
+    var ecCol = e.confidence === 'HIGH' ? 'var(--long)' : e.confidence === 'MEDIUM' ? 'var(--accent)' : 'var(--muted)';
+    var engineHtml = e.direction ?
+      '<div style="font-size:11px;margin-top:4px;color:var(--muted2)">' +
+        '⚙️ Engine ' + (e.strategy || '') + ': ' +
+        '<span style="color:' + edCol + ';font-weight:700">' + e.direction + '</span>' +
+        ' · <span style="color:' + ecCol + '">' + (e.confidence || '?') + '</span>' +
+        (e.rr ? ' · RR ' + e.rr : '') +
+        (e.score !== undefined ? ' · score ' + e.score : '') +
+      '</div>' : '';
+
+    // ── Market context row ──
+    var mk = p.market || {};
+    var fundCol = mk.funding !== null && mk.funding !== undefined ? (mk.funding > 0.02 ? 'var(--short)' : mk.funding < -0.005 ? 'var(--long)' : 'var(--muted)') : 'var(--muted)';
+    var atrCol  = mk.atr_state === 'HIGH' || mk.atr_state === 'EXPAND' ? 'var(--short)' : mk.atr_state === 'COMPRESS' ? 'var(--wait)' : 'var(--muted)';
+    var volBias = (mk.volume || {}).bias;
+    var volCol  = volBias === 'BULLISH' ? 'var(--long)' : volBias === 'BEARISH' ? 'var(--short)' : 'var(--muted)';
+    var marketHtml =
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:11px">' +
+        '<span><span style="color:var(--muted)">Funding:</span> <span style="color:' + fundCol + ';font-family:var(--mono);font-weight:700">' + (mk.funding_pct || '—') + '</span>' + (mk.settle_in_min !== null && mk.settle_in_min !== undefined ? ' <span style="color:var(--muted2)">(settle ' + mk.settle_in_min + 'm)</span>' : '') + '</span>' +
+        '<span><span style="color:var(--muted)">OI 24h:</span> <span style="font-family:var(--mono);font-weight:700">' + (mk.oi_str || '—') + '</span></span>' +
+        '<span><span style="color:var(--muted)">ATR:</span> <span style="color:' + atrCol + ';font-family:var(--mono);font-weight:700">' + (mk.atr_ratio || '—') + 'x ' + (mk.atr_state || '') + '</span></span>' +
+        (volBias ? '<span><span style="color:var(--muted)">Vol 5n:</span> <span style="color:' + volCol + ';font-weight:700">' + volBias + '</span> <span style="color:var(--muted2)">(G' + mk.volume.green_5 + '/R' + mk.volume.red_5 + ', ' + (mk.volume.vol_ratio_vs_avg20 || '—') + 'x avg)</span></span>' : '') +
+      '</div>';
+
+    // ── EMA + BTC row ──
+    var ema = p.ema || {};
+    var btc = p.btc || {};
+    var emaBtcHtml = '';
+    if (ema.stack || btc.sentiment) {
+      emaBtcHtml = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;font-size:11px">' +
+        (ema.stack ? '<span><span style="color:var(--muted)">EMA stack:</span> <span style="font-weight:700">' + ema.stack + '</span></span>' : '') +
+        (btc.sentiment ? '<span><span style="color:var(--muted)">BTC:</span> <span style="font-weight:700">' + btc.sentiment + '</span> D1:' + (btc.d1_bias || '?') + ' H4:' + (btc.h4_bias || '?') + '</span>' : '') +
+      '</div>';
     }
 
-    var shortTrustBadge = '';
-    if (p.short_trust && p.direction === 'SHORT') {
-      var stCol = p.short_trust === 'HIGH' ? 'var(--short)' : p.short_trust === 'MEDIUM' ? 'var(--wait)' : 'var(--muted)';
-      shortTrustBadge = '<span style="font-size:10px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;padding:2px 6px;margin-left:6px;color:' + stCol + '">SHORT trust ' + p.short_trust + ' ' + p.short_score + '/100</span>';
+    // ── Funding warning (top of card) ──
+    var warnHtml = '';
+    if (mk.funding_warning) {
+      warnHtml = '<div style="background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.3);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:#ffaa00">⚠ ' + mk.funding_warning + '</div>';
+    }
+    if (btc.warning) {
+      warnHtml += '<div style="background:rgba(255,61,90,.1);border:1px solid rgba(255,61,90,.3);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:var(--short)">⚠ ' + btc.warning + '</div>';
     }
 
-    var reasonsHtml = (p.recommendation_reasons || []).map(function(r){
-      return '<div style="font-size:11px;color:var(--muted2);line-height:1.5">· ' + r + '</div>';
-    }).join('');
+    // ── Time held badge ──
+    var timeHeldBadge = '';
+    if (p.time_held_hours !== undefined && p.time_held_hours !== null) {
+      var t = p.time_held_hours;
+      var tStr = t < 1 ? Math.round(t * 60) + 'p' : t < 24 ? t + 'h' : Math.round(t/24) + 'd';
+      timeHeldBadge = '<span style="font-size:10px;color:var(--muted2);margin-left:6px">⏱ ' + tStr + '</span>';
+    }
 
-    var errorHtml = p.error ? '<div style="font-size:11px;color:var(--short);margin-top:4px">⚠ ' + p.error + '</div>' : '';
-
-    return '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid ' + act.color + ';' +
-      'border-radius:10px;padding:14px 18px;margin-bottom:10px">' +
+    return '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid ' + urgCol + ';' +
+      'border-radius:10px;padding:14px 18px;margin-bottom:12px">' +
       // Header row
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">' +
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
           '<span style="font-size:16px;font-weight:800;font-family:var(--mono)">' + sym + '</span>' +
           '<span style="font-size:11px;font-weight:700;background:' + dirCol + '22;color:' + dirCol + ';padding:2px 8px;border-radius:4px">' + p.direction + '</span>' +
           (p.leverage ? '<span style="font-size:10px;color:var(--muted)">' + p.leverage + 'x</span>' : '') +
-          shortTrustBadge +
+          timeHeldBadge +
         '</div>' +
-        '<div style="display:flex;gap:6px;align-items:center">' +
-          '<span style="font-size:11px;font-weight:800;background:' + act.color + '22;color:' + act.color + ';padding:4px 10px;border-radius:6px">' +
-            act.icon + ' ' + act.label + '</span>' +
-          '<button onclick="liveDelete(' + p.id + ',\'' + sym + '\')" title="Xóa position" ' +
-            'style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer">🗑</button>' +
-        '</div>' +
+        '<button onclick="liveDelete(' + p.id + ',\'' + sym + '\')" title="Xóa position" ' +
+          'style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer">🗑</button>' +
       '</div>' +
-      // Reasons
-      reasonsHtml +
-      errorHtml +
-      // Stats row
-      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:10px;font-size:11px">' +
+      warnHtml +
+      // Stats grid
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px;font-size:11px">' +
         '<div><div style="color:var(--muted);font-size:10px">Entry</div>' +
           '<div style="font-family:var(--mono);font-weight:700">' + fmt(p.entry) + '</div></div>' +
         '<div><div style="color:var(--muted);font-size:10px">Current</div>' +
           '<div style="font-family:var(--mono);font-weight:700;color:var(--accent)">' + fmt(p.current_price) + '</div></div>' +
-        '<div><div style="color:var(--muted);font-size:10px">PnL %</div>' +
-          '<div style="font-family:var(--mono);font-weight:700;color:' + pnlCol + '">' + (pnlLev !== undefined ? pnlSign + pnlLev + '%' : '—') + pnlUsd + '</div></div>' +
+        '<div><div style="color:var(--muted);font-size:10px">PnL</div>' +
+          '<div style="font-family:var(--mono);font-weight:700;color:' + pnlCol + '">' + (pnlLev !== undefined ? pnlSign + pnlLev + '%' : '—') + '</div>' +
+          (p.pnl_usd !== undefined && p.pnl_usd !== null ? '<div style="font-size:10px;color:' + pnlCol + ';font-family:var(--mono)">' + (p.pnl_usd >= 0 ? '+' : '') + p.pnl_usd + ' USDT</div>' : '') + '</div>' +
         '<div onclick="liveEditField(' + p.id + ',\'sl\',' + (p.sl||'null') + ',\'' + sym + '\')" style="cursor:pointer" title="Click để edit SL">' +
-          '<div style="color:var(--muted);font-size:10px">SL ' + (d2sl !== undefined ? '(' + d2sl + '% xa)' : '') + '</div>' +
+          '<div style="color:var(--muted);font-size:10px">SL ' + (d2sl !== undefined ? '(' + d2sl + '%)' : '') + '</div>' +
           '<div style="font-family:var(--mono);font-weight:700;color:' + d2slCol + '">' + fmt(p.sl) + '</div></div>' +
         '<div onclick="liveEditField(' + p.id + ',\'tp1\',' + (p.tp1||'null') + ',\'' + sym + '\')" style="cursor:pointer" title="Click để edit TP1">' +
-          '<div style="color:var(--muted);font-size:10px">TP1 ' + (d2tp !== undefined ? '(' + d2tp + '% xa)' : '') + '</div>' +
+          '<div style="color:var(--muted);font-size:10px">TP1 ' + (d2tp !== undefined ? '(' + d2tp + '%)' : '') + '</div>' +
           '<div style="font-family:var(--mono);font-weight:700;color:' + d2tpCol + '">' + fmt(p.tp1) + '</div></div>' +
         '<div onclick="liveEditField(' + p.id + ',\'tp2\',' + (p.tp2||'null') + ',\'' + sym + '\')" style="cursor:pointer" title="Click để edit TP2">' +
           '<div style="color:var(--muted);font-size:10px">TP2</div>' +
           '<div style="font-family:var(--mono);font-weight:700;color:var(--muted)">' + fmt(p.tp2) + '</div></div>' +
       '</div>' +
-      // Engine analysis
-      engineBadge +
+      // Market context
+      marketHtml +
+      // EMA + BTC
+      emaBtcHtml +
+      // Engine
+      engineHtml +
+      // Notes
       (p.notes ? '<div style="font-size:11px;color:var(--muted);margin-top:6px;font-style:italic">📝 ' + p.notes + '</div>' : '') +
+      // Recommendation block
+      recHtml +
     '</div>';
   }).join('');
 

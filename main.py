@@ -1628,35 +1628,33 @@ def clear_positions():
     return jsonify({"status": "cleared"})
 
 
-_MONITOR_ENGINE_CACHE = {}  # {symbol: (timestamp_unix, engine_result_dict)}
-_MONITOR_CACHE_TTL = 300    # 5 phút — engine result valid trong 5p tránh hit 429
-
 @app.route("/api/positions/monitor", methods=["GET"])
 def positions_monitor():
-    """Phase A — Live Positions monitor:
-    Với mỗi position trong DB → fetch giá hiện tại (always fresh), chạy engine
-    analysis (cached 5p để tránh 429), tính PnL/distance to SL/TP, recommend action.
+    """Deep analysis on demand — user bấm "Phân tích" mỗi khi cần.
+    KHÔNG cache, KHÔNG chạy định kỳ. Mỗi call = full fresh analysis.
 
-    Returns: list positions enriched với:
-      - current_price, pnl_pct (raw + leveraged), pnl_usd
-      - distance_to_sl_pct, distance_to_tp1_pct
-      - engine_direction, engine_confidence, engine_rr (cached 5p)
-      - short_trust, recommendation_action, recommendation_reasons
-      - engine_cached_at: timestamp khi engine chạy lần cuối (để UI biết freshness)
-
-    Query params:
-      - force_refresh=1: bypass cache, chạy lại engine
+    Trả về cho mỗi position:
+      - PnL + distance to SL/TP
+      - Market context: funding (+ thời gian đến settle), OI, ATR, volume bias
+      - EMA stack analysis (price vs EMA9/34/89/200)
+      - BTC sentiment context
+      - Engine analysis (full)
+      - Recommendation:
+        * action: HOLD / TIGHTEN_SL / TRIM_X / CLOSE_NOW / FLIP
+        * urgency: CRITICAL / HIGH / NORMAL
+        * sl_suggestion: gợi ý nâng/hạ SL kèm reason
+        * tp_suggestion: gợi ý điều chỉnh TP
+        * pros / cons: list checklist
+        * time_note: cảnh báo về funding settle, holding time...
     """
-    import concurrent.futures, time
-    from core.binance import fetch_klines, fetch_funding_rate
+    import time, math
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    from core.binance import fetch_klines, fetch_btc_context
     from core.indicators import prepare
-    from dashboard.fam_engine      import fam_analyze
     from dashboard.swing_h1_engine import swing_h1_analyze
-    from dashboard.scalp_engine    import scalp_analyze
 
     cfg = load_config()
     positions = load_positions()
-    force_refresh = request.args.get("force_refresh") == "1"
     if not positions:
         return jsonify({"positions": [], "ts": _local_isoformat()})
 
@@ -1666,23 +1664,124 @@ def positions_monitor():
         return jsonify({"positions": [], "ts": _local_isoformat(),
                         "note": "Không có position nào có symbol để monitor"})
 
-    def _get_engine_result(sym, force):
-        """Get engine analysis with 5min cache. Pick SWING_H1 only (most relevant
-        cho live trading) thay vì 3 engines để giảm 3x API load.
-        """
-        now_ts = time.time()
-        cached = _MONITOR_ENGINE_CACHE.get(sym)
-        if not force and cached and (now_ts - cached[0] < _MONITOR_CACHE_TTL):
-            return cached[1], cached[0]
+    # BTC context fetch 1 lần dùng chung cho mọi position
+    try:
+        btc_ctx = fetch_btc_context()
+    except Exception:
+        btc_ctx = {"sentiment": "UNKNOWN", "d1_bias": "?", "h4_bias": "?", "note": ""}
+
+    def _funding_settle_minutes():
+        """Tính số phút đến next funding settle (Binance funding mỗi 8h: 00, 08, 16 UTC)."""
+        now_utc = _dt.now(_tz.utc)
+        for h in (0, 8, 16, 24):
+            settle = now_utc.replace(hour=h % 24, minute=0, second=0, microsecond=0)
+            if h == 24:
+                settle = settle + _td(days=1)
+            if settle > now_utc:
+                return int((settle - now_utc).total_seconds() / 60)
+        return None
+
+    def _analyze_volume(df):
+        """Trả về bias volume 5 nến gần nhất + ratio vs avg 20."""
         try:
-            r = swing_h1_analyze(sym, {**cfg, "force_futures": True})
-            _MONITOR_ENGINE_CACHE[sym] = (now_ts, r)
-            return r, now_ts
-        except Exception as e:
-            # Nếu fail (rate limit, network), trả về cached nếu có dù expired
-            if cached:
-                return cached[1], cached[0]
-            raise
+            last5 = df.tail(5)
+            green = int((last5["close"] > last5["open"]).sum())
+            red   = 5 - green
+            bias  = "BULLISH" if green >= 4 else "BEARISH" if red >= 4 else "MIXED"
+            avg20 = float(df["volume"].iloc[-20:].mean()) if len(df) >= 20 else float(df["volume"].mean())
+            last_vol = float(df["volume"].iloc[-1])
+            vol_ratio = round(last_vol / avg20, 2) if avg20 > 0 else None
+            return {"bias": bias, "green_5": green, "red_5": red, "vol_ratio_vs_avg20": vol_ratio}
+        except Exception:
+            return None
+
+    def _ema_analysis(df_h1, current_price, direction):
+        """Phân tích vị trí giá vs EMA stack."""
+        try:
+            ema9   = float(df_h1["ema9"].iloc[-1])  if "ema9" in df_h1.columns  else None
+            ma34   = float(df_h1["ma34"].iloc[-1])  if "ma34" in df_h1.columns  else None
+            ma89   = float(df_h1["ma89"].iloc[-1])  if "ma89" in df_h1.columns  else None
+            ma200  = float(df_h1["ma200"].iloc[-1]) if "ma200" in df_h1.columns else None
+
+            # Stack rank
+            stack_long  = (current_price > (ema9 or 0) > (ma34 or 0) > (ma89 or 0) > (ma200 or 0))
+            stack_short = (current_price < (ema9 or 1e18) < (ma34 or 1e18) < (ma89 or 1e18) < (ma200 or 1e18))
+            if stack_long:    stack = "BULLISH (giá > EMA9 > MA34 > MA89 > MA200)"
+            elif stack_short: stack = "BEARISH (giá < EMA9 < MA34 < MA89 < MA200)"
+            else:             stack = "MIXED"
+
+            def _pct(target):
+                if not target: return None
+                return round((current_price - target) / current_price * 100, 2)
+
+            return {
+                "ema9": round(ema9, 8) if ema9 else None,
+                "ma34": round(ma34, 8) if ma34 else None,
+                "ma89": round(ma89, 8) if ma89 else None,
+                "ma200": round(ma200, 8) if ma200 else None,
+                "stack": stack,
+                "price_vs_ema9_pct":  _pct(ema9),
+                "price_vs_ma34_pct":  _pct(ma34),
+                "price_vs_ma89_pct":  _pct(ma89),
+                "price_vs_ma200_pct": _pct(ma200),
+            }
+        except Exception:
+            return None
+
+    def _suggest_sl(direction, current, sl, ema, atr_h1, pnl_lev, d2sl):
+        """Gợi ý SL mới dựa trên context."""
+        if not sl or not current:
+            return None
+        suggested = None
+        reason = ""
+
+        # Nếu PnL lev > +5% và SL đang xa hơn break-even → kéo về EMA gần
+        if pnl_lev and pnl_lev >= 5:
+            if direction == "LONG":
+                # Ưu tiên EMA9 hoặc MA34 gần nhất dưới giá
+                candidates = []
+                if ema and ema.get("ema9") and ema["ema9"] < current:
+                    candidates.append((ema["ema9"], "EMA9"))
+                if ema and ema.get("ma34") and ema["ma34"] < current:
+                    candidates.append((ema["ma34"], "MA34"))
+                # Pick highest (gần giá nhất)
+                candidates = [c for c in candidates if c[0] > sl]
+                if candidates:
+                    candidates.sort(reverse=True)
+                    suggested, label = candidates[0]
+                    reason = f"Nâng SL từ {sl} lên {round(suggested, 8)} ({label}) — lock profit"
+            else:  # SHORT
+                candidates = []
+                if ema and ema.get("ema9") and ema["ema9"] > current:
+                    candidates.append((ema["ema9"], "EMA9"))
+                if ema and ema.get("ma34") and ema["ma34"] > current:
+                    candidates.append((ema["ma34"], "MA34"))
+                candidates = [c for c in candidates if c[0] < sl]
+                if candidates:
+                    candidates.sort()
+                    suggested, label = candidates[0]
+                    reason = f"Hạ SL từ {sl} xuống {round(suggested, 8)} ({label}) — lock profit"
+
+        # Nếu chưa có suggest và d2sl > 5% (SL quá xa) + PnL ≥ 0 → kéo về break-even
+        if not suggested and pnl_lev is not None and pnl_lev >= 0 and d2sl is not None and d2sl > 5:
+            # Suggest break-even (entry)
+            entry_val = float(current) * (1 - pnl_lev / float(100 * (pnl_lev / max(abs(pnl_lev), 1))) if pnl_lev else 1)
+            return None  # skip if can't compute cleanly
+
+        if suggested and abs(suggested - sl) / sl >= 0.003:
+            return {"current": sl, "suggested": round(suggested, 8), "reason": reason}
+        return None
+
+    def _suggest_tp(direction, current, tp1, d2tp):
+        """Gợi ý TP nếu giá đã hit TP1 hoặc gần."""
+        if not tp1 or not current:
+            return None
+        if d2tp is not None and d2tp <= 0:
+            # Đã hit/vượt TP1 → suggest dời TP lên fib extension
+            extension = round(current * (1.05 if direction == "LONG" else 0.95), 8)
+            return {"current": tp1, "suggested": extension,
+                    "reason": f"Đã hit TP1 — dời TP1 mới về {extension} (+5% nếu LONG, -5% nếu SHORT) hoặc trail"}
+        return None
 
     def _enrich(pos):
         sym       = pos.get("symbol", "").upper().strip()
@@ -1690,17 +1789,20 @@ def positions_monitor():
         entry     = float(pos.get("entry") or 0)
         sl        = float(pos.get("sl"))  if pos.get("sl")  else None
         tp1       = float(pos.get("tp1")) if pos.get("tp1") else None
-        size_usdt = float(pos.get("size_usdt") or pos.get("margin") or 0) * float(pos.get("leverage") or 1)
-        out = dict(pos)
+        leverage  = float(pos.get("leverage") or 1)
+        size_usdt = float(pos.get("size_usdt") or pos.get("margin") or 0) * leverage
+        saved_at  = pos.get("saved_at", "")
 
+        out = dict(pos)
         if not sym or not entry:
             out["error"] = "Thiếu symbol hoặc entry"
             return out
 
         try:
-            # Fetch giá hiện tại — raw klines 2 nến (không cần prepare/indicators)
-            df_raw = fetch_klines(sym, "1m", 2, force_futures=True)
-            current = float(df_raw["close"].iloc[-1])
+            # Fetch H1 (50 nến cho EMA9/34/89, không đủ MA200 nhưng OK)
+            df_h1 = prepare(fetch_klines(sym, "1h", 100, force_futures=True))
+            current = float(df_h1["close"].iloc[-1])
+            atr_h1  = float(df_h1["atr"].iloc[-1]) if "atr" in df_h1.columns else None
             out["current_price"] = round(current, 8)
 
             # PnL
@@ -1709,99 +1811,183 @@ def positions_monitor():
             else:
                 pnl_raw_pct = (entry - current) / entry * 100
             out["pnl_raw_pct"] = round(pnl_raw_pct, 3)
-            out["pnl_lev_pct"] = round(pnl_raw_pct * float(pos.get("leverage") or 1), 2)
-            if size_usdt > 0:
-                out["pnl_usd"] = round(size_usdt * pnl_raw_pct / 100, 2)
+            out["pnl_lev_pct"] = round(pnl_raw_pct * leverage, 2)
+            out["pnl_usd"]     = round(size_usdt * pnl_raw_pct / 100, 2) if size_usdt > 0 else None
 
             # Distance to SL/TP
             if sl:
-                if direction == "LONG":
-                    out["distance_to_sl_pct"] = round((current - sl) / current * 100, 2)
-                else:
-                    out["distance_to_sl_pct"] = round((sl - current) / current * 100, 2)
+                d2sl = ((current - sl) if direction == "LONG" else (sl - current)) / current * 100
+                out["distance_to_sl_pct"] = round(d2sl, 2)
             if tp1:
-                if direction == "LONG":
-                    out["distance_to_tp1_pct"] = round((tp1 - current) / current * 100, 2)
-                else:
-                    out["distance_to_tp1_pct"] = round((current - tp1) / current * 100, 2)
+                d2tp = ((tp1 - current) if direction == "LONG" else (current - tp1)) / current * 100
+                out["distance_to_tp1_pct"] = round(d2tp, 2)
 
-            # Engine analysis (cached 5 phút)
-            try:
-                best, cached_at = _get_engine_result(sym, force_refresh)
-                out["engine_cached_at"] = round(time.time() - cached_at)  # seconds ago
-            except Exception as ge:
-                best = None
-                if "429" in str(ge):
-                    out["engine_error"] = "Rate limited — sẽ retry sau"
-                else:
-                    out["engine_error"] = str(ge)[:80]
+            # Time held
+            if saved_at:
+                try:
+                    saved_dt = _dt.fromisoformat(saved_at)
+                    now_dt   = _dt.now(saved_dt.tzinfo or _tz.utc)
+                    out["time_held_hours"] = round((now_dt - saved_dt).total_seconds() / 3600, 1)
+                except Exception:
+                    pass
 
-            if best:
-                out["engine_strategy"]   = best.get("strategy")
-                out["engine_direction"]  = best.get("direction")
-                out["engine_confidence"] = best.get("confidence")
-                out["engine_rr"]         = best.get("rr")
-                out["engine_funding"]    = (best.get("market") or {}).get("funding_pct")
-                sc = best.get("short_context")
-                if sc:
-                    out["short_trust"] = sc.get("trust")
-                    out["short_score"] = sc.get("score")
+            # Engine analysis (FRESH mỗi lần — user chủ động bấm)
+            engine = swing_h1_analyze(sym, {**cfg, "force_futures": True})
+            out["engine"] = {
+                "strategy":   engine.get("strategy"),
+                "direction":  engine.get("direction"),
+                "confidence": engine.get("confidence"),
+                "rr":         engine.get("rr"),
+                "score":      engine.get("score"),
+                "warnings":   (engine.get("warnings") or [])[:3],
+                "conditions": (engine.get("conditions") or [])[:3],
+            }
 
-            # ── Recommendation logic ──
-            action = "HOLD"
-            reasons = []
-            engine_dir  = (best or {}).get("direction") if best else None
-            engine_conf = (best or {}).get("confidence") if best else None
-            d2sl = out.get("distance_to_sl_pct")
+            # Market context
+            mk = engine.get("market") or {}
+            funding = mk.get("funding")
+            settle_min = _funding_settle_minutes()
+            funding_warning = None
+            if funding is not None and abs(funding) >= 0.05:
+                funding_warning = f"Funding {funding:+.4f}% extreme — long crowded"
+            elif funding is not None and funding <= -0.01:
+                funding_warning = f"Funding {funding:+.4f}% âm — short crowded, có thể squeeze"
+            elif settle_min is not None and settle_min < 30:
+                funding_warning = f"Funding settle trong {settle_min} phút — có thể spike"
+
+            out["market"] = {
+                "funding":          funding,
+                "funding_pct":      mk.get("funding_pct"),
+                "settle_in_min":    settle_min,
+                "funding_warning":  funding_warning,
+                "oi_change_24h":    mk.get("oi_change"),
+                "oi_str":           mk.get("oi_str"),
+                "atr_ratio":        mk.get("atr_ratio"),
+                "atr_state":        mk.get("atr_state"),
+                "atr_note":         mk.get("atr_note"),
+                "volume":           _analyze_volume(df_h1),
+            }
+
+            # EMA analysis
+            ema_info = _ema_analysis(df_h1, current, direction)
+            out["ema"] = ema_info
+
+            # BTC context
+            out["btc"] = {
+                "sentiment": btc_ctx.get("sentiment"),
+                "d1_bias":   btc_ctx.get("d1_bias"),
+                "h4_bias":   btc_ctx.get("h4_bias"),
+                "note":      btc_ctx.get("note"),
+                "warning":   None
+            }
+            if btc_ctx.get("sentiment") in ("RISK_OFF", "DUMP") and direction == "LONG":
+                out["btc"]["warning"] = f"BTC {btc_ctx.get('sentiment')} — LONG có rủi ro"
+            elif btc_ctx.get("sentiment") == "RISK_ON" and direction == "SHORT":
+                out["btc"]["warning"] = f"BTC RISK_ON — SHORT có rủi ro"
+
+            # ── Recommendation engine ──
+            engine_dir  = engine.get("direction")
+            engine_conf = engine.get("confidence")
+            d2sl_val = out.get("distance_to_sl_pct")
+            d2tp_val = out.get("distance_to_tp1_pct")
             pnl_lev = out.get("pnl_lev_pct") or 0
 
-            # Critical: giá rất gần SL
-            if d2sl is not None and d2sl < 1.0:
+            action = "HOLD"
+            urgency = "NORMAL"
+            pros, cons = [], []
+            time_note = None
+            sl_suggestion = _suggest_sl(direction, current, sl, ema_info, atr_h1, pnl_lev, d2sl_val)
+            tp_suggestion = _suggest_tp(direction, current, tp1, d2tp_val)
+
+            # Action decisions
+            if d2sl_val is not None and d2sl_val < 0:
                 action = "CLOSE_NOW"
-                reasons.append(f"Giá cách SL chỉ {d2sl}% — risk hit SL cao")
-            # Engine flip direction (đang LONG mà engine cấp SHORT, hoặc ngược lại)
-            elif engine_dir and engine_dir != direction and engine_dir in ("LONG", "SHORT"):
+                urgency = "CRITICAL"
+                cons.append(f"Giá đã VƯỢT SL ({d2sl_val}%) — phải close ngay")
+            elif d2sl_val is not None and d2sl_val < 1.0:
+                action = "CLOSE_NOW"
+                urgency = "HIGH"
+                cons.append(f"Giá cách SL chỉ {d2sl_val}% — sắp hit SL")
+            elif engine_dir and engine_dir != direction and engine_dir != "WAIT":
                 if engine_conf in ("HIGH", "MEDIUM"):
                     action = "CLOSE_NOW"
-                    reasons.append(f"Engine cấp {engine_dir} {engine_conf} — đảo chiều rõ")
+                    urgency = "HIGH"
+                    cons.append(f"Engine flip {engine_dir} {engine_conf} — đảo chiều rõ")
                 else:
                     action = "TIGHTEN_SL"
-                    reasons.append(f"Engine ngược chiều ({engine_dir} {engine_conf}) — siết SL")
-            # PnL tốt + engine không cấp tiếp setup cùng chiều → trim
-            elif pnl_lev >= 30 and (not engine_dir or engine_dir == "WAIT" or engine_dir != direction):
+                    cons.append(f"Engine ngược chiều {engine_dir} {engine_conf}")
+            elif pnl_lev >= 50 and (not engine_dir or engine_dir == "WAIT"):
                 action = "TRIM_70"
-                reasons.append(f"PnL +{pnl_lev}% và engine không confirm tiếp — chốt 70%")
-            elif pnl_lev >= 15 and (not engine_dir or engine_dir == "WAIT"):
+                cons.append(f"PnL +{pnl_lev}% và engine WAIT — chốt 70% bảo vệ profit")
+            elif pnl_lev >= 20 and (not engine_dir or engine_dir == "WAIT"):
                 action = "TRIM_50"
-                reasons.append(f"PnL +{pnl_lev}% và engine WAIT — chốt 50%, trail SL")
-            elif pnl_lev >= 5:
-                if d2sl is not None and d2sl > 5:
-                    action = "TIGHTEN_SL"
-                    reasons.append(f"PnL +{pnl_lev}% và SL còn xa {d2sl}% — kéo SL về break-even")
-            # Engine confirm tiếp setup cùng chiều
-            elif engine_dir == direction and engine_conf in ("HIGH", "MEDIUM"):
-                reasons.append(f"Engine vẫn cấp {direction} {engine_conf} — giữ position")
+                cons.append(f"PnL +{pnl_lev}% và engine WAIT — chốt 50%")
+            elif pnl_lev >= 5 and d2sl_val is not None and d2sl_val > 5:
+                action = "TIGHTEN_SL"
+                cons.append(f"PnL +{pnl_lev}% và SL xa {d2sl_val}% — kéo SL về break-even")
 
-            if not reasons:
-                reasons.append("Chưa có signal cần action")
+            # Pros/cons
+            if engine_dir == direction:
+                if engine_conf in ("HIGH", "MEDIUM"):
+                    pros.append(f"Engine vẫn cấp {direction} {engine_conf} (RR {engine.get('rr')})")
+                else:
+                    pros.append(f"Engine cùng chiều {direction} ({engine_conf})")
+            if pnl_lev > 0:
+                pros.append(f"Đang lãi +{pnl_lev}% lev")
+            if pnl_lev < 0:
+                cons.append(f"Đang lỗ {pnl_lev}% lev")
+            if out["market"].get("volume"):
+                vb = out["market"]["volume"]["bias"]
+                if direction == "LONG" and vb == "BULLISH":
+                    pros.append(f"Volume bias {vb} (4-5/5 nến xanh)")
+                elif direction == "SHORT" and vb == "BEARISH":
+                    pros.append(f"Volume bias {vb} (4-5/5 nến đỏ)")
+                elif (direction == "LONG" and vb == "BEARISH") or (direction == "SHORT" and vb == "BULLISH"):
+                    cons.append(f"Volume bias {vb} ngược chiều position")
+            if out["btc"].get("warning"):
+                cons.append(out["btc"]["warning"])
+            if out["market"].get("funding_warning"):
+                # Funding extreme có thể là pros hoặc cons tùy direction
+                fw = out["market"]["funding_warning"]
+                if "long crowded" in fw and direction == "SHORT":
+                    pros.append(fw + " (có lợi SHORT)")
+                elif "long crowded" in fw and direction == "LONG":
+                    cons.append(fw + " (rủi ro reversal)")
+                elif "short crowded" in fw and direction == "LONG":
+                    pros.append(fw + " (có lợi LONG)")
+                elif "short crowded" in fw and direction == "SHORT":
+                    cons.append(fw + " (rủi ro squeeze)")
+                else:
+                    time_note = fw
 
-            out["recommendation_action"]  = action
-            out["recommendation_reasons"] = reasons
+            # Time-based notes
+            if out.get("time_held_hours") is not None:
+                if out["time_held_hours"] > 24 and pnl_lev < 5:
+                    time_note = (time_note or "") + f" Đã hold {out['time_held_hours']}h mà PnL chỉ {pnl_lev}% — momentum yếu"
+
+            out["recommendation"] = {
+                "action":         action,
+                "urgency":        urgency,
+                "sl_suggestion":  sl_suggestion,
+                "tp_suggestion":  tp_suggestion,
+                "pros":           pros,
+                "cons":           cons,
+                "time_note":      time_note.strip() if time_note else None,
+            }
 
         except Exception as e:
-            out["error"] = f"Lỗi monitor: {str(e)[:120]}"
+            out["error"] = f"Lỗi phân tích: {str(e)[:150]}"
 
         return out
 
-    # Sequential với stagger 0.3s — tránh rate limit thay vì parallel
+    # Sequential với stagger 0.4s
     enriched = []
     for i, pos in enumerate(monitored):
         if i > 0:
-            time.sleep(0.3)
+            time.sleep(0.4)
         enriched.append(_enrich(pos))
 
-    return jsonify({"positions": enriched, "ts": _local_isoformat(),
-                    "cache_ttl_sec": _MONITOR_CACHE_TTL})
+    return jsonify({"positions": enriched, "ts": _local_isoformat()})
 
 @app.route("/api/position/analyze", methods=["POST"])
 def position_analyze():

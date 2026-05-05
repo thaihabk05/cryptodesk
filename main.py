@@ -1628,19 +1628,26 @@ def clear_positions():
     return jsonify({"status": "cleared"})
 
 
+_MONITOR_ENGINE_CACHE = {}  # {symbol: (timestamp_unix, engine_result_dict)}
+_MONITOR_CACHE_TTL = 300    # 5 phút — engine result valid trong 5p tránh hit 429
+
 @app.route("/api/positions/monitor", methods=["GET"])
 def positions_monitor():
     """Phase A — Live Positions monitor:
-    Với mỗi position trong DB → fetch giá hiện tại, chạy engine analysis,
-    tính PnL/distance to SL/TP, recommend action.
+    Với mỗi position trong DB → fetch giá hiện tại (always fresh), chạy engine
+    analysis (cached 5p để tránh 429), tính PnL/distance to SL/TP, recommend action.
 
     Returns: list positions enriched với:
       - current_price, pnl_pct (raw + leveraged), pnl_usd
       - distance_to_sl_pct, distance_to_tp1_pct
-      - engine_direction, engine_confidence, engine_rr
+      - engine_direction, engine_confidence, engine_rr (cached 5p)
       - short_trust, recommendation_action, recommendation_reasons
+      - engine_cached_at: timestamp khi engine chạy lần cuối (để UI biết freshness)
+
+    Query params:
+      - force_refresh=1: bypass cache, chạy lại engine
     """
-    import concurrent.futures
+    import concurrent.futures, time
     from core.binance import fetch_klines, fetch_funding_rate
     from core.indicators import prepare
     from dashboard.fam_engine      import fam_analyze
@@ -1649,6 +1656,7 @@ def positions_monitor():
 
     cfg = load_config()
     positions = load_positions()
+    force_refresh = request.args.get("force_refresh") == "1"
     if not positions:
         return jsonify({"positions": [], "ts": _local_isoformat()})
 
@@ -1657,6 +1665,24 @@ def positions_monitor():
     if not monitored:
         return jsonify({"positions": [], "ts": _local_isoformat(),
                         "note": "Không có position nào có symbol để monitor"})
+
+    def _get_engine_result(sym, force):
+        """Get engine analysis with 5min cache. Pick SWING_H1 only (most relevant
+        cho live trading) thay vì 3 engines để giảm 3x API load.
+        """
+        now_ts = time.time()
+        cached = _MONITOR_ENGINE_CACHE.get(sym)
+        if not force and cached and (now_ts - cached[0] < _MONITOR_CACHE_TTL):
+            return cached[1], cached[0]
+        try:
+            r = swing_h1_analyze(sym, {**cfg, "force_futures": True})
+            _MONITOR_ENGINE_CACHE[sym] = (now_ts, r)
+            return r, now_ts
+        except Exception as e:
+            # Nếu fail (rate limit, network), trả về cached nếu có dù expired
+            if cached:
+                return cached[1], cached[0]
+            raise
 
     def _enrich(pos):
         sym       = pos.get("symbol", "").upper().strip()
@@ -1672,9 +1698,9 @@ def positions_monitor():
             return out
 
         try:
-            # Fetch giá hiện tại + chạy 3 engines song song
-            df_h1 = prepare(fetch_klines(sym, "1h", 50, force_futures=True))
-            current = float(df_h1["close"].iloc[-1])
+            # Fetch giá hiện tại — raw klines 2 nến (không cần prepare/indicators)
+            df_raw = fetch_klines(sym, "1m", 2, force_futures=True)
+            current = float(df_raw["close"].iloc[-1])
             out["current_price"] = round(current, 8)
 
             # PnL
@@ -1699,24 +1725,16 @@ def positions_monitor():
                 else:
                     out["distance_to_tp1_pct"] = round((current - tp1) / current * 100, 2)
 
-            # Chạy 3 engines lấy result tốt nhất
-            best = None
-            for fn in (fam_analyze, swing_h1_analyze, scalp_analyze):
-                try:
-                    r = fn(sym, {**cfg, "force_futures": True})
-                    if best is None:
-                        best = r
-                        continue
-                    # Ưu tiên direction != WAIT, sau đó confidence cao, sau RR cao
-                    rank = lambda x: (
-                        0 if x.get("direction") in ("LONG", "SHORT") else 1,
-                        0 if x.get("confidence") == "HIGH" else 1 if x.get("confidence") == "MEDIUM" else 2,
-                        -(x.get("rr") or 0)
-                    )
-                    if rank(r) < rank(best):
-                        best = r
-                except Exception:
-                    continue
+            # Engine analysis (cached 5 phút)
+            try:
+                best, cached_at = _get_engine_result(sym, force_refresh)
+                out["engine_cached_at"] = round(time.time() - cached_at)  # seconds ago
+            except Exception as ge:
+                best = None
+                if "429" in str(ge):
+                    out["engine_error"] = "Rate limited — sẽ retry sau"
+                else:
+                    out["engine_error"] = str(ge)[:80]
 
             if best:
                 out["engine_strategy"]   = best.get("strategy")
@@ -1775,13 +1793,15 @@ def positions_monitor():
 
         return out
 
-    # Parallel fetch — 4 workers (tránh rate limit)
+    # Sequential với stagger 0.3s — tránh rate limit thay vì parallel
     enriched = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        for r in ex.map(_enrich, monitored):
-            enriched.append(r)
+    for i, pos in enumerate(monitored):
+        if i > 0:
+            time.sleep(0.3)
+        enriched.append(_enrich(pos))
 
-    return jsonify({"positions": enriched, "ts": _local_isoformat()})
+    return jsonify({"positions": enriched, "ts": _local_isoformat(),
+                    "cache_ttl_sec": _MONITOR_CACHE_TTL})
 
 @app.route("/api/position/analyze", methods=["POST"])
 def position_analyze():

@@ -840,10 +840,21 @@ tbody td{padding:11px 12px;vertical-align:middle}
         <div style="font-size:18px;font-weight:800">📡 Live Positions Monitor</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">Track positions đang mở — auto chạy engine analysis + recommend action mỗi 60s</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span id="liveLastUpdate" style="font-size:11px;color:var(--muted2)"></span>
-        <button class="btn" id="liveRefreshBtn" onclick="liveRefresh()">↻ Refresh now</button>
-        <button class="btn primary" onclick="document.getElementById('liveAddForm').style.display=document.getElementById('liveAddForm').style.display==='none'?'':'none'">+ Add Position</button>
+        <select id="liveInterval" onchange="liveStart()" title="Tần suất auto-refresh"
+          style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:11px;outline:none;cursor:pointer">
+          <option value="60">Auto 60s</option>
+          <option value="120" selected>Auto 2 phút</option>
+          <option value="300">Auto 5 phút</option>
+          <option value="0">Tắt auto</option>
+        </select>
+        <button class="btn" id="liveRefreshBtn" onclick="liveRefresh()" title="Cập nhật giá (engine cached 5p)">↻ Refresh</button>
+        <button class="btn" id="liveForceBtn" onclick="liveRefresh(true)" title="Buộc rerun engine analysis (bypass cache)"
+          style="background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.3);color:#ffaa00">⚡ Force engine</button>
+        <button class="btn primary" onclick="document.getElementById('liveAddForm').style.display=document.getElementById('liveAddForm').style.display==='none'?'':'none'">+ Add</button>
+        <button class="btn" id="liveClearAllBtn" onclick="liveClearAll()"
+          style="background:rgba(255,61,90,.1);border:1px solid rgba(255,61,90,.3);color:var(--short)">🗑 Clear all</button>
       </div>
     </div>
 
@@ -6201,9 +6212,13 @@ var _liveTimer = null;
 var _liveLoading = false;
 
 function liveStart() {
-  liveRefresh();
   if (_liveTimer) clearInterval(_liveTimer);
-  _liveTimer = setInterval(liveRefresh, 60000);
+  liveRefresh();
+  var sel = document.getElementById('liveInterval');
+  var sec = sel ? parseInt(sel.value || '120') : 120;
+  if (sec > 0) {
+    _liveTimer = setInterval(function(){ liveRefresh(); }, sec * 1000);
+  }
 }
 
 function liveStop() {
@@ -6255,6 +6270,22 @@ function liveDelete(posId, sym) {
     .then(function(){ showToast('🗑 Đã xóa'); liveRefresh(); });
 }
 
+function liveClearAll() {
+  if (!confirm('⚠️ Xóa TOÀN BỘ positions?\n\nThao tác này không thể hoàn tác. Tất cả positions đang track sẽ bị xóa khỏi DB.')) return;
+  var btn = document.getElementById('liveClearAllBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Clearing...'; }
+  fetch('/api/positions/clear', {method: 'POST'})
+    .then(function(r){return r.json();})
+    .then(function(res){
+      if (res.error) { showToast('❌ ' + res.error); return; }
+      showToast('🗑 Đã xóa tất cả positions');
+      liveRefresh();
+    })
+    .finally(function(){
+      if (btn) { btn.disabled = false; btn.innerHTML = '🗑 Clear all'; }
+    });
+}
+
 function liveEditField(posId, field, currentVal, sym) {
   var label = {sl: 'Stop Loss', tp1: 'Take Profit 1', tp2: 'Take Profit 2', notes: 'Notes'}[field] || field;
   var v = prompt('Edit ' + label + ' cho ' + sym + ':', currentVal || '');
@@ -6277,19 +6308,22 @@ function liveEditField(posId, field, currentVal, sym) {
   });
 }
 
-function liveRefresh() {
+function liveRefresh(forceEngine) {
   if (_liveLoading) return;
   _liveLoading = true;
-  var btn = document.getElementById('liveRefreshBtn');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Loading...'; }
+  var btn  = document.getElementById('liveRefreshBtn');
+  var fbtn = document.getElementById('liveForceBtn');
+  if (btn)  { btn.disabled = true;  btn.innerHTML  = '<span class="spinner"></span>'; }
+  if (fbtn) { fbtn.disabled = true; }
 
-  fetch('/api/positions/monitor')
+  var url = '/api/positions/monitor' + (forceEngine ? '?force_refresh=1' : '');
+  fetch(url)
     .then(function(r){return r.json();})
     .then(function(data) {
       var positions = data.positions || [];
       var ts = data.ts || '';
       document.getElementById('liveLastUpdate').textContent = positions.length
-        ? '🕐 Last update: ' + ts.slice(11,19) : '';
+        ? '🕐 ' + ts.slice(11,19) + (forceEngine ? ' (engine refreshed)' : '') : '';
       renderLivePositions(positions);
     })
     .catch(function(e) {
@@ -6298,7 +6332,8 @@ function liveRefresh() {
     })
     .finally(function() {
       _liveLoading = false;
-      if (btn) { btn.disabled = false; btn.innerHTML = '↻ Refresh now'; }
+      if (btn)  { btn.disabled = false; btn.innerHTML  = '↻ Refresh'; }
+      if (fbtn) { fbtn.disabled = false; }
     });
 }
 
@@ -6340,13 +6375,22 @@ function renderLivePositions(positions) {
     if (p.engine_direction) {
       var edCol = p.engine_direction === p.direction ? 'var(--long)' : p.engine_direction === 'WAIT' ? 'var(--muted)' : 'var(--short)';
       var ecCol = p.engine_confidence === 'HIGH' ? 'var(--long)' : p.engine_confidence === 'MEDIUM' ? 'var(--accent)' : 'var(--muted)';
+      var cacheAgo = '';
+      if (p.engine_cached_at !== undefined && p.engine_cached_at !== null) {
+        var ago = p.engine_cached_at;
+        cacheAgo = ' · <span style="color:var(--muted2)" title="Engine cached ' + ago + 's trước. Click ⚡ Force engine để rerun ngay">cached ' +
+          (ago < 60 ? ago + 's' : Math.round(ago/60) + 'm') + ' ago</span>';
+      }
       engineBadge = '<div style="font-size:11px;margin-top:4px">' +
         '<span style="color:var(--muted)">Engine ' + (p.engine_strategy || '') + ':</span> ' +
         '<span style="color:' + edCol + ';font-weight:700">' + p.engine_direction + '</span>' +
         ' · <span style="color:' + ecCol + '">' + (p.engine_confidence || '?') + '</span>' +
         (p.engine_rr ? ' · RR ' + p.engine_rr : '') +
         (p.engine_funding ? ' · fund ' + p.engine_funding : '') +
+        cacheAgo +
       '</div>';
+    } else if (p.engine_error) {
+      engineBadge = '<div style="font-size:11px;margin-top:4px;color:var(--wait)">⚠ Engine: ' + p.engine_error + '</div>';
     }
 
     var shortTrustBadge = '';

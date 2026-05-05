@@ -6401,33 +6401,88 @@ function renderLivePositions(positions) {
     var d2slCol = d2sl !== undefined && d2sl < 1 ? 'var(--short)' : d2sl !== undefined && d2sl < 3 ? 'var(--wait)' : 'var(--muted)';
     var d2tpCol = d2tp !== undefined && d2tp < 1 ? 'var(--long)' : 'var(--muted)';
 
-    // ── Recommendation block ──
+    // ── Recommendation block (deep insights) ──
     var recHtml = '';
     var slSugg = rec.sl_suggestion;
     var tpSugg = rec.tp_suggestion;
+    var rrf = rec.rr_forward;
+
+    // Executive summary — paragraph nổi bật ở top
+    var summaryHtml = '';
+    if (rec.executive_summary) {
+      // Convert **bold** sang <b>
+      var summaryFormatted = rec.executive_summary.replace(/\*\*(.+?)\*\*/g, '<b style="color:var(--text)">$1</b>');
+      summaryHtml = '<div style="background:rgba(99,102,241,.08);border-left:3px solid #818cf8;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:12px;line-height:1.6;color:var(--text)">' +
+        '<div style="font-size:10px;color:#818cf8;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">📋 Tổng quan</div>' +
+        summaryFormatted +
+      '</div>';
+    }
+
+    // Specific actions — checklist
+    var actionsHtml = '';
+    if (rec.specific_actions && rec.specific_actions.length) {
+      actionsHtml = '<div style="background:rgba(255,255,255,.04);border-left:3px solid ' + urgCol + ';border-radius:6px;padding:10px 14px;margin-bottom:10px">' +
+        '<div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🎯 Hành động cụ thể</div>' +
+        rec.specific_actions.map(function(a, i){
+          return '<div style="font-size:12px;color:var(--text);line-height:1.6;margin-bottom:3px">' +
+            '<span style="color:var(--muted);margin-right:6px">' + (i+1) + '.</span>' + a + '</div>';
+        }).join('') +
+      '</div>';
+    }
+
+    // R:R forward
+    var rrHtml = '';
+    if (rrf) {
+      var rrCol = rrf.rr_ratio >= 2 ? 'var(--long)' : rrf.rr_ratio >= 1 ? 'var(--accent)' : 'var(--short)';
+      rrHtml = '<div style="display:flex;gap:14px;align-items:center;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:6px;padding:8px 14px;margin-bottom:10px;font-size:11px;flex-wrap:wrap">' +
+        '<span style="color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-size:10px">📊 R:R Forward</span>' +
+        '<span style="font-family:var(--mono);font-weight:700;color:' + rrCol + '">1:' + rrf.rr_ratio + '</span>' +
+        '<span style="color:var(--long);font-family:var(--mono)">↑ +' + rrf.upside_lev_pct + '% lev</span>' +
+        '<span style="color:var(--short);font-family:var(--mono)">↓ -' + rrf.downside_lev_pct + '% lev</span>' +
+      '</div>';
+    }
+
+    // Pros + Cons (collapsible)
+    var prosHtml = (rec.pros || []).map(function(x){ return '<div style="font-size:11px;color:var(--long);line-height:1.6;margin:2px 0">✅ ' + x + '</div>'; }).join('');
+    var consHtml = (rec.cons || []).map(function(x){ return '<div style="font-size:11px;color:var(--short);line-height:1.6;margin:2px 0">❌ ' + x + '</div>'; }).join('');
+    var timeNote = rec.time_note ? '<div style="font-size:11px;color:var(--wait);margin-top:4px;line-height:1.5">⏰ ' + rec.time_note + '</div>' : '';
+
+    var prosConsHtml = '';
+    if (prosHtml || consHtml || timeNote) {
+      prosConsHtml = '<details style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:6px;padding:8px 14px;margin-bottom:10px">' +
+        '<summary style="cursor:pointer;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700;user-select:none">' +
+          '🔍 Chi tiết phân tích (' + (rec.pros||[]).length + ' pros / ' + (rec.cons||[]).length + ' cons)' +
+        '</summary>' +
+        '<div style="margin-top:8px">' +
+          prosHtml + consHtml + timeNote +
+        '</div>' +
+      '</details>';
+    }
+
+    // SL/TP suggestion boxes
     var slSuggHtml = '', tpSuggHtml = '';
     if (slSugg) {
-      slSuggHtml = '<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:11px">' +
+      slSuggHtml = '<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:11px">' +
         '<div style="color:#ffaa00;font-weight:700;margin-bottom:3px">📝 SL gợi ý: ' + fmt(slSugg.current) + ' → <span style="font-family:var(--mono)">' + fmt(slSugg.suggested) + '</span></div>' +
         '<div style="color:var(--muted2);line-height:1.4">' + slSugg.reason + '</div></div>';
     }
     if (tpSugg) {
-      tpSuggHtml = '<div style="background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:11px">' +
+      tpSuggHtml = '<div style="background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:11px">' +
         '<div style="color:var(--long);font-weight:700;margin-bottom:3px">📝 TP gợi ý: ' + fmt(tpSugg.current) + ' → <span style="font-family:var(--mono)">' + fmt(tpSugg.suggested) + '</span></div>' +
         '<div style="color:var(--muted2);line-height:1.4">' + tpSugg.reason + '</div></div>';
     }
-    var prosHtml = (rec.pros || []).map(function(x){ return '<div style="font-size:11px;color:var(--long);line-height:1.5">✅ ' + x + '</div>'; }).join('');
-    var consHtml = (rec.cons || []).map(function(x){ return '<div style="font-size:11px;color:var(--short);line-height:1.5">❌ ' + x + '</div>'; }).join('');
-    var timeNote = rec.time_note ? '<div style="font-size:11px;color:var(--wait);margin-top:4px;line-height:1.5">⏰ ' + rec.time_note + '</div>' : '';
 
     recHtml =
       '<div style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
-          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Recommendation</div>' +
-          '<span style="font-size:11px;font-weight:800;background:' + urgCol + '22;color:' + urgCol + ';padding:4px 10px;border-radius:6px">' + act.icon + ' ' + act.label + (rec.urgency && rec.urgency !== 'NORMAL' ? ' · ' + rec.urgency : '') + '</span>' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700">📋 Recommendation</div>' +
+          '<span style="font-size:12px;font-weight:800;background:' + urgCol + '22;color:' + urgCol + ';padding:5px 12px;border-radius:6px;border:1px solid ' + urgCol + '44">' + act.icon + ' ' + act.label + (rec.urgency && rec.urgency !== 'NORMAL' ? ' · ' + rec.urgency : '') + '</span>' +
         '</div>' +
-        prosHtml + consHtml + timeNote +
+        summaryHtml +
+        actionsHtml +
+        rrHtml +
         slSuggHtml + tpSuggHtml +
+        prosConsHtml +
       '</div>';
 
     // ── Engine row ──

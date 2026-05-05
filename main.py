@@ -1670,6 +1670,15 @@ def positions_monitor():
     except Exception:
         btc_ctx = {"sentiment": "UNKNOWN", "d1_bias": "?", "h4_bias": "?", "note": ""}
 
+    def fmt_price(v):
+        if v is None: return "—"
+        try:
+            n = abs(v)
+            d = 2 if n >= 100 else 4 if n >= 1 else 6 if n >= 0.01 else 8
+            return f"{v:.{d}f}".rstrip("0").rstrip(".")
+        except Exception:
+            return str(v)
+
     def _funding_settle_minutes():
         """Tính số phút đến next funding settle (Binance funding mỗi 8h: 00, 08, 16 UTC)."""
         now_utc = _dt.now(_tz.utc)
@@ -1885,94 +1894,248 @@ def positions_monitor():
             elif btc_ctx.get("sentiment") == "RISK_ON" and direction == "SHORT":
                 out["btc"]["warning"] = f"BTC RISK_ON — SHORT có rủi ro"
 
-            # ── Recommendation engine ──
+            # ── Recommendation engine (deep analysis) ──
             engine_dir  = engine.get("direction")
             engine_conf = engine.get("confidence")
+            engine_rr   = engine.get("rr")
+            engine_score= engine.get("score")
             d2sl_val = out.get("distance_to_sl_pct")
             d2tp_val = out.get("distance_to_tp1_pct")
             pnl_lev = out.get("pnl_lev_pct") or 0
+            pnl_raw = out.get("pnl_raw_pct") or 0
+            time_held = out.get("time_held_hours") or 0
 
-            action = "HOLD"
-            urgency = "NORMAL"
-            pros, cons = [], []
+            pros, cons, warnings, specific_actions = [], [], [], []
             time_note = None
             sl_suggestion = _suggest_sl(direction, current, sl, ema_info, atr_h1, pnl_lev, d2sl_val)
             tp_suggestion = _suggest_tp(direction, current, tp1, d2tp_val)
 
-            # Action decisions
-            if d2sl_val is not None and d2sl_val < 0:
-                action = "CLOSE_NOW"
-                urgency = "CRITICAL"
-                cons.append(f"Giá đã VƯỢT SL ({d2sl_val}%) — phải close ngay")
-            elif d2sl_val is not None and d2sl_val < 1.0:
-                action = "CLOSE_NOW"
-                urgency = "HIGH"
-                cons.append(f"Giá cách SL chỉ {d2sl_val}% — sắp hit SL")
+            # ── 1. Build pros/cons trước ──
+            # Engine alignment
+            if engine_dir == direction and engine_conf in ("HIGH", "MEDIUM"):
+                pros.append(f"Engine vẫn cấp {direction} {engine_conf} với RR {engine_rr} score {engine_score} — setup chưa hỏng")
+            elif engine_dir == direction and engine_conf == "LOW":
+                pros.append(f"Engine cùng chiều {direction} LOW (score {engine_score}) — yếu nhưng chưa đảo")
+            elif engine_dir == "WAIT":
+                cons.append(f"Engine WAIT (score {engine_score}, RR {engine_rr}) — không có setup mới ủng hộ {direction}")
             elif engine_dir and engine_dir != direction and engine_dir != "WAIT":
-                if engine_conf in ("HIGH", "MEDIUM"):
-                    action = "CLOSE_NOW"
-                    urgency = "HIGH"
-                    cons.append(f"Engine flip {engine_dir} {engine_conf} — đảo chiều rõ")
-                else:
-                    action = "TIGHTEN_SL"
-                    cons.append(f"Engine ngược chiều {engine_dir} {engine_conf}")
-            elif pnl_lev >= 50 and (not engine_dir or engine_dir == "WAIT"):
-                action = "TRIM_70"
-                cons.append(f"PnL +{pnl_lev}% và engine WAIT — chốt 70% bảo vệ profit")
-            elif pnl_lev >= 20 and (not engine_dir or engine_dir == "WAIT"):
-                action = "TRIM_50"
-                cons.append(f"PnL +{pnl_lev}% và engine WAIT — chốt 50%")
-            elif pnl_lev >= 5 and d2sl_val is not None and d2sl_val > 5:
-                action = "TIGHTEN_SL"
-                cons.append(f"PnL +{pnl_lev}% và SL xa {d2sl_val}% — kéo SL về break-even")
+                cons.append(f"⚠ Engine flip ngược: cấp {engine_dir} {engine_conf} — đảo chiều rõ")
 
-            # Pros/cons
-            if engine_dir == direction:
-                if engine_conf in ("HIGH", "MEDIUM"):
-                    pros.append(f"Engine vẫn cấp {direction} {engine_conf} (RR {engine.get('rr')})")
-                else:
-                    pros.append(f"Engine cùng chiều {direction} ({engine_conf})")
+            # PnL
             if pnl_lev > 0:
-                pros.append(f"Đang lãi +{pnl_lev}% lev")
-            if pnl_lev < 0:
+                pros.append(f"Đang lãi +{pnl_lev}% lev (+{pnl_raw}% raw)")
+            elif pnl_lev < -10:
+                cons.append(f"Lỗ NẶNG {pnl_lev}% lev ({pnl_raw}% raw) — wipe đáng kể margin")
+            elif pnl_lev < 0:
                 cons.append(f"Đang lỗ {pnl_lev}% lev")
-            if out["market"].get("volume"):
-                vb = out["market"]["volume"]["bias"]
-                if direction == "LONG" and vb == "BULLISH":
-                    pros.append(f"Volume bias {vb} (4-5/5 nến xanh)")
-                elif direction == "SHORT" and vb == "BEARISH":
-                    pros.append(f"Volume bias {vb} (4-5/5 nến đỏ)")
-                elif (direction == "LONG" and vb == "BEARISH") or (direction == "SHORT" and vb == "BULLISH"):
-                    cons.append(f"Volume bias {vb} ngược chiều position")
+
+            # Volume bias
+            vb_obj = out["market"].get("volume") or {}
+            vb = vb_obj.get("bias")
+            if direction == "LONG" and vb == "BULLISH":
+                pros.append(f"Volume bias BULLISH ({vb_obj.get('green_5')}/5 nến xanh) — buyer áp đảo")
+            elif direction == "SHORT" and vb == "BEARISH":
+                pros.append(f"Volume bias BEARISH ({vb_obj.get('red_5')}/5 nến đỏ) — seller áp đảo")
+            elif (direction == "LONG" and vb == "BEARISH") or (direction == "SHORT" and vb == "BULLISH"):
+                cons.append(f"Volume bias {vb} NGƯỢC chiều position — momentum yếu cho {direction}")
+
+            # Volume ratio (low vol = no conviction)
+            vr = vb_obj.get("vol_ratio_vs_avg20")
+            if vr and vr < 0.5:
+                cons.append(f"Volume cây gần nhất {vr}x avg20 — quá mỏng, không có conviction")
+
+            # ATR state
+            atr_state = out["market"].get("atr_state")
+            if atr_state in ("EXPAND", "HIGH"):
+                cons.append(f"ATR {atr_state} ({out['market'].get('atr_ratio')}x) — volatility cao, SL dễ quét")
+            elif atr_state == "COMPRESS":
+                time_note = f"ATR COMPRESS — thị trường nén, có thể breakout sắp tới"
+
+            # BTC warning
             if out["btc"].get("warning"):
                 cons.append(out["btc"]["warning"])
-            if out["market"].get("funding_warning"):
-                # Funding extreme có thể là pros hoặc cons tùy direction
-                fw = out["market"]["funding_warning"]
-                if "long crowded" in fw and direction == "SHORT":
-                    pros.append(fw + " (có lợi SHORT)")
-                elif "long crowded" in fw and direction == "LONG":
-                    cons.append(fw + " (rủi ro reversal)")
-                elif "short crowded" in fw and direction == "LONG":
-                    pros.append(fw + " (có lợi LONG)")
-                elif "short crowded" in fw and direction == "SHORT":
-                    cons.append(fw + " (rủi ro squeeze)")
+
+            # Funding warning
+            fw = out["market"].get("funding_warning")
+            if fw:
+                if ("long crowded" in fw and direction == "SHORT") or ("short crowded" in fw and direction == "LONG"):
+                    pros.append(fw + f" — có lợi cho {direction}")
+                elif ("long crowded" in fw and direction == "LONG") or ("short crowded" in fw and direction == "SHORT"):
+                    cons.append(fw + " — rủi ro counter-trend squeeze")
                 else:
                     time_note = fw
 
-            # Time-based notes
-            if out.get("time_held_hours") is not None:
-                if out["time_held_hours"] > 24 and pnl_lev < 5:
-                    time_note = (time_note or "") + f" Đã hold {out['time_held_hours']}h mà PnL chỉ {pnl_lev}% — momentum yếu"
+            # EMA stack
+            ema_stack = (ema_info or {}).get("stack", "")
+            if direction == "LONG" and "BULLISH" in ema_stack:
+                pros.append("EMA stack BULLISH — trend xuống dài hạn vẫn còn")
+            elif direction == "SHORT" and "BEARISH" in ema_stack:
+                pros.append("EMA stack BEARISH — trend xuống dài hạn còn nguyên")
+            elif "MIXED" in ema_stack:
+                cons.append("EMA stack MIXED — không rõ trend, dễ choppy")
+
+            # No SL/TP — RỦI RO LỚN
+            no_sl = sl is None
+            no_tp = tp1 is None
+            if no_sl:
+                cons.append("🚨 KHÔNG có SL — risk vô hạn, có thể wipe hết margin nếu giá đảo chiều mạnh")
+                warnings.append("NO_SL")
+                specific_actions.append(f"⚠ ĐẶT SL NGAY: gợi ý {fmt_price(current * (0.97 if direction == 'LONG' else 1.03))} (-3% buffer từ giá hiện tại)")
+            if no_tp:
+                specific_actions.append(f"📌 Đặt TP1: gợi ý {fmt_price(current * (1.03 if direction == 'LONG' else 0.97))} (+3% mục tiêu chốt 50%)")
+
+            # Time-based
+            if time_held > 24 and abs(pnl_lev) < 5:
+                cons.append(f"Hold {round(time_held, 1)}h mà PnL chỉ {pnl_lev}% — momentum quá yếu, không xứng risk")
+            elif time_held > 8 and engine_dir == "WAIT" and pnl_lev < 0:
+                cons.append(f"Hold {round(time_held, 1)}h, đang lỗ + engine WAIT — kèo có thể đã đi sai hướng")
+
+            # ── 2. Action decision dựa trên pros/cons + ngữ cảnh ──
+            n_pros = len(pros)
+            n_cons = len(cons)
+            action = "HOLD"
+            urgency = "NORMAL"
+
+            # CRITICAL triggers
+            if d2sl_val is not None and d2sl_val < 0:
+                action = "CLOSE_NOW"
+                urgency = "CRITICAL"
+            elif pnl_raw <= -5 and no_sl:
+                action = "CLOSE_NOW"
+                urgency = "CRITICAL"
+                cons.insert(0, f"🚨 Lỗ {pnl_raw}% raw ({pnl_lev}% lev) mà KHÔNG SL — phải close hoặc đặt SL ngay")
+            # HIGH triggers
+            elif d2sl_val is not None and d2sl_val < 1.0:
+                action = "CLOSE_NOW"
+                urgency = "HIGH"
+            elif engine_dir and engine_dir != direction and engine_dir != "WAIT" and engine_conf in ("HIGH", "MEDIUM"):
+                action = "CLOSE_NOW"
+                urgency = "HIGH"
+            elif n_cons >= 3 and n_pros == 0:
+                # Nhiều red flags + không pros nào → close
+                action = "CLOSE_NOW" if no_sl else "TIGHTEN_SL"
+                urgency = "HIGH"
+                cons.insert(0, f"❗ {n_cons} cons rõ + 0 pros — setup đã đảo, không nên hold")
+            elif pnl_lev >= 50 and (not engine_dir or engine_dir == "WAIT"):
+                action = "TRIM_70"
+            elif pnl_lev >= 20 and (not engine_dir or engine_dir == "WAIT"):
+                action = "TRIM_50"
+            elif pnl_lev >= 5 and d2sl_val is not None and d2sl_val > 5:
+                action = "TIGHTEN_SL"
+            # Mềm hơn: lỗ + engine WAIT + có cons ≥ 2 → TIGHTEN
+            elif pnl_lev < -5 and engine_dir == "WAIT" and n_cons >= 2:
+                action = "TIGHTEN_SL"
+                urgency = "HIGH"
+            # No SL + lỗ nhẹ
+            elif no_sl and pnl_raw < 0:
+                action = "TIGHTEN_SL"
+                urgency = "HIGH"
+
+            # ── 3. Build specific_actions theo action ──
+            if action == "CLOSE_NOW":
+                specific_actions.insert(0, f"🚨 ĐÓNG TOÀN BỘ position {direction} {sym} ngay tại giá market ~{fmt_price(current)}")
+                if pnl_lev > 0:
+                    specific_actions.append(f"Realize +{pnl_lev}% lev (~{out.get('pnl_usd', 0):+.2f} USDT)")
+                else:
+                    specific_actions.append(f"Cắt lỗ {pnl_lev}% lev (~{out.get('pnl_usd', 0):+.2f} USDT) — bảo toàn margin còn lại")
+            elif action == "TIGHTEN_SL":
+                if sl_suggestion:
+                    specific_actions.insert(0, f"📝 Nâng SL từ {fmt_price(sl_suggestion['current'])} → {fmt_price(sl_suggestion['suggested'])} ({sl_suggestion['reason']})")
+                elif sl is None:
+                    specific_actions.insert(0, f"⚠ ĐẶT SL NGAY: gợi ý {fmt_price(current * (0.97 if direction == 'LONG' else 1.03))} (-3% buffer)")
+                else:
+                    new_sl = current * (0.99 if direction == "LONG" else 1.01)
+                    if (direction == "LONG" and new_sl > sl) or (direction == "SHORT" and new_sl < sl):
+                        specific_actions.insert(0, f"📝 Siết SL từ {fmt_price(sl)} → {fmt_price(new_sl)} (-1% từ giá hiện)")
+                if pnl_lev > 0:
+                    specific_actions.append(f"Sau khi siết SL: nếu hit SL vẫn lock được ~+{round(pnl_lev * 0.5, 1)}% profit (estimate)")
+            elif action == "TRIM_70":
+                close_size = round((out.get("size_usdt") or 0) * 0.7, 2)
+                specific_actions.insert(0, f"✂️ Đóng 70% size ({close_size} USDT margin) market ngay tại {fmt_price(current)} → realize ~{round(pnl_lev * 0.7, 2)}% lev profit")
+                specific_actions.append(f"30% còn lại: trail SL về EMA9 ({fmt_price((ema_info or {}).get('ema9'))}) hoặc break-even {fmt_price(entry)}")
+            elif action == "TRIM_50":
+                close_size = round((out.get("size_usdt") or 0) * 0.5, 2)
+                specific_actions.insert(0, f"✂️ Đóng 50% size ({close_size} USDT margin) market ngay tại {fmt_price(current)} → realize ~{round(pnl_lev * 0.5, 2)}% lev profit")
+                specific_actions.append(f"50% còn lại: trail SL về break-even {fmt_price(entry)} hoặc dùng trailing stop callback 1.5-2%")
+            elif action == "HOLD":
+                if engine_dir == direction and engine_conf in ("HIGH", "MEDIUM"):
+                    specific_actions.append(f"✅ Giữ position — engine vẫn cấp {direction} {engine_conf}")
+                if sl_suggestion:
+                    specific_actions.append(f"📝 (Optional) Nâng SL: {fmt_price(sl_suggestion['current'])} → {fmt_price(sl_suggestion['suggested'])} — {sl_suggestion['reason']}")
+                if tp_suggestion:
+                    specific_actions.append(f"📝 (Optional) {tp_suggestion['reason']}")
+
+            # ── 4. Risk/Reward forward projection ──
+            rr_forward = None
+            if sl and tp1:
+                if direction == "LONG":
+                    upside = (tp1 - current) / current * 100
+                    downside = (current - sl) / current * 100
+                else:
+                    upside = (current - tp1) / current * 100
+                    downside = (sl - current) / current * 100
+                if downside > 0:
+                    rr_forward = {
+                        "upside_to_tp1_pct": round(upside, 2),
+                        "downside_to_sl_pct": round(downside, 2),
+                        "rr_ratio": round(upside / downside, 2),
+                        "upside_lev_pct": round(upside * leverage, 2),
+                        "downside_lev_pct": round(downside * leverage, 2),
+                    }
+
+            # ── 5. Executive summary (paragraph dài) ──
+            mood = "🟢 Tích cực" if n_pros > n_cons else "🔴 Tiêu cực" if n_cons > n_pros + 1 else "🟡 Trung lập"
+            sym_short = sym.replace("USDT", "")
+            summary_parts = [f"{mood} ({n_pros} pros / {n_cons} cons)."]
+
+            # PnL summary
+            if pnl_lev > 0:
+                summary_parts.append(f"Position {direction} {sym_short} đang lãi **+{pnl_lev}% lev** ({out.get('pnl_usd', 0):+.2f} USDT) sau {round(time_held, 1)}h.")
+            elif pnl_lev < 0:
+                summary_parts.append(f"Position {direction} {sym_short} đang **lỗ {pnl_lev}% lev** ({out.get('pnl_usd', 0):+.2f} USDT) sau {round(time_held, 1)}h.")
+            else:
+                summary_parts.append(f"Position {direction} {sym_short} hoà vốn sau {round(time_held, 1)}h.")
+
+            # Engine summary
+            if engine_dir == direction and engine_conf in ("HIGH", "MEDIUM"):
+                summary_parts.append(f"Engine vẫn ủng hộ {direction} với {engine_conf} confidence (RR {engine_rr}) — setup chưa hỏng.")
+            elif engine_dir == "WAIT":
+                summary_parts.append(f"Engine không có setup mới ủng hộ {direction} (WAIT/{engine_conf}, score {engine_score}) — momentum cạn.")
+            elif engine_dir and engine_dir != direction:
+                summary_parts.append(f"⚠ Engine đã **flip sang {engine_dir} {engine_conf}** — đảo chiều rõ.")
+
+            # No SL warning
+            if no_sl:
+                summary_parts.append("🚨 **KHÔNG có SL** = rủi ro vô hạn. Đặt SL ngay bất kể action gì.")
+
+            # Action summary
+            action_text_map = {
+                "CLOSE_NOW":  "❗ Khuyến nghị **ĐÓNG TOÀN BỘ** ngay",
+                "TIGHTEN_SL": "📝 Khuyến nghị **siết SL** để bảo vệ vốn",
+                "TRIM_70":    "✂️ Khuyến nghị **chốt 70%** + trail phần còn lại",
+                "TRIM_50":    "✂️ Khuyến nghị **chốt 50%** + trail phần còn lại",
+                "HOLD":       "✅ Khuyến nghị **HOLD** — setup vẫn ổn",
+            }
+            summary_parts.append(action_text_map.get(action, ""))
+
+            # RR forward note
+            if rr_forward:
+                summary_parts.append(f"R:R forward = **1:{rr_forward['rr_ratio']}** (upside +{rr_forward['upside_lev_pct']}% lev / downside -{rr_forward['downside_lev_pct']}% lev nếu hit SL).")
+
+            executive_summary = " ".join(summary_parts)
 
             out["recommendation"] = {
-                "action":         action,
-                "urgency":        urgency,
-                "sl_suggestion":  sl_suggestion,
-                "tp_suggestion":  tp_suggestion,
-                "pros":           pros,
-                "cons":           cons,
-                "time_note":      time_note.strip() if time_note else None,
+                "action":            action,
+                "urgency":           urgency,
+                "executive_summary": executive_summary,
+                "specific_actions":  specific_actions,
+                "rr_forward":        rr_forward,
+                "sl_suggestion":     sl_suggestion,
+                "tp_suggestion":     tp_suggestion,
+                "pros":              pros,
+                "cons":              cons,
+                "warnings":          warnings,
+                "time_note":         time_note.strip() if time_note else None,
             }
 
         except Exception as e:

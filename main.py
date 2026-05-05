@@ -1628,6 +1628,11 @@ def clear_positions():
     return jsonify({"status": "cleared"})
 
 
+_MONITOR_CACHE = {"data": None, "ts": 0}     # cache toàn bộ response
+_MONITOR_CACHE_TTL = 60                       # 60s — bấm Phân tích nhiều lần dùng cache
+_BTC_CTX_CACHE  = {"data": None, "ts": 0}    # BTC context cache 5 phút
+_BTC_CTX_TTL    = 300
+
 @app.route("/api/positions/monitor", methods=["GET"])
 def positions_monitor():
     """Deep analysis on demand — user bấm "Phân tích" mỗi khi cần.
@@ -1658,17 +1663,33 @@ def positions_monitor():
     if not positions:
         return jsonify({"positions": [], "ts": _local_isoformat()})
 
+    # Cache check: nếu user bấm Phân tích trong 60s sau lần trước → trả cache
+    force = request.args.get("force") == "1"
+    now_ts = time.time()
+    cache_age = now_ts - (_MONITOR_CACHE["ts"] or 0)
+    if not force and _MONITOR_CACHE["data"] and cache_age < _MONITOR_CACHE_TTL:
+        cached_resp = dict(_MONITOR_CACHE["data"])
+        cached_resp["from_cache"] = True
+        cached_resp["cache_age_sec"] = round(cache_age)
+        return jsonify(cached_resp)
+
     # Filter positions có symbol để monitor được (cũ không có symbol → skip)
     monitored = [p for p in positions if p.get("symbol")]
     if not monitored:
         return jsonify({"positions": [], "ts": _local_isoformat(),
                         "note": "Không có position nào có symbol để monitor"})
 
-    # BTC context fetch 1 lần dùng chung cho mọi position
-    try:
-        btc_ctx = fetch_btc_context()
-    except Exception:
-        btc_ctx = {"sentiment": "UNKNOWN", "d1_bias": "?", "h4_bias": "?", "note": ""}
+    # BTC context — cache 5 phút (BTC không đổi nhanh, save 3 calls/refresh)
+    btc_age = now_ts - (_BTC_CTX_CACHE["ts"] or 0)
+    if _BTC_CTX_CACHE["data"] and btc_age < _BTC_CTX_TTL:
+        btc_ctx = _BTC_CTX_CACHE["data"]
+    else:
+        try:
+            btc_ctx = fetch_btc_context()
+            _BTC_CTX_CACHE["data"] = btc_ctx
+            _BTC_CTX_CACHE["ts"] = now_ts
+        except Exception:
+            btc_ctx = _BTC_CTX_CACHE.get("data") or {"sentiment": "UNKNOWN", "d1_bias": "?", "h4_bias": "?", "note": ""}
 
     def fmt_price(v):
         if v is None: return "—"
@@ -2139,18 +2160,47 @@ def positions_monitor():
             }
 
         except Exception as e:
-            out["error"] = f"Lỗi phân tích: {str(e)[:150]}"
+            err_str = str(e)
+            if "418" in err_str:
+                out["error"] = "🚫 Binance đã ban IP tạm thời (418 I'm a teapot) — đợi 2-5 phút rồi thử lại"
+                out["error_type"] = "RATE_LIMIT_BAN"
+            elif "429" in err_str:
+                out["error"] = "⏱ Binance rate limit (429) — đợi 60s rồi thử lại"
+                out["error_type"] = "RATE_LIMIT"
+            else:
+                out["error"] = f"Lỗi phân tích: {err_str[:150]}"
+                out["error_type"] = "OTHER"
 
         return out
 
-    # Sequential với stagger 0.4s
+    # Sequential với stagger 0.5s — quan trọng để tránh rate limit khi nhiều positions
     enriched = []
+    rate_limited = False
     for i, pos in enumerate(monitored):
         if i > 0:
-            time.sleep(0.4)
-        enriched.append(_enrich(pos))
+            time.sleep(0.5)
+        result = _enrich(pos)
+        enriched.append(result)
+        # Nếu đã hit rate limit → skip phân tích các position còn lại
+        if result.get("error_type") in ("RATE_LIMIT_BAN", "RATE_LIMIT"):
+            rate_limited = True
+            for remaining_pos in monitored[i+1:]:
+                skipped = dict(remaining_pos)
+                skipped["error"] = "⏭ Skip vì IP đang bị rate-limited (sẽ retry lượt sau)"
+                skipped["error_type"] = "SKIPPED_DUE_TO_RATE_LIMIT"
+                enriched.append(skipped)
+            break
 
-    return jsonify({"positions": enriched, "ts": _local_isoformat()})
+    response = {"positions": enriched, "ts": _local_isoformat(), "from_cache": False}
+    if rate_limited:
+        response["rate_limit_warning"] = "🚫 Binance đang rate-limit IP. Tắt auto-scanner và đợi 2-5 phút trước khi bấm Phân tích lại."
+
+    # Lưu cache nếu thành công (≥1 position phân tích được)
+    if not rate_limited:
+        _MONITOR_CACHE["data"] = response
+        _MONITOR_CACHE["ts"] = now_ts
+
+    return jsonify(response)
 
 @app.route("/api/position/analyze", methods=["POST"])
 def position_analyze():

@@ -1303,7 +1303,22 @@ def backtest_signal(signal: dict, bt_mode: str = "MARKET") -> dict:
 
         df = fetch_klines(symbol, bt_interval, limit, force_futures=True)
         df = df.copy()
-        df["ts"] = df.index.astype("int64") // 10**9
+        # Robust timestamp conversion — dùng .timestamp() method thay vì astype int64
+        # (tránh bug pandas version / tz handling khác nhau giữa các môi trường)
+        try:
+            df["ts"] = df.index.map(lambda x: int(x.timestamp())).astype("int64")
+        except Exception:
+            # Fallback nếu .timestamp() fail (e.g. tz-aware index)
+            df["ts"] = (df.index.astype("int64") // 10**9).astype("int64")
+
+        # Validate: nếu last candle quá cũ vs signal time → fetch có thể bị stale/fail
+        if len(df) > 0:
+            last_candle_ts = int(df["ts"].iloc[-1])
+            if last_candle_ts <= 0 or (sig_ts - last_candle_ts) > 86400 * 7:
+                # Last candle invalid hoặc cách signal > 7 ngày → fetch fail rồi
+                return {**signal, "bt_result": "ERROR",
+                        "bt_note": f"⚠ Fetch klines invalid (last_ts={last_candle_ts}, gap={int((sig_ts - last_candle_ts)/60)}p) — server có thể bị rate limit/Binance ban IP. Thử lại sau vài phút.",
+                        "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
 
         df_after = df[df["ts"] > sig_ts].reset_index(drop=True)
 

@@ -3475,29 +3475,120 @@ def btc_trend():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def _aggregate_pivot(results):
+_BT_FIELDS = ("bt_result", "bt_note", "bt_candles", "bt_pnl_r", "bt_exit_price",
+              "bt_exit_reason", "bt_unrealized_pct", "bt_unrealized_r",
+              "bt_used_entry", "bt_fill_candles", "bt_actual_low", "bt_actual_high")
+
+
+def _extract_bt_fields(result):
+    """Extract bt_* fields from backtest result into clean dict."""
+    return {k: result.get(k) for k in _BT_FIELDS if k in result}
+
+
+def backtest_signal_dual(signal):
+    """Backtest 1 signal cho CẢ 2 modes: MARKET + LIMIT.
+    Trả về single dict với field 'market_bt' và 'limit_bt'.
+    """
+    market_result = backtest_signal(signal, "MARKET")
+    limit_result  = backtest_signal(signal, "LIMIT")
+    return {
+        **signal,
+        "market_bt": _extract_bt_fields(market_result),
+        "limit_bt":  _extract_bt_fields(limit_result),
+    }
+
+
+def _compute_summary_for_mode(results, source_key=None):
+    """Compute summary stats. source_key=None nghĩa là single mode (bt_* fields ở root).
+    source_key='market_bt' nghĩa là dual mode, đọc từ result['market_bt']['bt_*']."""
+    def _get(r, field):
+        if source_key:
+            return (r.get(source_key) or {}).get(field)
+        return r.get(field)
+
+    wins     = [r for r in results if _get(r, "bt_result") == "WIN"]
+    losses   = [r for r in results if _get(r, "bt_result") == "LOSS"]
+    opens    = [r for r in results if _get(r, "bt_result") == "OPEN"]
+    pendings = [r for r in results if _get(r, "bt_result") == "PENDING"]
+    expired  = [r for r in results if _get(r, "bt_result") == "EXPIRED"]
+    errors   = [r for r in results if _get(r, "bt_result") == "ERROR"]
+    closed   = wins + losses
+    win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
+    pnl_rs   = [_get(r, "bt_pnl_r") for r in closed if _get(r, "bt_pnl_r") is not None]
+    total_r  = round(sum(pnl_rs), 2)
+    avg_r    = round(sum(pnl_rs) / len(pnl_rs), 2) if pnl_rs else 0
+    avg_win_r  = round(sum(_get(r, "bt_pnl_r") for r in wins   if _get(r, "bt_pnl_r")) / len(wins),   2) if wins   else 0
+    avg_loss_r = round(sum(_get(r, "bt_pnl_r") for r in losses if _get(r, "bt_pnl_r")) / len(losses), 2) if losses else 0
+    expectancy = round((len(wins)/len(closed)) * avg_win_r + (len(losses)/len(closed)) * avg_loss_r, 2) if closed else 0
+    avg_candles_win  = round(sum(_get(r, "bt_candles") for r in wins   if _get(r, "bt_candles")) / len(wins),  1) if wins  else None
+    avg_candles_loss = round(sum(_get(r, "bt_candles") for r in losses if _get(r, "bt_candles")) / len(losses), 1) if losses else None
+
+    # Fill rate cho LIMIT mode
+    fill_stats = None
+    if source_key == "limit_bt":
+        with_opt = [r for r in results if _get(r, "bt_used_entry") == "OPT"]
+        opt_filled = [r for r in with_opt if _get(r, "bt_fill_candles") is not None]
+        fill_stats = {
+            "with_entry_opt":   len(with_opt),
+            "filled":           len(opt_filled),
+            "fill_rate_pct":    round(len(opt_filled)/len(with_opt)*100, 1) if with_opt else None,
+            "expired":          len(expired),
+            "pending":          len(pendings),
+        }
+
+    return {
+        "total":           len(results),
+        "closed":          len(closed),
+        "wins":            len(wins),
+        "losses":          len(losses),
+        "opens":           len(opens),
+        "pending":         len(pendings),
+        "expired":         len(expired),
+        "errors":          len(errors),
+        "win_rate":        win_rate,
+        "total_r":         total_r,
+        "avg_r":           avg_r,
+        "avg_win_r":       avg_win_r,
+        "avg_loss_r":      avg_loss_r,
+        "expectancy":      expectancy,
+        "avg_candles_win": avg_candles_win,
+        "avg_candles_loss": avg_candles_loss,
+        "fill_stats":      fill_stats,
+    }
+
+
+def _aggregate_pivot(results, source_key=None):
     """Aggregate backtest results thành 2 pivot tables: per-coin & per-strategy.
     Trả về (per_coin_list, per_strategy_list) sorted by total_r desc.
     """
     from collections import defaultdict
+    """Aggregate per-coin & per-strategy stats.
+    source_key=None → đọc bt_* fields ở root (single mode legacy)
+    source_key='market_bt'|'limit_bt' → đọc từ result[source_key]['bt_*'] (dual mode)
+    """
+    def _get(r, field):
+        if source_key:
+            return (r.get(source_key) or {}).get(field)
+        return r.get(field)
+
     # Map strategy → giờ/nến để tính avg_holding_h
     candle_h_map = {"SCALP": 5/60, "SWING_H1": 0.25, "SWING_H4": 0.25}  # SCALP M5, SWING M15
 
     # ── Per-coin ──
     by_coin = defaultdict(list)
     for r in results:
-        if r.get("bt_result") == "ERROR":
+        if _get(r, "bt_result") == "ERROR":
             continue
         sym = r.get("symbol") or "UNKNOWN"
         by_coin[sym].append(r)
 
     per_coin = []
     for sym, rs in by_coin.items():
-        wins   = [r for r in rs if r.get("bt_result") == "WIN"]
-        losses = [r for r in rs if r.get("bt_result") == "LOSS"]
+        wins   = [r for r in rs if _get(r, "bt_result") == "WIN"]
+        losses = [r for r in rs if _get(r, "bt_result") == "LOSS"]
         closed = wins + losses
         wr     = round(len(wins) / len(closed) * 100, 1) if closed else None
-        prs    = [r["bt_pnl_r"] for r in closed if r.get("bt_pnl_r") is not None]
+        prs    = [_get(r, "bt_pnl_r") for r in closed if _get(r, "bt_pnl_r") is not None]
         total_r = round(sum(prs), 2) if prs else 0
         avg_r   = round(sum(prs) / len(prs), 2) if prs else 0
 
@@ -3508,12 +3599,12 @@ def _aggregate_pivot(results):
         best_strat, best_strat_r = "—", None
         candidates = []
         for s, srs in by_strat.items():
-            sw = [r for r in srs if r.get("bt_result") == "WIN"]
-            sl = [r for r in srs if r.get("bt_result") == "LOSS"]
+            sw = [r for r in srs if _get(r, "bt_result") == "WIN"]
+            sl = [r for r in srs if _get(r, "bt_result") == "LOSS"]
             sclosed = sw + sl
             if len(sclosed) < 2:
                 continue
-            sprs = [r["bt_pnl_r"] for r in sclosed if r.get("bt_pnl_r") is not None]
+            sprs = [_get(r, "bt_pnl_r") for r in sclosed if _get(r, "bt_pnl_r") is not None]
             if not sprs:
                 continue
             stotal_r = round(sum(sprs), 2)
@@ -3548,22 +3639,22 @@ def _aggregate_pivot(results):
     # ── Per-strategy ──
     by_strat = defaultdict(list)
     for r in results:
-        if r.get("bt_result") == "ERROR":
+        if _get(r, "bt_result") == "ERROR":
             continue
         s = r.get("strategy") or "LEGACY"
         by_strat[s].append(r)
 
     per_strategy = []
     for s, rs in by_strat.items():
-        wins   = [r for r in rs if r.get("bt_result") == "WIN"]
-        losses = [r for r in rs if r.get("bt_result") == "LOSS"]
+        wins   = [r for r in rs if _get(r, "bt_result") == "WIN"]
+        losses = [r for r in rs if _get(r, "bt_result") == "LOSS"]
         closed = wins + losses
         wr     = round(len(wins) / len(closed) * 100, 1) if closed else None
-        prs    = [r["bt_pnl_r"] for r in closed if r.get("bt_pnl_r") is not None]
+        prs    = [_get(r, "bt_pnl_r") for r in closed if _get(r, "bt_pnl_r") is not None]
         total_r = round(sum(prs), 2) if prs else 0
         avg_r   = round(sum(prs) / len(prs), 2) if prs else 0
         # Avg holding h
-        cands = [r.get("bt_candles") for r in closed if r.get("bt_candles")]
+        cands = [_get(r, "bt_candles") for r in closed if _get(r, "bt_candles")]
         ch    = candle_h_map.get(s, 0.25)
         avg_holding_h = round(sum(cands) / len(cands) * ch, 1) if cands else None
 
@@ -3591,9 +3682,9 @@ def run_backtest():
     hours_ago    = int(data.get("hours_ago", 8))       # mặc định 8 tiếng
     algo_version = data.get("algo_version", "")        # "" = tất cả versions
     max_signals_req = int(data.get("max_signals", 200))  # default 200 (vs 50 cũ)
-    bt_mode      = data.get("bt_mode", "MARKET")       # MARKET (default) | LIMIT
-    if bt_mode not in ("MARKET", "LIMIT"):
-        bt_mode = "MARKET"
+    bt_mode      = data.get("bt_mode", "DUAL")         # DUAL (default — show cả 2) | MARKET | LIMIT
+    if bt_mode not in ("MARKET", "LIMIT", "DUAL"):
+        bt_mode = "DUAL"
 
     history = load_history()
     if not history:
@@ -3631,71 +3722,63 @@ def run_backtest():
     max_signals = min(max(max_signals_req, 1), 500)
     signals_to_run = signals[:max_signals]
     truncated = total_available > max_signals
+    bt_fn = backtest_signal_dual if bt_mode == "DUAL" else backtest_signal
+    bt_args = (bt_fn,) if bt_mode == "DUAL" else (lambda s: backtest_signal(s, bt_mode),)
+    submit_fn = backtest_signal_dual if bt_mode == "DUAL" else (lambda s: backtest_signal(s, bt_mode))
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(backtest_signal, sig, bt_mode): sig for sig in signals_to_run}
-        for fut in concurrent.futures.as_completed(futures, timeout=180):
+        futures = {ex.submit(submit_fn, sig): sig for sig in signals_to_run}
+        for fut in concurrent.futures.as_completed(futures, timeout=300):
             try:
                 results.append(fut.result())
             except Exception as e:
                 sig = futures[fut]
-                results.append({**sig, "bt_result": "ERROR", "bt_note": str(e),
-                                 "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None})
+                if bt_mode == "DUAL":
+                    err_bt = {"bt_result": "ERROR", "bt_note": str(e),
+                              "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None}
+                    results.append({**sig, "market_bt": err_bt, "limit_bt": err_bt})
+                else:
+                    results.append({**sig, "bt_result": "ERROR", "bt_note": str(e),
+                                     "bt_candles": None, "bt_pnl_r": None, "bt_exit_price": None})
 
-    # Summary
-    wins    = [r for r in results if r["bt_result"] == "WIN"]
-    losses  = [r for r in results if r["bt_result"] == "LOSS"]
-    opens   = [r for r in results if r["bt_result"] == "OPEN"]
-    pendings= [r for r in results if r["bt_result"] == "PENDING"]
-    errors  = [r for r in results if r["bt_result"] == "ERROR"]
-    skips   = [r for r in results if r["bt_result"] == "SKIP"]
-
-    closed = wins + losses
-    win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
-
-    # Warn nếu nhiều lệnh có bt_candles=0 (close check, không phải replay H1)
-    stale_count = sum(1 for r in closed if r.get("bt_candles") == 0 and
-                      "đã dưới SL" in (r.get("bt_note") or "") or
-                      "đã trên SL" in (r.get("bt_note") or ""))
-
-    pnl_rs    = [r["bt_pnl_r"] for r in closed if r["bt_pnl_r"] is not None]
-    total_r   = round(sum(pnl_rs), 2)
-    avg_r     = round(sum(pnl_rs) / len(pnl_rs), 2) if pnl_rs else 0
-    avg_candles_win  = round(sum(r["bt_candles"] for r in wins  if r["bt_candles"]) / len(wins),  1) if wins  else None
-    avg_candles_loss = round(sum(r["bt_candles"] for r in losses if r["bt_candles"]) / len(losses), 1) if losses else None
-
-    # Tính expectancy = (winrate * avg_win_r) + (lossrate * (-1))
-    avg_win_r  = round(sum(r["bt_pnl_r"] for r in wins   if r["bt_pnl_r"]) / len(wins),   2) if wins   else 0
-    avg_loss_r = round(sum(r["bt_pnl_r"] for r in losses if r["bt_pnl_r"]) / len(losses), 2) if losses else 0
-    expectancy = round((len(wins)/len(closed)) * avg_win_r + (len(losses)/len(closed)) * avg_loss_r, 2) if closed else 0
-
-    summary = {
+    # ── Build summary ──
+    base_meta = {
         "total":            len(signals_to_run),
         "total_available":  total_available,
         "truncated":        truncated,
         "max_signals_used": max_signals,
-        "closed":           len(closed),
-        "wins":             len(wins),
-        "losses":           len(losses),
-        "opens":            len(opens),
-        "pending":          len(pendings),
-        "errors":           len(errors),
-        "win_rate":         win_rate,
-        "total_r":          total_r,
-        "avg_r":            avg_r,
-        "avg_win_r":        avg_win_r,
-        "avg_loss_r":       avg_loss_r,
-        "expectancy":       expectancy,
-        "avg_candles_win":  avg_candles_win,
-        "avg_candles_loss": avg_candles_loss,
-        "stale_signals":    stale_count,
-        "stale_note":       f"{stale_count} lệnh close-check (giá đã qua SL/TP trước khi backtest chạy)" if stale_count > 0 else "",
+        "bt_mode":          bt_mode,
         "truncated_note":   f"Có {total_available} signals trong khoảng thời gian này, chỉ chạy {max_signals} mới nhất. Tăng max_signals để chạy thêm." if truncated else "",
     }
 
-    # ── Per-coin & Per-strategy pivot ──
-    per_coin, per_strategy = _aggregate_pivot(results)
-    summary["per_coin"]     = per_coin
-    summary["per_strategy"] = per_strategy
+    if bt_mode == "DUAL":
+        # Dual summary: market + limit side-by-side
+        sm_market = _compute_summary_for_mode(results, source_key="market_bt")
+        sm_limit  = _compute_summary_for_mode(results, source_key="limit_bt")
+        pc_market, ps_market = _aggregate_pivot(results, source_key="market_bt")
+        pc_limit,  ps_limit  = _aggregate_pivot(results, source_key="limit_bt")
+        sm_market["per_coin"]     = pc_market
+        sm_market["per_strategy"] = ps_market
+        sm_limit["per_coin"]      = pc_limit
+        sm_limit["per_strategy"]  = ps_limit
+        summary = {
+            **base_meta,
+            "market": sm_market,
+            "limit":  sm_limit,
+            # Backward compat root-level fields = MARKET (vì MARKET là realistic default)
+            "wins":     sm_market["wins"],
+            "losses":   sm_market["losses"],
+            "closed":   sm_market["closed"],
+            "win_rate": sm_market["win_rate"],
+            "total_r":  sm_market["total_r"],
+            "expectancy": sm_market["expectancy"],
+        }
+    else:
+        # Single mode (legacy)
+        sm = _compute_summary_for_mode(results)
+        per_coin, per_strategy = _aggregate_pivot(results)
+        sm["per_coin"]     = per_coin
+        sm["per_strategy"] = per_strategy
+        summary = {**base_meta, **sm}
 
     return jsonify({"results": results, "summary": summary})
 
@@ -3705,46 +3788,42 @@ def run_backtest_signals():
     """Backtest danh sách signals cụ thể truyền thẳng từ frontend (history selection)."""
     data    = request.json or {}
     signals = data.get("signals", [])
-    bt_mode = data.get("bt_mode", "MARKET")
-    if bt_mode not in ("MARKET", "LIMIT"):
-        bt_mode = "MARKET"
+    bt_mode = data.get("bt_mode", "DUAL")
+    if bt_mode not in ("MARKET", "LIMIT", "DUAL"):
+        bt_mode = "DUAL"
     if not signals:
         return jsonify({"results": [], "summary": {}, "error": "Không có signal"})
 
     results = []
     for sig in signals:
-        r = backtest_signal(sig, bt_mode)
+        if bt_mode == "DUAL":
+            r = backtest_signal_dual(sig)
+        else:
+            r = backtest_signal(sig, bt_mode)
         results.append(r)
 
-    wins     = [r for r in results if r["bt_result"] == "WIN"]
-    losses   = [r for r in results if r["bt_result"] == "LOSS"]
-    opens    = [r for r in results if r["bt_result"] == "OPEN"]
-    pendings = [r for r in results if r["bt_result"] == "PENDING"]
-    errors   = [r for r in results if r["bt_result"] == "ERROR"]
-    closed   = wins + losses
-    win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
-
-    pnl_rs   = [r["bt_pnl_r"] for r in closed if r["bt_pnl_r"] is not None]
-    total_r  = round(sum(pnl_rs), 2)
-    avg_r    = round(sum(pnl_rs) / len(pnl_rs), 2) if pnl_rs else 0
-    avg_win_r  = round(sum(r["bt_pnl_r"] for r in wins   if r["bt_pnl_r"]) / len(wins),   2) if wins   else 0
-    avg_loss_r = round(sum(r["bt_pnl_r"] for r in losses if r["bt_pnl_r"]) / len(losses), 2) if losses else 0
-    expectancy = round((len(wins)/len(closed)) * avg_win_r + (len(losses)/len(closed)) * avg_loss_r, 2) if closed else 0
-    avg_candles_win  = round(sum(r["bt_candles"] for r in wins   if r["bt_candles"]) / len(wins),   1) if wins   else None
-    avg_candles_loss = round(sum(r["bt_candles"] for r in losses if r["bt_candles"]) / len(losses), 1) if losses else None
-
-    summary = {
-        "total": len(signals), "closed": len(closed),
-        "wins": len(wins), "losses": len(losses),
-        "opens": len(opens), "pending": len(pendings), "errors": len(errors),
-        "win_rate": win_rate, "total_r": total_r, "avg_r": avg_r,
-        "avg_win_r": avg_win_r, "avg_loss_r": avg_loss_r,
-        "expectancy": expectancy,
-        "avg_candles_win": avg_candles_win, "avg_candles_loss": avg_candles_loss,
-    }
-    per_coin, per_strategy = _aggregate_pivot(results)
-    summary["per_coin"]     = per_coin
-    summary["per_strategy"] = per_strategy
+    if bt_mode == "DUAL":
+        sm_market = _compute_summary_for_mode(results, source_key="market_bt")
+        sm_limit  = _compute_summary_for_mode(results, source_key="limit_bt")
+        pc_market, ps_market = _aggregate_pivot(results, source_key="market_bt")
+        pc_limit,  ps_limit  = _aggregate_pivot(results, source_key="limit_bt")
+        sm_market["per_coin"]     = pc_market
+        sm_market["per_strategy"] = ps_market
+        sm_limit["per_coin"]      = pc_limit
+        sm_limit["per_strategy"]  = ps_limit
+        summary = {
+            "total": len(signals), "bt_mode": "DUAL",
+            "market": sm_market, "limit": sm_limit,
+            "wins":     sm_market["wins"], "losses": sm_market["losses"],
+            "closed":   sm_market["closed"], "win_rate": sm_market["win_rate"],
+            "total_r":  sm_market["total_r"], "expectancy": sm_market["expectancy"],
+        }
+    else:
+        sm = _compute_summary_for_mode(results)
+        per_coin, per_strategy = _aggregate_pivot(results)
+        sm["per_coin"]     = per_coin
+        sm["per_strategy"] = per_strategy
+        summary = {"total": len(signals), "bt_mode": bt_mode, **sm}
     return jsonify({"results": results, "summary": summary})
 
 @app.route("/api/backtest/auto-analyze", methods=["POST"])

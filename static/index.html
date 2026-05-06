@@ -985,12 +985,12 @@ tbody td{padding:11px 12px;vertical-align:middle}
         <span style="font-size:11px;color:var(--muted)">lệnh</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 10px"
-           title="Entry mode:&#10;MARKET = vào ngay khi alert ra (sig_price)&#10;LIMIT = chờ pullback Fib (entry_opt)&#10;COMPARE = chạy cả 2 song song">
+           title="Entry mode:&#10;DUAL = chạy CẢ 2 (MARKET + LIMIT) trong 1 backtest, hiển thị side-by-side&#10;MARKET = chỉ entry tại sig_price (vào ngay khi alert)&#10;LIMIT = chỉ entry_opt Fib pullback (chờ giá về)">
         <span style="font-size:11px;color:var(--muted);white-space:nowrap">Entry</span>
         <select id="btMode" style="background:transparent;border:none;color:var(--text);font-family:var(--mono);font-size:13px;font-weight:700;outline:none;cursor:pointer">
-          <option value="MARKET" selected>MARKET</option>
+          <option value="DUAL" selected>DUAL (cả 2)</option>
+          <option value="MARKET">MARKET</option>
           <option value="LIMIT">LIMIT (entry_opt)</option>
-          <option value="COMPARE">COMPARE</option>
         </select>
       </div>
       <button class="btn primary" id="btnBacktest" onclick="runBacktest()">&#9654; Run Backtest</button>
@@ -4061,13 +4061,13 @@ function runBacktest() {
   var dir      = document.getElementById('btDir').value;
   var capital  = parseFloat(document.getElementById('btCapital').value) || 1000;
   var leverage = parseFloat(document.getElementById('btLeverage').value) || 5;
-  var btMode   = (document.getElementById('btMode') || {}).value || 'MARKET';
+  var btMode   = (document.getElementById('btMode') || {}).value || 'DUAL';
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Running...';
   document.getElementById('btResults').innerHTML =
     '<div class="empty-state"><span class="spinner"></span><div style="margin-top:12px;color:var(--muted)">Đang fetch data và backtest từng signal' +
-    (btMode === 'COMPARE' ? ' (MARKET + LIMIT song song)' : ' (' + btMode + ')') + '...</div></div>';
+    (btMode === 'DUAL' ? ' (MARKET + LIMIT side-by-side)' : ' (' + btMode + ')') + '...</div></div>';
   document.getElementById('btSummary').style.display = 'none';
   // Clear COMPARE + Pivot panels from previous run
   var cmpEl = document.getElementById('btCompare');
@@ -4123,6 +4123,34 @@ function runBacktest() {
     renderBtAnalysis(data.results, data.summary);
   }
 
+  function renderDual(data) {
+    if (data.error) { showError(data.error); return; }
+    _btLastResults = data.results;
+    _btLastSummary = data.summary;
+    var mkSummary = data.summary.market || {};
+    var lmSummary = data.summary.limit  || {};
+
+    // 1. COMPARE panel — top-level stats side-by-side
+    renderBtCompareDual(data.summary, capital, leverage);
+
+    // 2. Summary cards — show MARKET (realistic) ở top
+    var marketAsTop = Object.assign({}, mkSummary, {
+      total: data.summary.total, total_available: data.summary.total_available,
+      truncated: data.summary.truncated, max_signals_used: data.summary.max_signals_used,
+    });
+    renderBtSummary(marketAsTop, data.results, capital, leverage);
+    renderBtResultSummary(data.results, marketAsTop, capital, leverage);
+
+    // 3. Pivot tables — render 2 sets (Market vs Limit)
+    renderBtPivotDual(mkSummary, lmSummary);
+
+    // 4. Detail table — render dual columns (market + limit results per row)
+    renderBtTableDual(data.results, capital, leverage);
+
+    // 5. Analysis — dùng MARKET data
+    renderBtAnalysis(data.results, marketAsTop);
+  }
+
   function finish() {
     btn.disabled = false;
     btn.innerHTML = '&#9654; Run Backtest';
@@ -4130,24 +4158,234 @@ function runBacktest() {
     if (exportBtn) exportBtn.style.display = '';
   }
 
-  if (btMode === 'COMPARE') {
-    Promise.all([callBT('MARKET'), callBT('LIMIT')]).then(function(results) {
-      var mk = results[0], lm = results[1];
-      if (mk.error && lm.error) { showError(mk.error); finish(); return; }
-      // Render COMPARE panel side-by-side
-      renderBtCompare(mk, lm, capital, leverage);
-      // Default detail table = MARKET (realistic)
-      renderSingle(mk);
-    }).catch(function(e) {
-      document.getElementById('btResults').innerHTML =
-        '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
-    }).finally(finish);
-  } else {
-    callBT(btMode).then(renderSingle).catch(function(e) {
-      document.getElementById('btResults').innerHTML =
-        '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
-    }).finally(finish);
+  callBT(btMode).then(function(data){
+    if (btMode === 'DUAL') renderDual(data);
+    else                   renderSingle(data);
+  }).catch(function(e) {
+    document.getElementById('btResults').innerHTML =
+      '<div style="color:var(--short);padding:20px">Lỗi: '+e.message+'</div>';
+  }).finally(finish);
+}
+
+// Render compare panel cho DUAL response (1 API call, summary.market + summary.limit)
+function renderBtCompareDual(summary, capital, leverage) {
+  var el = document.getElementById('btCompare');
+  if (!el) return;
+  var sM = summary.market || {};
+  var sL = summary.limit  || {};
+  var fs = sL.fill_stats || {};
+
+  function statRow(label, valM, valL, tooltip) {
+    return '<tr title="'+(tooltip||'')+'">' +
+      '<td style="padding:6px 12px;color:var(--muted);font-size:12px">'+label+'</td>' +
+      '<td style="padding:6px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+valM+'</td>' +
+      '<td style="padding:6px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+valL+'</td>' +
+      '</tr>';
   }
+  function pickBetter(m, l, higherBetter) {
+    if (m === l) return [m, l];
+    var betterMk = higherBetter ? (m > l) : (m < l);
+    var mkColor = betterMk ? 'var(--long)' : 'var(--muted)';
+    var lmColor = betterMk ? 'var(--muted)' : 'var(--long)';
+    return [
+      '<span style="color:'+mkColor+'">'+m+'</span>',
+      '<span style="color:'+lmColor+'">'+l+'</span>'
+    ];
+  }
+
+  var wrPair     = pickBetter(sM.win_rate || 0, sL.win_rate || 0, true);
+  var totalRPair = pickBetter(sM.total_r || 0, sL.total_r || 0, true);
+  var expectPair = pickBetter(sM.expectancy || 0, sL.expectancy || 0, true);
+  var avgRPair   = pickBetter(sM.avg_r || 0, sL.avg_r || 0, true);
+
+  el.innerHTML =
+    '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">' +
+    '⚖️ DUAL — MARKET (vào ngay sig_price) vs LIMIT (chờ entry_opt Fib)</div>' +
+    '<table style="width:100%;border-collapse:collapse">' +
+      '<thead><tr style="border-bottom:1px solid var(--border)">' +
+        '<th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600">Metric</th>' +
+        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--accent);font-weight:700">🟢 MARKET</th>' +
+        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:#ffaa00;font-weight:700">🟠 LIMIT (entry_opt)</th>' +
+      '</tr></thead><tbody>' +
+      statRow('Total signals', sM.total || 0, sL.total || 0) +
+      statRow('Closed (W+L)',  sM.closed || 0, sL.closed || 0) +
+      statRow('Win Rate',      wrPair[0]+'%', wrPair[1]+'%', 'Higher is better') +
+      statRow('Wins / Losses', (sM.wins||0)+' / '+(sM.losses||0), (sL.wins||0)+' / '+(sL.losses||0)) +
+      statRow('OPEN / PENDING / EXPIRED',
+        (sM.opens||0)+' / '+(sM.pending||0)+' / '+(sM.expired||0),
+        (sL.opens||0)+' / '+(sL.pending||0)+' / '+(sL.expired||0)) +
+      statRow('Total R',       totalRPair[0], totalRPair[1]) +
+      statRow('Avg R',         avgRPair[0], avgRPair[1]) +
+      statRow('Expectancy',    expectPair[0], expectPair[1]) +
+      statRow('LIMIT fill rate', '— (always fills 100%)',
+        (fs.fill_rate_pct !== null && fs.fill_rate_pct !== undefined ?
+          fs.fill_rate_pct + '% ('+fs.filled+'/'+fs.with_entry_opt+')' : '—'),
+        'Tỉ lệ entry_opt fill được trong 8h timeout') +
+    '</tbody></table>' +
+    '<div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.5">' +
+    '💡 <b>MARKET</b> = vào ngay khi alert ra (sig_price). ' +
+    '<b>LIMIT</b> = chờ pullback Fib (entry_opt) — RR đẹp hơn nhưng chỉ fill khi giá quay đầu. ' +
+    'Bảng dưới hiển thị chi tiết kết quả của <b>cả 2 entries cho từng signal</b>.</div>';
+  el.style.display = '';
+}
+
+// Render pivot dual cho cả MARKET + LIMIT side-by-side
+function renderBtPivotDual(mkSummary, lmSummary) {
+  if (!mkSummary || !mkSummary.per_coin) return;
+  var box = document.getElementById('btPivot');
+  if (!box) return;
+  box.style.display = '';
+
+  // Header để rõ market vs limit
+  // Reuse renderBtPivot — nhưng render 2 lần với 2 wrappers
+  // Đơn giản: render market vào btPivot trước, sau đó append limit
+  var origHTML = box.innerHTML;
+  // Build wrapper với 2 sets
+  box.innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px">' +
+      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
+        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
+          '🟢 Per-coin (MARKET)' +
+        '</summary>' +
+        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotCoinMarket" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
+      '</details>' +
+      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
+        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
+          '🟠 Per-coin (LIMIT entry_opt)' +
+        '</summary>' +
+        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotCoinLimit" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
+      '</details>' +
+      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
+        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
+          '🟢 Per-strategy (MARKET)' +
+        '</summary>' +
+        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotStratMarket" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
+      '</details>' +
+      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
+        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
+          '🟠 Per-strategy (LIMIT entry_opt)' +
+        '</summary>' +
+        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotStratLimit" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
+      '</details>' +
+    '</div>';
+
+  _renderPivotTable('btPivotCoinMarket', mkSummary.per_coin, 'coin');
+  _renderPivotTable('btPivotCoinLimit',  lmSummary.per_coin, 'coin');
+  _renderPivotTable('btPivotStratMarket', mkSummary.per_strategy, 'strategy');
+  _renderPivotTable('btPivotStratLimit',  lmSummary.per_strategy, 'strategy');
+}
+
+// Helper: render 1 pivot table
+function _renderPivotTable(elId, rows, type) {
+  var el = document.getElementById(elId);
+  if (!el || !rows) return;
+  function wrColor(wr) {
+    if (wr === null || wr === undefined) return 'var(--muted)';
+    if (wr >= 55) return 'var(--long)';
+    if (wr >= 40) return 'var(--wait)';
+    return 'var(--short)';
+  }
+  function rColor(r) { return (r > 0) ? 'var(--long)' : (r < 0) ? 'var(--short)' : 'var(--muted)'; }
+  function fmtR(r) { return (r === null || r === undefined) ? '—' : (r > 0 ? '+' : '') + r; }
+  function fmtPct(p) { return (p === null || p === undefined) ? '—' : p + '%'; }
+  var verdictColor = {'TRADE':'var(--long)','AVOID':'var(--short)','NEUTRAL':'var(--wait)','INSUFFICIENT':'var(--muted2)','PENDING':'var(--muted)'};
+  var verdictLabel = {'TRADE':'✅ TRADE','AVOID':'❌ AVOID','NEUTRAL':'⚪ NEUTRAL','INSUFFICIENT':'⚠ LOW','PENDING':'⏳'};
+
+  var head, body;
+  if (type === 'coin') {
+    head = '<thead><tr>' +
+      '<th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Symbol</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Sig</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">W/L</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">WR</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">R</th>' +
+      '<th style="padding:6px 8px;text-align:center;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Verdict</th>' +
+      '</tr></thead>';
+    var sorted = (rows || []).slice().sort(function(a,b){ return -(a.total_r||0) - (-(b.total_r||0)); });
+    body = sorted.slice(0, 30).map(function(r) {
+      return '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">' +
+        '<td style="padding:5px 8px;font-family:var(--mono);font-weight:700">'+r.symbol+'</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+r.signals+'</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-size:10px"><span style="color:var(--long)">'+r.wins+'</span>/<span style="color:var(--short)">'+r.losses+'</span></td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+wrColor(r.wr)+'">'+fmtPct(r.wr)+'</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+rColor(r.total_r)+'">'+fmtR(r.total_r)+'</td>' +
+        '<td style="padding:5px 8px;text-align:center;font-size:10px;font-weight:700;color:'+verdictColor[r.verdict]+'">'+verdictLabel[r.verdict]+'</td>' +
+        '</tr>';
+    }).join('');
+  } else {
+    head = '<thead><tr>' +
+      '<th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Strategy</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Sig</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">W/L</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">WR</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Total R</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Hold</th>' +
+      '</tr></thead>';
+    body = (rows || []).map(function(r) {
+      return '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">' +
+        '<td style="padding:5px 8px;font-family:var(--mono);font-weight:700">'+r.strategy+'</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+r.signals+'</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-size:10px"><span style="color:var(--long)">'+r.wins+'</span>/<span style="color:var(--short)">'+r.losses+'</span></td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+wrColor(r.wr)+'">'+fmtPct(r.wr)+'</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-weight:700;color:'+rColor(r.total_r)+'">'+fmtR(r.total_r)+'</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-family:var(--mono);color:var(--muted)">'+(r.avg_holding_h !== null && r.avg_holding_h !== undefined ? r.avg_holding_h+'h' : '—')+'</td>' +
+        '</tr>';
+    }).join('');
+  }
+  el.innerHTML = head + '<tbody>'+body+'</tbody>';
+}
+
+// Render detail table với 2 columns: market result + limit result
+function renderBtTableDual(results, capital, leverage) {
+  var box = document.getElementById('btResults');
+  if (!box || !results || !results.length) return;
+  capital = capital || 1000; leverage = leverage || 5;
+
+  function fmt(v) { if(v===null||v===undefined) return '—'; var n=Math.abs(v); var d=n<0.0001?8:n<0.01?6:n<1?4:2; return Number(v).toFixed(d); }
+  function resBadge(bt) {
+    if (!bt) return '<span style="color:var(--muted)">—</span>';
+    var r = bt.bt_result;
+    var col = r==='WIN'?'var(--long)':r==='LOSS'?'var(--short)':r==='OPEN'?'var(--accent)':r==='EXPIRED'?'#ffaa00':r==='PENDING'?'var(--wait)':'var(--muted)';
+    var icon = r==='WIN'?'✅':r==='LOSS'?'❌':r==='OPEN'?'⏳':r==='EXPIRED'?'⏰':r==='PENDING'?'⏸':r==='ERROR'?'⚠':'?';
+    var pnl = (bt.bt_pnl_r !== null && bt.bt_pnl_r !== undefined) ? ' '+(bt.bt_pnl_r>0?'+':'')+bt.bt_pnl_r+'R' : '';
+    var fillNote = (bt.bt_used_entry === 'OPT' && bt.bt_fill_candles !== null && bt.bt_fill_candles !== undefined) ?
+      ' <span style="color:var(--muted2);font-size:9px">fill@'+bt.bt_fill_candles+'</span>' : '';
+    return '<span style="color:'+col+';font-weight:700;font-size:11px">'+icon+' '+r+pnl+'</span>'+fillNote;
+  }
+
+  var rows = results.map(function(r, i) {
+    var dirCol = r.direction === 'LONG' ? 'var(--long)' : r.direction === 'SHORT' ? 'var(--short)' : 'var(--wait)';
+    var confCol = r.confidence === 'HIGH' ? 'var(--long)' : r.confidence === 'MEDIUM' ? 'var(--accent)' : 'var(--muted)';
+    var time = (r.time || '').slice(5,16).replace('T',' ');
+    return '<tr style="border-bottom:1px solid var(--border);font-size:11px">' +
+      '<td style="padding:6px 8px;color:var(--muted);font-size:10px">'+(i+1)+'</td>' +
+      '<td style="padding:6px 8px;color:var(--muted);font-size:10px;font-family:var(--mono)">'+time+'</td>' +
+      '<td style="padding:6px 8px;font-family:var(--mono);font-weight:700">'+r.symbol+'</td>' +
+      '<td style="padding:6px 8px"><span style="color:'+dirCol+';font-weight:700">'+r.direction+'</span></td>' +
+      '<td style="padding:6px 8px"><span style="color:'+confCol+';font-size:10px;font-weight:700">'+r.confidence+'</span></td>' +
+      '<td style="padding:6px 8px;color:var(--muted);font-size:10px">'+(r.strategy||'—')+'</td>' +
+      '<td style="padding:6px 8px;font-family:var(--mono);font-size:10px;color:var(--muted)">'+fmt(r.entry)+'</td>' +
+      '<td style="padding:6px 8px;font-family:var(--mono);font-size:10px;color:#ffaa00">'+(r.entry_opt ? fmt(r.entry_opt) : '—')+'</td>' +
+      '<td style="padding:6px 8px;background:rgba(0,200,255,.04)">'+resBadge(r.market_bt)+'</td>' +
+      '<td style="padding:6px 8px;background:rgba(255,170,0,.04)">'+resBadge(r.limit_bt)+'</td>' +
+      '</tr>';
+  }).join('');
+
+  box.innerHTML =
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'+results.length+' signals — kết quả <b style="color:var(--accent)">MARKET</b> vs <b style="color:#ffaa00">LIMIT</b> side-by-side</div>' +
+    '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    '<thead><tr style="background:var(--bg3);border-bottom:1px solid var(--border)">' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">#</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">Time</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">Symbol</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">Dir</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">Conf</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">Strat</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">Entry</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:#ffaa00">Entry_opt</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--accent)">🟢 MARKET</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:#ffaa00">🟠 LIMIT</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
 function renderBtCompare(mk, lm, capital, leverage) {

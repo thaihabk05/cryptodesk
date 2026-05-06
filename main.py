@@ -1225,8 +1225,11 @@ def backtest_signal(signal: dict, bt_mode: str = "MARKET") -> dict:
     bt_mode:
       - "MARKET" (default, realistic): entry = sig_price, market fill ngay khi alert ra.
         Phản ánh đúng khi trader nhận signal và vào MARKET ngay.
-      - "LIMIT": entry = entry_opt (Fib pullback recommend) nếu hợp lệ, chờ giá chạm để fill.
-        Verify fill-rate của engine recommend pullback entry.
+      - "LIMIT": entry = entry_opt (Fib pullback recommend), SL giữ nguyên giá tuyệt đối
+        (gây sl_pct quá tight → SL dễ bị quét noise).
+      - "LIMIT_SAFE_SL": entry = entry_opt, SL = sl_opt (nới ra để giữ
+        sl_pct ≥ max(2%, 1.5×ATR) — verify giả thuyết rằng entry_opt có thể work
+        nếu SL đủ wide để tránh noise quét.
     """
     from core.binance import fetch_klines, fetch_volume_24h
     import pandas as pd
@@ -1250,7 +1253,7 @@ def backtest_signal(signal: dict, bt_mode: str = "MARKET") -> dict:
     bt_used_entry = "MARKET"
     entry = entry_orig
 
-    if bt_mode == "LIMIT":
+    if bt_mode in ("LIMIT", "LIMIT_SAFE_SL"):
         entry_opt_raw = signal.get("entry_opt")
         if entry_opt_raw is not None:
             try:
@@ -1263,6 +1266,28 @@ def backtest_signal(signal: dict, bt_mode: str = "MARKET") -> dict:
                 if diff_pct >= 0.05 and valid_side:
                     entry = entry_opt_val
                     bt_used_entry = "OPT"
+                    # LIMIT_SAFE_SL: dùng sl_opt (nới ra) thay sl
+                    if bt_mode == "LIMIT_SAFE_SL":
+                        sl_opt_raw = signal.get("sl_opt")
+                        if sl_opt_raw is not None:
+                            try:
+                                sl = float(sl_opt_raw)
+                                bt_used_entry = "OPT_SAFE_SL"
+                            except (TypeError, ValueError):
+                                pass
+                        else:
+                            # Fallback: compute trên-the-fly nếu signal cũ chưa có sl_opt
+                            min_sl_pct = 2.0  # default 2%
+                            if direction == "LONG":
+                                sl_calc = entry * (1 - min_sl_pct / 100)
+                                if sl_calc < sl:
+                                    sl = sl_calc
+                                    bt_used_entry = "OPT_SAFE_SL"
+                            else:
+                                sl_calc = entry * (1 + min_sl_pct / 100)
+                                if sl_calc > sl:
+                                    sl = sl_calc
+                                    bt_used_entry = "OPT_SAFE_SL"
             except (TypeError, ValueError):
                 pass
 
@@ -3486,15 +3511,17 @@ def _extract_bt_fields(result):
 
 
 def backtest_signal_dual(signal):
-    """Backtest 1 signal cho CẢ 2 modes: MARKET + LIMIT.
-    Trả về single dict với field 'market_bt' và 'limit_bt'.
+    """Backtest 1 signal cho 3 modes: MARKET + LIMIT + LIMIT_SAFE_SL.
+    Trả về single dict với fields 'market_bt', 'limit_bt', 'limit_safe_bt'.
     """
     market_result = backtest_signal(signal, "MARKET")
     limit_result  = backtest_signal(signal, "LIMIT")
+    safe_result   = backtest_signal(signal, "LIMIT_SAFE_SL")
     return {
         **signal,
-        "market_bt": _extract_bt_fields(market_result),
-        "limit_bt":  _extract_bt_fields(limit_result),
+        "market_bt":     _extract_bt_fields(market_result),
+        "limit_bt":      _extract_bt_fields(limit_result),
+        "limit_safe_bt": _extract_bt_fields(safe_result),
     }
 
 
@@ -3751,19 +3778,24 @@ def run_backtest():
     }
 
     if bt_mode == "DUAL":
-        # Dual summary: market + limit side-by-side
+        # Tri-summary: market + limit + limit_safe_sl side-by-side
         sm_market = _compute_summary_for_mode(results, source_key="market_bt")
         sm_limit  = _compute_summary_for_mode(results, source_key="limit_bt")
+        sm_safe   = _compute_summary_for_mode(results, source_key="limit_safe_bt")
         pc_market, ps_market = _aggregate_pivot(results, source_key="market_bt")
         pc_limit,  ps_limit  = _aggregate_pivot(results, source_key="limit_bt")
+        pc_safe,   ps_safe   = _aggregate_pivot(results, source_key="limit_safe_bt")
         sm_market["per_coin"]     = pc_market
         sm_market["per_strategy"] = ps_market
         sm_limit["per_coin"]      = pc_limit
         sm_limit["per_strategy"]  = ps_limit
+        sm_safe["per_coin"]       = pc_safe
+        sm_safe["per_strategy"]   = ps_safe
         summary = {
             **base_meta,
-            "market": sm_market,
-            "limit":  sm_limit,
+            "market":     sm_market,
+            "limit":      sm_limit,
+            "limit_safe": sm_safe,
             # Backward compat root-level fields = MARKET (vì MARKET là realistic default)
             "wins":     sm_market["wins"],
             "losses":   sm_market["losses"],
@@ -3805,15 +3837,19 @@ def run_backtest_signals():
     if bt_mode == "DUAL":
         sm_market = _compute_summary_for_mode(results, source_key="market_bt")
         sm_limit  = _compute_summary_for_mode(results, source_key="limit_bt")
+        sm_safe   = _compute_summary_for_mode(results, source_key="limit_safe_bt")
         pc_market, ps_market = _aggregate_pivot(results, source_key="market_bt")
         pc_limit,  ps_limit  = _aggregate_pivot(results, source_key="limit_bt")
+        pc_safe,   ps_safe   = _aggregate_pivot(results, source_key="limit_safe_bt")
         sm_market["per_coin"]     = pc_market
         sm_market["per_strategy"] = ps_market
         sm_limit["per_coin"]      = pc_limit
         sm_limit["per_strategy"]  = ps_limit
+        sm_safe["per_coin"]       = pc_safe
+        sm_safe["per_strategy"]   = ps_safe
         summary = {
             "total": len(signals), "bt_mode": "DUAL",
-            "market": sm_market, "limit": sm_limit,
+            "market": sm_market, "limit": sm_limit, "limit_safe": sm_safe,
             "wins":     sm_market["wins"], "losses": sm_market["losses"],
             "closed":   sm_market["closed"], "win_rate": sm_market["win_rate"],
             "total_r":  sm_market["total_r"], "expectancy": sm_market["expectancy"],

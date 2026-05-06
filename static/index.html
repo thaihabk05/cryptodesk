@@ -4127,8 +4127,9 @@ function runBacktest() {
     if (data.error) { showError(data.error); return; }
     _btLastResults = data.results;
     _btLastSummary = data.summary;
-    var mkSummary = data.summary.market || {};
-    var lmSummary = data.summary.limit  || {};
+    var mkSummary = data.summary.market     || {};
+    var lmSummary = data.summary.limit      || {};
+    var sfSummary = data.summary.limit_safe || {};
 
     // 1. COMPARE panel — top-level stats side-by-side
     renderBtCompareDual(data.summary, capital, leverage);
@@ -4141,8 +4142,8 @@ function runBacktest() {
     renderBtSummary(marketAsTop, data.results, capital, leverage);
     renderBtResultSummary(data.results, marketAsTop, capital, leverage);
 
-    // 3. Pivot tables — render 2 sets (Market vs Limit)
-    renderBtPivotDual(mkSummary, lmSummary);
+    // 3. Pivot tables — render 3 sets (Market vs Limit vs LIMIT_SAFE_SL)
+    renderBtPivotDual(mkSummary, lmSummary, sfSummary);
 
     // 4. Detail table — render dual columns (market + limit results per row)
     renderBtTableDual(data.results, capital, leverage);
@@ -4167,112 +4168,108 @@ function runBacktest() {
   }).finally(finish);
 }
 
-// Render compare panel cho DUAL response (1 API call, summary.market + summary.limit)
+// Render compare panel cho DUAL response (1 API call, summary.market + summary.limit + summary.limit_safe)
 function renderBtCompareDual(summary, capital, leverage) {
   var el = document.getElementById('btCompare');
   if (!el) return;
-  var sM = summary.market || {};
-  var sL = summary.limit  || {};
-  var fs = sL.fill_stats || {};
+  var sM = summary.market     || {};
+  var sL = summary.limit      || {};
+  var sS = summary.limit_safe || {};
+  var fsL = sL.fill_stats || {};
+  var fsS = sS.fill_stats || {};
 
-  function statRow(label, valM, valL, tooltip) {
+  function statRow(label, valM, valL, valS, tooltip) {
     return '<tr title="'+(tooltip||'')+'">' +
       '<td style="padding:6px 12px;color:var(--muted);font-size:12px">'+label+'</td>' +
       '<td style="padding:6px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+valM+'</td>' +
       '<td style="padding:6px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+valL+'</td>' +
+      '<td style="padding:6px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+valS+'</td>' +
       '</tr>';
   }
-  function pickBetter(m, l, higherBetter) {
-    if (m === l) return [m, l];
-    var betterMk = higherBetter ? (m > l) : (m < l);
-    var mkColor = betterMk ? 'var(--long)' : 'var(--muted)';
-    var lmColor = betterMk ? 'var(--muted)' : 'var(--long)';
-    return [
-      '<span style="color:'+mkColor+'">'+m+'</span>',
-      '<span style="color:'+lmColor+'">'+l+'</span>'
-    ];
+  function pickBest3(m, l, s, higherBetter) {
+    var arr = [m, l, s];
+    var best = higherBetter ? Math.max.apply(null, arr) : Math.min.apply(null, arr);
+    return arr.map(function(v){
+      var col = (v === best && arr.filter(function(x){return x===best;}).length === 1) ? 'var(--long)' : 'var(--muted)';
+      return '<span style="color:'+col+'">'+v+'</span>';
+    });
   }
 
-  var wrPair     = pickBetter(sM.win_rate || 0, sL.win_rate || 0, true);
-  var totalRPair = pickBetter(sM.total_r || 0, sL.total_r || 0, true);
-  var expectPair = pickBetter(sM.expectancy || 0, sL.expectancy || 0, true);
-  var avgRPair   = pickBetter(sM.avg_r || 0, sL.avg_r || 0, true);
+  var wrTriplet     = pickBest3(sM.win_rate || 0, sL.win_rate || 0, sS.win_rate || 0, true);
+  var totalRTriplet = pickBest3(sM.total_r || 0, sL.total_r || 0, sS.total_r || 0, true);
+  var expectTriplet = pickBest3(sM.expectancy || 0, sL.expectancy || 0, sS.expectancy || 0, true);
+  var avgRTriplet   = pickBest3(sM.avg_r || 0, sL.avg_r || 0, sS.avg_r || 0, true);
 
   el.innerHTML =
     '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">' +
-    '⚖️ DUAL — MARKET (vào ngay sig_price) vs LIMIT (chờ entry_opt Fib)</div>' +
+    '⚖️ DUAL — 3 entry strategies side-by-side</div>' +
     '<table style="width:100%;border-collapse:collapse">' +
       '<thead><tr style="border-bottom:1px solid var(--border)">' +
         '<th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600">Metric</th>' +
-        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--accent);font-weight:700">🟢 MARKET</th>' +
-        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:#ffaa00;font-weight:700">🟠 LIMIT (entry_opt)</th>' +
+        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--accent);font-weight:700" title="Vào ngay khi alert ra (sig_price)">🟢 MARKET</th>' +
+        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:#ffaa00;font-weight:700" title="Chờ pullback Fib với SL gốc — SL gần entry, dễ noise quét">🟠 LIMIT (orig SL)</th>' +
+        '<th style="padding:8px 12px;text-align:right;font-size:11px;color:#a78bfa;font-weight:700" title="entry_opt + sl_opt nới ra (≥2% hoặc 1.5×ATR) để tránh noise">🟣 LIMIT_SAFE_SL</th>' +
       '</tr></thead><tbody>' +
-      statRow('Total signals', sM.total || 0, sL.total || 0) +
-      statRow('Closed (W+L)',  sM.closed || 0, sL.closed || 0) +
-      statRow('Win Rate',      wrPair[0]+'%', wrPair[1]+'%', 'Higher is better') +
-      statRow('Wins / Losses', (sM.wins||0)+' / '+(sM.losses||0), (sL.wins||0)+' / '+(sL.losses||0)) +
+      statRow('Total signals', sM.total || 0, sL.total || 0, sS.total || 0) +
+      statRow('Closed (W+L)',  sM.closed || 0, sL.closed || 0, sS.closed || 0) +
+      statRow('Win Rate',      wrTriplet[0]+'%', wrTriplet[1]+'%', wrTriplet[2]+'%', 'Higher is better') +
+      statRow('Wins / Losses',
+        (sM.wins||0)+' / '+(sM.losses||0),
+        (sL.wins||0)+' / '+(sL.losses||0),
+        (sS.wins||0)+' / '+(sS.losses||0)) +
       statRow('OPEN / PENDING / EXPIRED',
         (sM.opens||0)+' / '+(sM.pending||0)+' / '+(sM.expired||0),
-        (sL.opens||0)+' / '+(sL.pending||0)+' / '+(sL.expired||0)) +
-      statRow('Total R',       totalRPair[0], totalRPair[1]) +
-      statRow('Avg R',         avgRPair[0], avgRPair[1]) +
-      statRow('Expectancy',    expectPair[0], expectPair[1]) +
-      statRow('LIMIT fill rate', '— (always fills 100%)',
-        (fs.fill_rate_pct !== null && fs.fill_rate_pct !== undefined ?
-          fs.fill_rate_pct + '% ('+fs.filled+'/'+fs.with_entry_opt+')' : '—'),
+        (sL.opens||0)+' / '+(sL.pending||0)+' / '+(sL.expired||0),
+        (sS.opens||0)+' / '+(sS.pending||0)+' / '+(sS.expired||0)) +
+      statRow('Total R',       totalRTriplet[0], totalRTriplet[1], totalRTriplet[2]) +
+      statRow('Avg R',         avgRTriplet[0],   avgRTriplet[1],   avgRTriplet[2]) +
+      statRow('Expectancy',    expectTriplet[0], expectTriplet[1], expectTriplet[2]) +
+      statRow('Fill rate',
+        '100% (always)',
+        (fsL.fill_rate_pct !== null && fsL.fill_rate_pct !== undefined ?
+          fsL.fill_rate_pct + '% ('+fsL.filled+'/'+fsL.with_entry_opt+')' : '—'),
+        (fsS.fill_rate_pct !== null && fsS.fill_rate_pct !== undefined ?
+          fsS.fill_rate_pct + '% ('+fsS.filled+'/'+fsS.with_entry_opt+')' : '—'),
         'Tỉ lệ entry_opt fill được trong 8h timeout') +
     '</tbody></table>' +
-    '<div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.5">' +
-    '💡 <b>MARKET</b> = vào ngay khi alert ra (sig_price). ' +
-    '<b>LIMIT</b> = chờ pullback Fib (entry_opt) — RR đẹp hơn nhưng chỉ fill khi giá quay đầu. ' +
-    'Bảng dưới hiển thị chi tiết kết quả của <b>cả 2 entries cho từng signal</b>.</div>';
+    '<div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.6">' +
+    '💡 <b>MARKET</b> = vào ngay (sig_price). ' +
+    '<b>LIMIT</b> = chờ pullback entry_opt với SL gốc (SL gần → dễ noise quét). ' +
+    '<b>LIMIT_SAFE_SL</b> = entry_opt + SL nới ra (sl_pct ≥ max(2%, 1.5×ATR)) để verify giả thuyết "entry_opt work nếu SL đủ rộng".</div>';
   el.style.display = '';
 }
 
-// Render pivot dual cho cả MARKET + LIMIT side-by-side
-function renderBtPivotDual(mkSummary, lmSummary) {
+// Render pivot dual cho 3 modes (MARKET + LIMIT + LIMIT_SAFE_SL)
+function renderBtPivotDual(mkSummary, lmSummary, sfSummary) {
   if (!mkSummary || !mkSummary.per_coin) return;
   var box = document.getElementById('btPivot');
   if (!box) return;
   box.style.display = '';
+  sfSummary = sfSummary || {};
 
-  // Header để rõ market vs limit
-  // Reuse renderBtPivot — nhưng render 2 lần với 2 wrappers
-  // Đơn giản: render market vào btPivot trước, sau đó append limit
-  var origHTML = box.innerHTML;
-  // Build wrapper với 2 sets
+  function pivotCard(title, color, tableId) {
+    return '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
+      '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:'+color+';user-select:none">' + title + '</summary>' +
+      '<div style="overflow-x:auto;margin-top:10px"><table id="'+tableId+'" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
+    '</details>';
+  }
+
   box.innerHTML =
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px">' +
-      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
-        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
-          '🟢 Per-coin (MARKET)' +
-        '</summary>' +
-        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotCoinMarket" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
-      '</details>' +
-      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
-        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
-          '🟠 Per-coin (LIMIT entry_opt)' +
-        '</summary>' +
-        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotCoinLimit" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
-      '</details>' +
-      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
-        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
-          '🟢 Per-strategy (MARKET)' +
-        '</summary>' +
-        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotStratMarket" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
-      '</details>' +
-      '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
-        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
-          '🟠 Per-strategy (LIMIT entry_opt)' +
-        '</summary>' +
-        '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotStratLimit" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
-      '</details>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px">' +
+      pivotCard('🟢 Per-coin (MARKET)',          'var(--accent)', 'btPivotCoinMarket') +
+      pivotCard('🟠 Per-coin (LIMIT)',           '#ffaa00',       'btPivotCoinLimit') +
+      pivotCard('🟣 Per-coin (LIMIT_SAFE_SL)',   '#a78bfa',       'btPivotCoinSafe') +
+      pivotCard('🟢 Per-strategy (MARKET)',      'var(--accent)', 'btPivotStratMarket') +
+      pivotCard('🟠 Per-strategy (LIMIT)',       '#ffaa00',       'btPivotStratLimit') +
+      pivotCard('🟣 Per-strategy (LIMIT_SAFE_SL)','#a78bfa',      'btPivotStratSafe') +
     '</div>';
 
-  _renderPivotTable('btPivotCoinMarket', mkSummary.per_coin, 'coin');
-  _renderPivotTable('btPivotCoinLimit',  lmSummary.per_coin, 'coin');
+  _renderPivotTable('btPivotCoinMarket',  mkSummary.per_coin, 'coin');
+  _renderPivotTable('btPivotCoinLimit',   lmSummary.per_coin, 'coin');
+  _renderPivotTable('btPivotCoinSafe',    sfSummary.per_coin || [], 'coin');
   _renderPivotTable('btPivotStratMarket', mkSummary.per_strategy, 'strategy');
   _renderPivotTable('btPivotStratLimit',  lmSummary.per_strategy, 'strategy');
+  _renderPivotTable('btPivotStratSafe',   sfSummary.per_strategy || [], 'strategy');
 }
 
 // Helper: render 1 pivot table
@@ -4368,11 +4365,12 @@ function renderBtTableDual(results, capital, leverage) {
       '<td style="padding:6px 8px;font-family:var(--mono);font-size:10px;color:#ffaa00">'+(r.entry_opt ? fmt(r.entry_opt) : '—')+'</td>' +
       '<td style="padding:6px 8px;background:rgba(0,200,255,.04)">'+resBadge(r.market_bt)+'</td>' +
       '<td style="padding:6px 8px;background:rgba(255,170,0,.04)">'+resBadge(r.limit_bt)+'</td>' +
+      '<td style="padding:6px 8px;background:rgba(167,139,250,.04)">'+resBadge(r.limit_safe_bt)+'</td>' +
       '</tr>';
   }).join('');
 
   box.innerHTML =
-    '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'+results.length+' signals — kết quả <b style="color:var(--accent)">MARKET</b> vs <b style="color:#ffaa00">LIMIT</b> side-by-side</div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'+results.length+' signals — kết quả <b style="color:var(--accent)">MARKET</b> vs <b style="color:#ffaa00">LIMIT</b> vs <b style="color:#a78bfa">LIMIT_SAFE_SL</b> side-by-side</div>' +
     '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
     '<thead><tr style="background:var(--bg3);border-bottom:1px solid var(--border)">' +
       '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--muted)">#</th>' +
@@ -4385,6 +4383,7 @@ function renderBtTableDual(results, capital, leverage) {
       '<th style="padding:8px 8px;text-align:left;font-size:10px;color:#ffaa00">Entry_opt</th>' +
       '<th style="padding:8px 8px;text-align:left;font-size:10px;color:var(--accent)">🟢 MARKET</th>' +
       '<th style="padding:8px 8px;text-align:left;font-size:10px;color:#ffaa00">🟠 LIMIT</th>' +
+      '<th style="padding:8px 8px;text-align:left;font-size:10px;color:#a78bfa">🟣 SAFE_SL</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 

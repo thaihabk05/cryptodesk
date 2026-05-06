@@ -508,13 +508,34 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
     entry_opt, entry_opt_label = _calc_entry_opt_h1(price, fib_h1_ret, ma34_h1, ma89_h1, direction) \
         if direction in ("LONG", "SHORT") else (None, None)
     entry_opt_rr = None
+    sl_opt = None             # SL safe khi dùng entry_opt (giữ min sl_pct ≥ 2% hoặc 1.5×ATR)
+    sl_opt_pct = None
+    tp1_opt_pct = None
+    entry_opt_safe_rr = None  # RR khi dùng (entry_opt + sl_opt)
     if entry_opt is not None:
         try:
             opt_sl_pct  = abs(entry_opt - sl_price) / entry_opt * 100
             opt_tp1_pct = abs(tp1 - entry_opt) / entry_opt * 100
             entry_opt_rr = round(opt_tp1_pct / opt_sl_pct, 2) if opt_sl_pct > 0 else None
+
+            # Compute sl_opt với min noise buffer
+            atr_pct_h1 = (atr_h1 / price * 100) if (atr_h1 and price) else 0
+            min_sl_pct = max(2.0, atr_pct_h1 * 1.5)
+            if direction == "LONG":
+                sl_opt = entry_opt * (1 - min_sl_pct / 100)
+                # Chỉ override SL nếu sl_opt < sl_price (nghĩa là SL gốc đã quá tight)
+                if sl_opt > sl_price:
+                    sl_opt = sl_price  # giữ SL gốc nếu nó đã đủ rộng
+            else:  # SHORT
+                sl_opt = entry_opt * (1 + min_sl_pct / 100)
+                if sl_opt < sl_price:
+                    sl_opt = sl_price
+            sl_opt = smart_round(sl_opt)
+            sl_opt_pct  = round(abs(entry_opt - sl_opt) / entry_opt * 100, 4)
+            tp1_opt_pct = round(abs(tp1 - entry_opt) / entry_opt * 100, 4)
+            entry_opt_safe_rr = round(tp1_opt_pct / sl_opt_pct, 2) if sl_opt_pct > 0 else None
         except Exception:
-            entry_opt_rr = None
+            pass
 
     # Drop nếu R:R < 1
     if direction in ("LONG", "SHORT") and rr < 1.5:
@@ -644,6 +665,10 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
         "entry_opt":     entry_opt,
         "entry_opt_label": entry_opt_label,
         "entry_opt_rr":  entry_opt_rr,
+        "sl_opt":        sl_opt,
+        "sl_opt_pct":    sl_opt_pct,
+        "tp1_opt_pct":   tp1_opt_pct,
+        "entry_opt_safe_rr": entry_opt_safe_rr,
         "sl":            sl_price,
         "tp1":           tp1,
         "tp2":           tp2,

@@ -860,14 +860,32 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
 
     # R:R với entry optimal (nếu có) — SL tính lại từ entry_opt
     entry_opt_rr = None
-    if entry_opt and direction == "LONG" and entry_opt < entry:
+    sl_opt = None
+    sl_opt_pct = None
+    tp1_opt_pct = None
+    entry_opt_safe_rr = None
+    _opt_valid = (entry_opt and direction == "LONG"  and entry_opt < entry) or \
+                 (entry_opt and direction == "SHORT" and entry_opt > entry)
+    if _opt_valid:
         opt_sl_pct  = abs(entry_opt - sl_price) / entry_opt * 100
         opt_tp1_pct = abs(tp1 - entry_opt) / entry_opt * 100
         entry_opt_rr = round(opt_tp1_pct / opt_sl_pct, 2) if opt_sl_pct > 0 else None
-    elif entry_opt and direction == "SHORT" and entry_opt > entry:
-        opt_sl_pct  = abs(entry_opt - sl_price) / entry_opt * 100
-        opt_tp1_pct = abs(tp1 - entry_opt) / entry_opt * 100
-        entry_opt_rr = round(opt_tp1_pct / opt_sl_pct, 2) if opt_sl_pct > 0 else None
+        # Compute sl_opt (safe SL) — giữ min sl_pct ≥ max(2%, 1.5×ATR)
+        try:
+            atr_pct_h1 = (atr_h1 / price * 100) if (atr_h1 and price) else 0
+            min_sl_pct = max(2.0, atr_pct_h1 * 1.5)
+            if direction == "LONG":
+                sl_opt_calc = entry_opt * (1 - min_sl_pct / 100)
+                sl_opt = sl_opt_calc if sl_opt_calc < sl_price else sl_price
+            else:
+                sl_opt_calc = entry_opt * (1 + min_sl_pct / 100)
+                sl_opt = sl_opt_calc if sl_opt_calc > sl_price else sl_price
+            sl_opt = smart_round(sl_opt)
+            sl_opt_pct  = round(abs(entry_opt - sl_opt) / entry_opt * 100, 4)
+            tp1_opt_pct = round(abs(tp1 - entry_opt) / entry_opt * 100, 4)
+            entry_opt_safe_rr = round(tp1_opt_pct / sl_opt_pct, 2) if sl_opt_pct > 0 else None
+        except Exception:
+            pass
 
     # Update checklist với rr thực
     entry_checklist, entry_verdict = build_entry_checklist(
@@ -962,6 +980,10 @@ def fam_analyze(symbol: str, cfg: dict) -> dict:
         "entry_opt":        entry_opt,
         "entry_opt_label":  entry_opt_label,
         "entry_opt_rr":     entry_opt_rr,
+        "sl_opt":           sl_opt,
+        "sl_opt_pct":       sl_opt_pct,
+        "tp1_opt_pct":      tp1_opt_pct,
+        "entry_opt_safe_rr": entry_opt_safe_rr,
     }
     _size = recommended_size(confidence, rr, direction,
                               funding=funding, atr_state=atr_ctx.get("atr_state"))

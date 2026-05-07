@@ -15,7 +15,8 @@
   },
   "scan_modes": [
     "TREND",
-    "RANGE_SCALP"
+    "RANGE_SCALP",
+    "REVERSAL"
   ],
   "range_override": {},
   "interval_minutes": 15,

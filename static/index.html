@@ -4339,7 +4339,7 @@ function renderBtTableDual(results, capital, leverage) {
   capital = capital || 1000; leverage = leverage || 5;
 
   function fmt(v) { if(v===null||v===undefined) return '—'; var n=Math.abs(v); var d=n<0.0001?8:n<0.01?6:n<1?4:2; return Number(v).toFixed(d); }
-  function resBadge(bt) {
+  function resBadge(bt, parent) {
     if (!bt) return '<span style="color:var(--muted)">—</span>';
     var r = bt.bt_result;
     var col = r==='WIN'?'var(--long)':r==='LOSS'?'var(--short)':r==='OPEN'?'var(--accent)':r==='EXPIRED'?'#ffaa00':r==='PENDING'?'var(--wait)':'var(--muted)';
@@ -4347,7 +4347,27 @@ function renderBtTableDual(results, capital, leverage) {
     var pnl = (bt.bt_pnl_r !== null && bt.bt_pnl_r !== undefined) ? ' '+(bt.bt_pnl_r>0?'+':'')+bt.bt_pnl_r+'R' : '';
     var fillNote = (bt.bt_used_entry === 'OPT' && bt.bt_fill_candles !== null && bt.bt_fill_candles !== undefined) ?
       ' <span style="color:var(--muted2);font-size:9px">fill@'+bt.bt_fill_candles+'</span>' : '';
-    return '<span style="color:'+col+';font-weight:700;font-size:11px">'+icon+' '+r+pnl+'</span>'+fillNote;
+
+    // Realized USD (WIN/LOSS) — "lãi nếu đã close"
+    var usdLine = '';
+    var slPct = parent && parent.sl_pct;
+    if ((r==='WIN' || r==='LOSS') && bt.bt_pnl_r !== null && bt.bt_pnl_r !== undefined && slPct) {
+      var usdR = bt.bt_pnl_r * (slPct/100) * capital * leverage;
+      var sgn  = usdR >= 0 ? '+' : '−';
+      usdLine = '<div style="font-size:10px;font-weight:700;color:'+col+';font-family:var(--mono)">'+sgn+Math.abs(usdR).toFixed(2)+'$</div>';
+    }
+    // Unrealized USD (OPEN/PENDING) — "lãi tạm tính"
+    else if ((r==='OPEN' || r==='PENDING') && bt.bt_unrealized_pct !== null && bt.bt_unrealized_pct !== undefined) {
+      var pct = bt.bt_unrealized_pct;
+      var usdU = pct/100 * capital * leverage;
+      var cU   = pct >= 0 ? 'var(--long)' : 'var(--short)';
+      var sU   = usdU >= 0 ? '+' : '−';
+      var rU   = (bt.bt_unrealized_r !== null && bt.bt_unrealized_r !== undefined)
+                  ? ' <span style="color:var(--muted2);font-size:9px">('+(bt.bt_unrealized_r>0?'+':'')+bt.bt_unrealized_r+'R)</span>' : '';
+      usdLine = '<div style="font-size:10px;font-weight:700;color:'+cU+';font-family:var(--mono)">'+sU+Math.abs(usdU).toFixed(2)+'$ <span style="color:var(--muted2);font-weight:500">tạm tính</span>'+rU+'</div>';
+    }
+
+    return '<span style="color:'+col+';font-weight:700;font-size:11px">'+icon+' '+r+pnl+'</span>'+fillNote+usdLine;
   }
 
   var rows = results.map(function(r, i) {
@@ -4363,9 +4383,9 @@ function renderBtTableDual(results, capital, leverage) {
       '<td style="padding:6px 8px;color:var(--muted);font-size:10px">'+(r.strategy||'—')+'</td>' +
       '<td style="padding:6px 8px;font-family:var(--mono);font-size:10px;color:var(--muted)">'+fmt(r.entry)+'</td>' +
       '<td style="padding:6px 8px;font-family:var(--mono);font-size:10px;color:#ffaa00">'+(r.entry_opt ? fmt(r.entry_opt) : '—')+'</td>' +
-      '<td style="padding:6px 8px;background:rgba(0,200,255,.04)">'+resBadge(r.market_bt)+'</td>' +
-      '<td style="padding:6px 8px;background:rgba(255,170,0,.04)">'+resBadge(r.limit_bt)+'</td>' +
-      '<td style="padding:6px 8px;background:rgba(167,139,250,.04)">'+resBadge(r.limit_safe_bt)+'</td>' +
+      '<td style="padding:6px 8px;background:rgba(0,200,255,.04)">'+resBadge(r.market_bt, r)+'</td>' +
+      '<td style="padding:6px 8px;background:rgba(255,170,0,.04)">'+resBadge(r.limit_bt, r)+'</td>' +
+      '<td style="padding:6px 8px;background:rgba(167,139,250,.04)">'+resBadge(r.limit_safe_bt, r)+'</td>' +
       '</tr>';
   }).join('');
 
@@ -4538,6 +4558,33 @@ function renderBtPivot(summary) {
   if (!box) return;
   if (!pc.length && !ps.length) { box.style.display = 'none'; return; }
   box.style.display = '';
+
+  // Nếu trước đó chạy DUAL → btPivot đã bị renderBtPivotDual ghi đè, thiếu các element single-mode.
+  // Restore markup gốc khi cần để tránh "Cannot set properties of null".
+  if (!document.getElementById('btPivotCoin') || !document.getElementById('btPivotStrat')) {
+    box.innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px">' +
+        '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
+          '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">' +
+            '📊 Per-coin breakdown' +
+            '<span id="btPivotCoinMeta" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px"></span>' +
+          '</summary>' +
+          '<div style="margin-top:10px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted)">' +
+            'Min signals: ' +
+            '<input id="btPivotMinSignals" type="number" value="3" min="1" max="50" ' +
+              'style="width:50px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none" ' +
+              'onchange="renderBtPivot(_btLastSummary)">' +
+            '<span style="color:var(--muted2)">· click cột để sort</span>' +
+          '</div>' +
+          '<div style="overflow-x:auto;margin-top:8px"><table id="btPivotCoin" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
+          '<div id="btPivotCoinFooter" style="margin-top:6px;font-size:10px;color:var(--muted2)"></div>' +
+        '</details>' +
+        '<details open style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px">' +
+          '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);user-select:none">🎯 Per-strategy breakdown</summary>' +
+          '<div style="overflow-x:auto;margin-top:10px"><table id="btPivotStrat" style="width:100%;border-collapse:collapse;font-size:12px"></table></div>' +
+        '</details>' +
+      '</div>';
+  }
 
   // ── Per-coin table ──
   var minSig = parseInt((document.getElementById('btPivotMinSignals') || {}).value || 3) || 3;

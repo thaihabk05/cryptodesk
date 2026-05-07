@@ -5714,10 +5714,34 @@ function exportAnalysis() {
   var leverage = parseFloat(document.getElementById('btLeverage').value) || 5;
   var s = _btLastSummary;
 
+  // DUAL mode: bt_* fields nằm ở r.market_bt / r.limit_bt / r.limit_safe_bt.
+  // Để analysis logic dùng MARKET (realistic) làm primary, ta lift bt_* lên root cho
+  // mỗi result. Nếu single mode, fields đã ở root → no-op.
+  var isDual = _btLastResults.length > 0 && _btLastResults[0].market_bt !== undefined;
+  var resultsForAnalysis = isDual
+    ? _btLastResults.map(function(r) {
+        var mk = r.market_bt || {};
+        return Object.assign({}, r, {
+          bt_result:        mk.bt_result,
+          bt_pnl_r:         mk.bt_pnl_r,
+          bt_candles:       mk.bt_candles,
+          bt_note:          mk.bt_note,
+          bt_exit_reason:   mk.bt_exit_reason,
+          bt_fill_candles:  mk.bt_fill_candles,
+          bt_used_entry:    mk.bt_used_entry,
+          bt_unrealized_pct:mk.bt_unrealized_pct,
+          bt_unrealized_r:  mk.bt_unrealized_r,
+        });
+      })
+    : _btLastResults;
+
+  // Summary scalar fields cũng nested khác trong DUAL → ưu tiên market_bt summary
+  var summaryForExport = (isDual && s && s.market) ? s.market : (s || {});
+
   // Feature analysis
-  var closed  = _btLastResults.filter(function(r){ return r.bt_result==='WIN'||r.bt_result==='LOSS'; });
-  var wins    = _btLastResults.filter(function(r){ return r.bt_result==='WIN'; });
-  var losses  = _btLastResults.filter(function(r){ return r.bt_result==='LOSS'; });
+  var closed  = resultsForAnalysis.filter(function(r){ return r.bt_result==='WIN'||r.bt_result==='LOSS'; });
+  var wins    = resultsForAnalysis.filter(function(r){ return r.bt_result==='WIN'; });
+  var losses  = resultsForAnalysis.filter(function(r){ return r.bt_result==='LOSS'; });
 
   function avg(arr, fn) {
     var v = arr.map(fn).filter(function(x){ return x!=null&&!isNaN(x); });
@@ -5732,6 +5756,41 @@ function exportAnalysis() {
     if (r.bt_result==='WIN') symStats[sym].w++;
     else symStats[sym].l++;
     if (r.rr) symStats[sym].rrs.push(r.rr);
+  });
+
+  // Strategy stats — quan trọng cho phân tích filter
+  var stratStats = {};
+  closed.forEach(function(r) {
+    var st = r.strategy || 'UNKNOWN';
+    if (!stratStats[st]) stratStats[st] = {w:0,l:0,sumR:0};
+    if (r.bt_result==='WIN') stratStats[st].w++; else stratStats[st].l++;
+    if (typeof r.bt_pnl_r === 'number') stratStats[st].sumR += r.bt_pnl_r;
+  });
+  Object.keys(stratStats).forEach(function(k){
+    var b = stratStats[k]; var n = b.w+b.l;
+    b.n=n; b.wr=n?Math.round(b.w/n*100):null; b.sumR=Math.round(b.sumR*100)/100;
+  });
+
+  // Score buckets — score là indicator chính, cần bucket để biết ngưỡng tối ưu
+  var scoreBuckets = {};
+  closed.forEach(function(r) {
+    var sc = r.score == null ? 'unknown' : String(r.score);
+    if (!scoreBuckets[sc]) scoreBuckets[sc] = {w:0,l:0,sumR:0};
+    if (r.bt_result==='WIN') scoreBuckets[sc].w++; else scoreBuckets[sc].l++;
+    if (typeof r.bt_pnl_r === 'number') scoreBuckets[sc].sumR += r.bt_pnl_r;
+  });
+  Object.keys(scoreBuckets).forEach(function(k){
+    var b = scoreBuckets[k]; var n = b.w+b.l;
+    b.n=n; b.wr=n?Math.round(b.w/n*100):null; b.sumR=Math.round(b.sumR*100)/100;
+  });
+
+  // BTC sentiment buckets — filter quan trọng cho LONG/SHORT
+  var btcBuckets = {};
+  closed.forEach(function(r) {
+    var bs = r.btc_sentiment || 'UNKNOWN';
+    if (!btcBuckets[bs]) btcBuckets[bs] = {long_w:0,long_l:0,short_w:0,short_l:0};
+    var k = (r.direction==='LONG'?'long_':'short_') + (r.bt_result==='WIN'?'w':'l');
+    btcBuckets[bs][k]++;
   });
 
   // Direction stats
@@ -5781,27 +5840,31 @@ function exportAnalysis() {
     generated_at:   new Date().toISOString(),
     algo_version:   algoVer,
     period:         document.getElementById('btTimeRange') ? document.getElementById('btTimeRange').value : 'unknown',
+    bt_mode:        isDual ? 'DUAL (analysis dùng MARKET)' : (s && s.bt_mode) || 'SINGLE',
     summary: {
-      total_signals:  _btLastResults.length,
+      total_signals:  resultsForAnalysis.length,
       closed:         closed.length,
       wins:           wins.length,
       losses:         losses.length,
-      win_rate:       s.win_rate,
-      total_r:        s.total_r,
-      expectancy:     s.expectancy,
-      avg_win_r:      s.avg_win_r,
-      avg_loss_r:     s.avg_loss_r,
-      avg_candles_win:  s.avg_candles_win,
-      avg_candles_loss: s.avg_candles_loss,
+      win_rate:       summaryForExport.win_rate,
+      total_r:        summaryForExport.total_r,
+      expectancy:     summaryForExport.expectancy,
+      avg_win_r:      summaryForExport.avg_win_r,
+      avg_loss_r:     summaryForExport.avg_loss_r,
+      avg_candles_win:  summaryForExport.avg_candles_win,
+      avg_candles_loss: summaryForExport.avg_candles_loss,
     },
     direction_analysis: dirs,
     rr_buckets: rrBuckets,
     confidence_buckets: confBuckets,
+    score_buckets: scoreBuckets,
+    strategy_stats: stratStats,
+    btc_sentiment_buckets: btcBuckets,
     oi_correlation: { win_avg_oi: winOI, loss_avg_oi: lossOI },
     symbol_stats: symStats,
     raw_signals: _btLastResults.map(function(r) {
       var confStr = (r.confidence || '').toString().toUpperCase();
-      return {
+      var base = {
         time:        r.time,
         symbol:      r.symbol,
         direction:   r.direction,
@@ -5821,16 +5884,32 @@ function exportAnalysis() {
         funding:     r.funding,
         btc_sentiment: r.btc_sentiment,
         strategy:    r.strategy,
-        bt_result:   r.bt_result,
-        bt_pnl_r:    r.bt_pnl_r,
-        bt_candles:  r.bt_candles,
-        bt_note:     r.bt_note,
-        bt_exit_reason:    r.bt_exit_reason || null,
-        bt_fill_candles:   r.bt_fill_candles || null,
-        bt_used_entry:     r.bt_used_entry || null,
         num_conditions: r.num_conditions,
         num_warnings:   r.num_warnings,
       };
+      if (isDual) {
+        base.market_bt     = r.market_bt     || null;
+        base.limit_bt      = r.limit_bt      || null;
+        base.limit_safe_bt = r.limit_safe_bt || null;
+        // Mirror MARKET (realistic) lên root để analysis tools đọc được
+        var mk = r.market_bt || {};
+        base.bt_result       = mk.bt_result       || null;
+        base.bt_pnl_r        = mk.bt_pnl_r        != null ? mk.bt_pnl_r : null;
+        base.bt_candles      = mk.bt_candles      != null ? mk.bt_candles : null;
+        base.bt_note         = mk.bt_note         || null;
+        base.bt_exit_reason  = mk.bt_exit_reason  || null;
+        base.bt_fill_candles = mk.bt_fill_candles != null ? mk.bt_fill_candles : null;
+        base.bt_used_entry   = mk.bt_used_entry   || null;
+      } else {
+        base.bt_result      = r.bt_result;
+        base.bt_pnl_r       = r.bt_pnl_r;
+        base.bt_candles     = r.bt_candles;
+        base.bt_note        = r.bt_note;
+        base.bt_exit_reason = r.bt_exit_reason   || null;
+        base.bt_fill_candles= r.bt_fill_candles  || null;
+        base.bt_used_entry  = r.bt_used_entry    || null;
+      }
+      return base;
     })
   };
 

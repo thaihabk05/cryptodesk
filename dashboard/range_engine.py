@@ -685,6 +685,28 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         }
 
     # ══════════════════════════════════════════
+    # FILTER 2a: Market structure verdict block
+    # — Backtest 7 ngày: SHORT RANGE_SCALP WR 14% (-7.97R) vì hay short ngược trend.
+    #   Nếu ms.verdict = LONG_ONLY (cấu trúc uptrend) → cấm SHORT ngay cả khi price tại top_zone.
+    #   Tương tự SHORT_ONLY → cấm LONG đáy.
+    # ══════════════════════════════════════════
+    ms_verdict = (ms or {}).get("verdict")
+    if (ms_verdict == "LONG_ONLY"  and direction == "SHORT") or \
+       (ms_verdict == "SHORT_ONLY" and direction == "LONG"):
+        return {
+            "symbol": symbol, "strategy": "RANGE_SCALP", "direction": "WAIT",
+            "confidence": "LOW", "price": smart_round(price),
+            "range_high": smart_round(range_high), "range_low": smart_round(range_low),
+            "range_pct": range_pct, "range_source": range_source,
+            "d1_bias": d1_bias, "h4_bias": h4_bias,
+            "top_touches": top_touches, "bottom_touches": bottom_touches,
+            "is_bimodal": is_bimodal, "bimodal_gap": bimodal_gap,
+            "market_structure": ms, "btc_volume": btc_vol,
+            "warnings": [f"🚫 Cấu trúc {ms_verdict} ({(ms or {}).get('verdict_note','')}) — không vào {direction} ngược trend"],
+            "conditions": [],
+        }
+
+    # ══════════════════════════════════════════
     # FILTER 2b: BTC pump block — thêm sau override, trước trend block
     # ══════════════════════════════════════════
     btc_pump_block_dir, btc_pump_msg_dir = _btc_pump_blocks_range(btc_ctx, direction)

@@ -2093,12 +2093,15 @@ def positions_monitor():
                 urgency = "HIGH"
 
             # ── 3. Build specific_actions theo action ──
+            # Helper format pnl_usd — None khi user chưa nhập size_usdt
+            _pnl_usd = out.get("pnl_usd")
+            pnl_usd_str = f"{_pnl_usd:+.2f} USDT" if _pnl_usd is not None else "n/a (chưa nhập size)"
             if action == "CLOSE_NOW":
                 specific_actions.insert(0, f"🚨 ĐÓNG TOÀN BỘ position {direction} {sym} ngay tại giá market ~{fmt_price(current)}")
                 if pnl_lev > 0:
-                    specific_actions.append(f"Realize +{pnl_lev}% lev (~{out.get('pnl_usd', 0):+.2f} USDT)")
+                    specific_actions.append(f"Realize +{pnl_lev}% lev (~{pnl_usd_str})")
                 else:
-                    specific_actions.append(f"Cắt lỗ {pnl_lev}% lev (~{out.get('pnl_usd', 0):+.2f} USDT) — bảo toàn margin còn lại")
+                    specific_actions.append(f"Cắt lỗ {pnl_lev}% lev (~{pnl_usd_str}) — bảo toàn margin còn lại")
             elif action == "TIGHTEN_SL":
                 if sl_suggestion:
                     specific_actions.insert(0, f"📝 Nâng SL từ {fmt_price(sl_suggestion['current'])} → {fmt_price(sl_suggestion['suggested'])} ({sl_suggestion['reason']})")
@@ -2150,10 +2153,11 @@ def positions_monitor():
             summary_parts = [f"{mood} ({n_pros} pros / {n_cons} cons)."]
 
             # PnL summary
+            _usd_part = f" ({_pnl_usd:+.2f} USDT)" if _pnl_usd is not None else ""
             if pnl_lev > 0:
-                summary_parts.append(f"Position {direction} {sym_short} đang lãi **+{pnl_lev}% lev** ({out.get('pnl_usd', 0):+.2f} USDT) sau {round(time_held, 1)}h.")
+                summary_parts.append(f"Position {direction} {sym_short} đang lãi **+{pnl_lev}% lev**{_usd_part} sau {round(time_held, 1)}h.")
             elif pnl_lev < 0:
-                summary_parts.append(f"Position {direction} {sym_short} đang **lỗ {pnl_lev}% lev** ({out.get('pnl_usd', 0):+.2f} USDT) sau {round(time_held, 1)}h.")
+                summary_parts.append(f"Position {direction} {sym_short} đang **lỗ {pnl_lev}% lev**{_usd_part} sau {round(time_held, 1)}h.")
             else:
                 summary_parts.append(f"Position {direction} {sym_short} hoà vốn sau {round(time_held, 1)}h.")
 

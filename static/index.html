@@ -5522,6 +5522,19 @@ function renderBtAnalysis(results, summary) {
   var el = document.getElementById('btAnalysis');
   if (!el) return;
 
+  // DUAL mode: bt_result nested trong r.market_bt — flatten lên root để analysis chạy đúng.
+  var isDual = results.length > 0 && results[0].market_bt !== undefined;
+  if (isDual) {
+    results = results.map(function(r) {
+      var mk = r.market_bt || {};
+      return Object.assign({}, r, {
+        bt_result:   mk.bt_result,
+        bt_pnl_r:    mk.bt_pnl_r,
+        bt_candles:  mk.bt_candles,
+      });
+    });
+  }
+
   var closed = results.filter(function(r){ return r.bt_result === 'WIN' || r.bt_result === 'LOSS'; });
   var wins   = results.filter(function(r){ return r.bt_result === 'WIN'; });
   var losses = results.filter(function(r){ return r.bt_result === 'LOSS'; });

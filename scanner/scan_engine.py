@@ -110,14 +110,23 @@ def _process_result(result, sym_info, mode_tag):
     if result.get("direction") not in ("LONG", "SHORT"):
         return None
 
-    # ── Filter 1: Confidence — bỏ LOW ──
-    conf = result.get("confidence", "LOW")
-    if conf == "LOW":
+    # ── Filter 0: Coin blacklist — backtest 7 ngày data, các coin 0% WR ──
+    sym = result.get("symbol", "")
+    blacklist = SCAN_CFG.get("coin_blacklist") or []
+    if sym in blacklist:
         return None
 
-    # ── Filter 2: R:R tối thiểu 1.5 ──
+    # ── Filter 1: Confidence — bỏ LOW + MEDIUM ──
+    # Backtest 7 ngày data: MEDIUM confidence WR chỉ 12% (n=8, -5R) → cấm.
+    # Riêng REVERSAL chỉ chấp nhận HIGH (score ≥ 5) — score 3-4 fire quá tight SL → toàn LOSS.
+    conf = result.get("confidence", "LOW")
+    if conf in ("LOW", "MEDIUM"):
+        return None
+
+    # ── Filter 2: R:R tối thiểu — backtest cho thấy RR 1.5-2 break-even, nâng lên 1.8 ──
     rr = result.get("rr", 0) or 0
-    if rr < 1.5:
+    min_rr = float(SCAN_CFG.get("scan_min_rr", 1.8))
+    if rr < min_rr:
         return None
 
     # ── Filter 3: Volume 24h tối thiểu (lấy từ SCAN_CFG) ──
@@ -198,6 +207,14 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
         SCAN_CFG["strategy"]   = strategy
         SCAN_CFG["min_vol"]    = min_vol
         SCAN_CFG["scan_modes"] = scan_modes or ["TREND"]
+        # Lấy blacklist + scan_min_rr từ data/config.json (load_config đã merge sẵn)
+        try:
+            from main import load_config
+            _cfg = load_config()
+            SCAN_CFG["coin_blacklist"] = _cfg.get("coin_blacklist") or []
+            SCAN_CFG["scan_min_rr"]    = float(_cfg.get("scan_min_rr", 1.8))
+        except Exception as e:
+            print(f"[SCAN] load_config warning: {e}")
         scan_state.update({"running": True, "progress": 0, "results": [],
                            "error": None, "started_at": datetime.now(_TZ_VN).isoformat(),
                            "finished_at": None, "strategy": strategy})

@@ -2,6 +2,28 @@
 
 Ý tưởng đã nghiên cứu, chưa triển khai. Xếp theo impact ước tính.
 
+## ⏳ Đang verify (theo dõi 1-2 tuần — backtest 2026-05-10, 422 closed)
+
+Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh closed (7 ngày).
+
+- 🔍 **SWING_H1 sc=6 paradox** — backtest n=59 cho WR 22% vs sc=5 WR 34%. z-score 1.76 (p≈0.08, borderline noise). Cần thêm 1-2 tuần data để conclude. Nếu sau 100+ closed sc=6 vẫn WR < 30% → cần debug engine SWING_H1 (filter nào đó nâng score sai cách). Re-check: chạy backtest 14 ngày, so WR sc=5 vs sc=6, nếu vẫn lệch >10% → action.
+- 🔍 **Tắt SWING_H1 LONG?** — chiếm 62% volume nhưng −24.06R (WR 31%). Có thể là do thị trường 5/3-5/10 đi ngang chứ không phải engine sai. Đợi 1 tuần BTC trend khác để tách biệt market beta vs alpha. Quy tắc: nếu sau 2 tuần SWING_H1 LONG vẫn negative R/lệnh → tắt hẳn, ưu tiên RANGE_SCALP LONG.
+- 🔍 **Tắt LIMIT mode trong UI** — backtest: MARKET +93R, LIMIT +31R, SAFE_SL +50R. LIMIT (orig SL) tệ nhất 27R thua MARKET. Cân nhắc bỏ LIMIT, chỉ giữ MARKET + SAFE_SL trong DUAL panel để giảm clutter. Đợi 1-2 backtest run nữa rồi quyết.
+- 🔍 **Filter chỉ LONG khi BTC NEUTRAL** — counter-intuitive nhưng data rõ: NEUTRAL × LONG WR 53% / +86.5R vs RISK_ON × LONG WR 33% / +19.5R. Nếu apply filter này: cắt 60% volume nhưng giữ ~80% lãi. Cần verify thêm tuần với BTC sentiment khác để loại trừ regime-specific bias.
+- 🔍 **Market regime context** — anh nhận xét: 5 ngày qua thị trường tăng mạnh → LONG WR cao có thể artificial. Cần track lại `BTC_chg_7d` cho mỗi backtest để compare strategy WR theo regime (uptrend / sideways / downtrend). Kế hoạch: thêm `btc_7d_chg` field vào export Analysis.
+- 🔍 **REVERSAL — verify sau khi fix dedup + min SL** — sau khi fix race condition + min SL 1.2%, đợi 1-2 tuần thu thập 30+ REVERSAL signals mới đánh giá lại. Nếu vẫn WR < 30% → cần xem lại logic xác định reversal (có thể cần confirmation candle, hoặc multi-timeframe alignment).
+- 🔍 **RR sweet spot 3-4** — backtest RR 3-4 WR 59%, +42R (n=29). Hiện đã raise min RR lên 1.8 nhưng có thể cân nhắc tiếp lên 2.0 nếu data tiếp tục confirm. Đợi 200+ closed mới với RR ≥ 1.8 rồi xem distribution.
+- 🔍 **Confidence MEDIUM cấm hẳn** — đã apply ở scanner. Cần verify alert_confidence cũ trong config có còn ý nghĩa không (giờ scanner đã chặn MEDIUM trước khi đến alert).
+- 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
+
+## ✅ Đã apply (2026-05-10)
+
+- ✅ **Coin blacklist 19 coin** — `data/config.json` field `coin_blacklist`. Áp dụng ở `scanner/scan_engine.py:_process_result` filter 0. Coin: ARB, TRIA, XPL, DUSK, "币安人生", EDU, APE, DOGE, GENIUS, RIVER, STO, EDGE, BEAT, OPG, COIN, API3, BB, MON, INIT — toàn 0% WR ≥3 lệnh. Impact: cắt ~50 lệnh/tuần, +77R.
+- ✅ **RR min 1.8** — `scan_min_rr` config (default 1.8, cũ 1.5). Backtest: RR 1.5-2 break-even (-1R), RR 2-3 +34R, RR 3-4 +42R. Loại bucket dưới cùng → giảm 60% noise mà không mất lợi nhuận.
+- ✅ **Cấm Confidence MEDIUM ở scanner** — backtest n=8 WR 12% / -5R. Tệ hơn kỳ vọng nhiều, hard cấm.
+- ✅ **REVERSAL min SL 1.2%** — `dashboard/reversal_engine.py`. Trước: case ARBUSDT 5 lệnh fired trong 6s với SL chỉ 0.6% → 100% LOSS sau 0.2-0.8h. Quy tắc: reversal cần room rộng vì giá thường re-test trước khi bounce thật.
+- ✅ **Race condition dedup fix** — `_history_save_lock` trong `main.py`. Trước: parallel scanner workers fire cùng setup → đều pass dup check vì chưa ai save → 5 lệnh ARB cùng entry/sl/tp lưu cùng lúc. Sau: lock around load+check+save block.
+
 ## Đã làm (xong, ghi để tham khảo)
 
 - ✅ **SHORT booster funding** — `dashboard/{fam,swing_h1,range}_engine.py`. Funding > +0.05% +1 score; > +0.10% +2 score và auto-upgrade confidence MEDIUM → HIGH. Backed by case CRCL +3.57R (funding +0.16%) và backtest setup `fund_pos_oi_up` WR=90%.

@@ -461,6 +461,14 @@ def reversal_analyze(symbol: str, cfg: dict) -> dict:
         direction  = "WAIT"
         confidence = "LOW"
 
+    # SL tối thiểu 1.2% — backtest cho thấy SL < 1% (như case ARB 0.6%) bị quét sạch trong vài phút.
+    # Reversal cần room rộng hơn vì giá thường còn re-test trước khi bounce thật.
+    REV_MIN_SL_PCT = 1.2
+    if direction in ("LONG", "SHORT") and 0 < sl_pct < REV_MIN_SL_PCT:
+        warnings.append(f"❌ SL chỉ {sl_pct:.2f}% < {REV_MIN_SL_PCT}% — reversal cần room rộng hơn")
+        direction  = "WAIT"
+        confidence = "LOW"
+
     # Entry verdict
     if direction in ("LONG", "SHORT") and confidence in ("HIGH", "MEDIUM") and rr >= 1.5:
         entry_verdict = "GO"

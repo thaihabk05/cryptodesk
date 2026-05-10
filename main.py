@@ -305,66 +305,73 @@ def _fetch_vol_safe(symbol: str) -> float:
         return 0.0
 
 
+_history_save_lock = threading.Lock()
+
 def _save_signal_to_history(result: dict):
     """Lưu signal vào history — dedup chặt theo symbol+direction+entry±1% trong 2 giờ.
     Bypass dedup cho watchlist/position-reversal save (cooldown đã handled ở caller).
+
+    Atomic via _history_save_lock: tránh race condition khi parallel scanner workers
+    fire cùng setup trong vài giây (case ARBUSDT REVERSAL 5 lệnh trong 6s).
     """
-    history = load_history()
     source  = result.get("source", "market_scan")
     bypass  = source in ("watchlist_go", "watchlist_approaching", "position_reversal")
-    if not bypass and _is_duplicate_signal(result, history, window_hours=2):
-        print(f"[DEDUP] Skip {result.get('symbol')} {result.get('direction')} — duplicate trong 2h")
-        return
-    history.append({
-        "time":            result.get("timestamp", _local_isoformat()),
-        "symbol":          result.get("symbol", ""),
-        "direction":       result.get("direction", ""),
-        "confidence":      result.get("confidence", ""),
-        "price":           result.get("price", 0),
-        "entry":           result.get("entry", 0),
-        "sl":              result.get("sl", 0),
-        "sl_pct":          result.get("sl_pct", 0),
-        "tp1":             result.get("tp1", 0),
-        "tp1_pct":         result.get("tp1_pct", 0),
-        "tp2":             result.get("tp2", 0),
-        "rr":              result.get("rr", 0),
-        # ── Entry optimal — dùng cho backtest fill-rate verify ──
-        "entry_opt":       result.get("entry_opt"),
-        "entry_opt_label": result.get("entry_opt_label"),
-        "entry_opt_rr":    result.get("entry_opt_rr"),
-        "d1_bias":         result.get("d1", {}).get("bias", "") or result.get("d1_bias", ""),
-        "h4_bias":         result.get("h4", {}).get("bias", "") or result.get("h4_bias", ""),
-        "score":           result.get("score", 0),
-        "verdict":         result.get("entry_verdict", "WAIT"),
-        "entry_verdict":   result.get("entry_verdict", "WAIT"),
-        "volume_24h":      result.get("volume_24h") or
-                           _fetch_vol_safe(result.get("symbol","")),
-        "strategy":        result.get("strategy", "SWING_H4"),
-        "conditions":      result.get("conditions", []),
-        "warnings":        result.get("warnings", []),
-        "entry_checklist": result.get("entry_checklist", []),
-        "market":          result.get("market", {}),
-        "btc_context":     result.get("btc_context", {}),
-        "d1":              result.get("d1", {}),
-        "h4":              result.get("h4", {}),
-        "h1":              result.get("h1", {}),
-        # ── Feature vector cho AI Analysis ──
-        "oi_change":       result.get("market", {}).get("oi_change"),
-        "funding":         result.get("market", {}).get("funding"),
-        "atr_x":           result.get("market", {}).get("atr"),
-        "btc_sentiment":   result.get("btc_context", {}).get("sentiment", ""),
-        "btc_d1_trend":    result.get("btc_context", {}).get("d1_trend", ""),
-        "num_conditions":  len(result.get("conditions", [])),
-        "num_warnings":    len(result.get("warnings", [])),
-        # ── Source tracking — phân biệt market_scan / watchlist / position_reversal
-        "source":          source,
-        "algo":            result.get("algo", ""),
-        "alert_type":      result.get("alert_type", ""),
-        # ── Algorithm version tracking ──
-        "algo_version":    ALGO_VERSION,
-        "algo_date":       ALGO_DATE,
-    })
-    save_history(history)
+
+    with _history_save_lock:
+        history = load_history()
+        if not bypass and _is_duplicate_signal(result, history, window_hours=2):
+            print(f"[DEDUP] Skip {result.get('symbol')} {result.get('direction')} — duplicate trong 2h")
+            return
+        history.append({
+            "time":            result.get("timestamp", _local_isoformat()),
+            "symbol":          result.get("symbol", ""),
+            "direction":       result.get("direction", ""),
+            "confidence":      result.get("confidence", ""),
+            "price":           result.get("price", 0),
+            "entry":           result.get("entry", 0),
+            "sl":              result.get("sl", 0),
+            "sl_pct":          result.get("sl_pct", 0),
+            "tp1":             result.get("tp1", 0),
+            "tp1_pct":         result.get("tp1_pct", 0),
+            "tp2":             result.get("tp2", 0),
+            "rr":              result.get("rr", 0),
+            # ── Entry optimal — dùng cho backtest fill-rate verify ──
+            "entry_opt":       result.get("entry_opt"),
+            "entry_opt_label": result.get("entry_opt_label"),
+            "entry_opt_rr":    result.get("entry_opt_rr"),
+            "d1_bias":         result.get("d1", {}).get("bias", "") or result.get("d1_bias", ""),
+            "h4_bias":         result.get("h4", {}).get("bias", "") or result.get("h4_bias", ""),
+            "score":           result.get("score", 0),
+            "verdict":         result.get("entry_verdict", "WAIT"),
+            "entry_verdict":   result.get("entry_verdict", "WAIT"),
+            "volume_24h":      result.get("volume_24h") or
+                               _fetch_vol_safe(result.get("symbol","")),
+            "strategy":        result.get("strategy", "SWING_H4"),
+            "conditions":      result.get("conditions", []),
+            "warnings":        result.get("warnings", []),
+            "entry_checklist": result.get("entry_checklist", []),
+            "market":          result.get("market", {}),
+            "btc_context":     result.get("btc_context", {}),
+            "d1":              result.get("d1", {}),
+            "h4":              result.get("h4", {}),
+            "h1":              result.get("h1", {}),
+            # ── Feature vector cho AI Analysis ──
+            "oi_change":       result.get("market", {}).get("oi_change"),
+            "funding":         result.get("market", {}).get("funding"),
+            "atr_x":           result.get("market", {}).get("atr"),
+            "btc_sentiment":   result.get("btc_context", {}).get("sentiment", ""),
+            "btc_d1_trend":    result.get("btc_context", {}).get("d1_trend", ""),
+            "num_conditions":  len(result.get("conditions", [])),
+            "num_warnings":    len(result.get("warnings", [])),
+            # ── Source tracking — phân biệt market_scan / watchlist / position_reversal
+            "source":          source,
+            "algo":            result.get("algo", ""),
+            "alert_type":      result.get("alert_type", ""),
+            # ── Algorithm version tracking ──
+            "algo_version":    ALGO_VERSION,
+            "algo_date":       ALGO_DATE,
+        })
+        save_history(history)
 
 
 def _send_high_alert(result: dict, token: str, chat_id: str):

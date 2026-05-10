@@ -738,7 +738,7 @@ def market_scan_cycle(cfg):
     min_rr  = float(cfg.get("rr_ratio", 1.0))
 
     print("[MARKET SCAN] Bắt đầu quét toàn thị trường futures...")
-    run_full_scan(min_vol=cfg.get("min_vol_scan", 5_000_000), max_workers=3, strategy=cfg.get("strategy","SWING_H4"), scan_modes=cfg.get("scan_modes",["TREND"]))
+    run_full_scan(min_vol=cfg.get("min_vol_scan", 2_000_000), max_workers=3, strategy=cfg.get("strategy","SWING_H4"), scan_modes=cfg.get("scan_modes",["TREND"]))
 
     # Đợi scan xong
     import time as _time

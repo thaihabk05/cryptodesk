@@ -19,6 +19,7 @@
     "REVERSAL"
   ],
   "scan_min_rr": 1.8,
+  "min_vol_scan": 2000000,
   "coin_blacklist": [
     "ARBUSDT",
     "TRIAUSDT",

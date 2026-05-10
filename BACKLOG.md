@@ -15,6 +15,7 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **RR sweet spot 3-4** — backtest RR 3-4 WR 59%, +42R (n=29). Hiện đã raise min RR lên 1.8 nhưng có thể cân nhắc tiếp lên 2.0 nếu data tiếp tục confirm. Đợi 200+ closed mới với RR ≥ 1.8 rồi xem distribution.
 - 🔍 **Confidence MEDIUM cấm hẳn** — đã apply ở scanner. Cần verify alert_confidence cũ trong config có còn ý nghĩa không (giờ scanner đã chặn MEDIUM trước khi đến alert).
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
+- 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
 ## ✅ Đã apply (2026-05-10)
 

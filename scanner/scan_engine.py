@@ -138,12 +138,29 @@ def _process_result(result, sym_info, mode_tag):
     # ── Filter 4: Coin đang pump/dump quá mạnh 24h → rủi ro cao ──
     # Trend mode: không vào coin đang pump > 25% hoặc dump > -20% trong 24h
     # Range mode: được phép (coin đang dao động trong range)
+    chg_24h = float(sym_info.get("price_change_pct", 0) or 0)
     if mode_tag != "RANGE_SCALP":
-        chg_24h = float(sym_info.get("price_change_pct", 0) or 0)
         if chg_24h > 25:
             return None   # đang pump mạnh — PATCH J trong engine đã block nhưng double-check
         if chg_24h < -20:
             return None   # đang dump mạnh — rủi ro tiếp tục rơi
+
+    # ── Filter 4b: Alt-vs-BTC relative strength (Fix 1 — 12/5/2026) ──
+    # Backtest 5/11-5/12 (45.9h, 162 closed): WR sụp về 19.8%, -55R. Phân tích:
+    # - RISK_ON × LONG: 119 lệnh, WR 15%, -55R 🔴
+    # - NEUTRAL × LONG: 32 lệnh, WR 34%, +1.5R ✅
+    # Root cause: BTC pump mạnh (>2%), alt KHÔNG follow theo → distribution phase.
+    # Capital flow vào BTC, alt sell pressure → LONG alt rất rủi ro.
+    # Logic: BTC chg > +2% nhưng alt < BTC × 0.3 (hoặc alt âm) → block LONG.
+    direction = result.get("direction", "")
+    btc_chg_24h = float(SCAN_CFG.get("btc_24h_chg") or 0)
+    if direction == "LONG" and btc_chg_24h > 2.0:
+        # Alt yếu hơn nhiều BTC HOẶC âm khi BTC dương → distribution
+        if chg_24h < 0 or chg_24h < btc_chg_24h * 0.3:
+            return None  # alt-distribution: BTC +X%, alt yếu → skip LONG
+    # Ngược lại: BTC dump > -2% nhưng alt còn dương → over-extended, dễ catch-up dump
+    if direction == "LONG" and btc_chg_24h < -2.0 and chg_24h > 0:
+        return None  # BTC bearish nhưng alt còn nổi → risk catch-up
 
     # ── Tag algo source ──
     result["algo"] = mode_tag
@@ -215,6 +232,19 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
             SCAN_CFG["scan_min_rr"]    = float(_cfg.get("scan_min_rr", 1.8))
         except Exception as e:
             print(f"[SCAN] load_config warning: {e}")
+        # Fix 1 (12/5): cache BTC 24h change để filter alt-vs-BTC relative strength.
+        # Khi BTC pump mạnh mà alt không follow → distribution phase, LONG alt rất rủi ro.
+        # Backtest 5/11-5/12: RISK_ON × LONG WR chỉ 15% (-55R) vs NEUTRAL × LONG WR 34%.
+        try:
+            from core.binance import fetch_klines
+            df_btc = fetch_klines("BTCUSDT", "1h", 25, force_futures=False)
+            btc_now  = float(df_btc["close"].iloc[-1])
+            btc_24ha = float(df_btc["close"].iloc[0])
+            SCAN_CFG["btc_24h_chg"] = round((btc_now - btc_24ha) / btc_24ha * 100, 2)
+            print(f"[SCAN] BTC 24h change: {SCAN_CFG['btc_24h_chg']:+.2f}%")
+        except Exception as e:
+            print(f"[SCAN] BTC fetch warning: {e}")
+            SCAN_CFG["btc_24h_chg"] = 0
         scan_state.update({"running": True, "progress": 0, "results": [],
                            "error": None, "started_at": datetime.now(_TZ_VN).isoformat(),
                            "finished_at": None, "strategy": strategy})

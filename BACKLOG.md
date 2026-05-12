@@ -17,6 +17,14 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-05-12)
+
+- ✅ **Fix 1: Alt-vs-BTC relative strength filter** — `scanner/scan_engine.py`. Cache BTC 24h change ở scan start, filter `_process_result`:
+  - Block LONG khi `BTC_24h > +2%` và `alt_24h < BTC × 0.3` hoặc `alt_24h < 0` → distribution detect
+  - Block LONG khi `BTC_24h < -2%` và `alt_24h > 0` → catch-up dump risk
+  - Backtest 5/11-5/12 (162 closed): WR sụp 19.8%, -55R. Root cause: RISK_ON × LONG 73% volume / WR 15% / -55R. Sim với filter: 43 lệnh, WR 32.6%, +0.76R (turn −55R → +1R).
+  - Verify sau 3 ngày: rolling WR, expected ≥ 30%.
+
 ## ✅ Đã apply (2026-05-10)
 
 - ✅ **Coin blacklist 19 coin** — `data/config.json` field `coin_blacklist`. Áp dụng ở `scanner/scan_engine.py:_process_result` filter 0. Coin: ARB, TRIA, XPL, DUSK, "币安人生", EDU, APE, DOGE, GENIUS, RIVER, STO, EDGE, BEAT, OPG, COIN, API3, BB, MON, INIT — toàn 0% WR ≥3 lệnh. Impact: cắt ~50 lệnh/tuần, +77R.

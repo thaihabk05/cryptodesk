@@ -156,6 +156,44 @@ def swing_h1_analyze(symbol: str, cfg: dict) -> dict:
     else:
         direction = h4_bias  # H4 quyết định hướng
 
+        # ══════════════════════════════════════════
+        # Anti-FOMO filter (Fix 6 — 14/5/2026)
+        # Backtest 7 ngày: 5 lệnh ARB SWING_H1 (4L/1W, -2.49R). Root cause:
+        # engine fire LONG ở vùng đỉnh (entry 0.148 = -1% từ peak 0.1495) → SL hit 1 nến.
+        # Engine không có RSI check + extended-from-EMA check + position-in-range check.
+        # Pattern "catch-top/catch-bottom" gây thiệt hại lớn nhất tuần qua.
+        # ══════════════════════════════════════════
+        rsi_h1     = float(row_h1.get("rsi", 50))
+        ema9_h1    = float(row_h1["ema9"]) if "ema9" in df_h1.columns else price
+        dist_ema9  = (price - ema9_h1) / ema9_h1 * 100 if ema9_h1 > 0 else 0
+        high_24h   = float(df_h1["high"].iloc[-24:].max())
+        low_24h    = float(df_h1["low"].iloc[-24:].min())
+        range_pos  = (price - low_24h) / (high_24h - low_24h) * 100 if high_24h > low_24h else 50
+
+        if direction == "LONG":
+            # Block: overbought + extended từ EMA9 → catch-top risk
+            if rsi_h1 > 72 and dist_ema9 > 2.5:
+                warnings.append(f"🚫 ANTI-FOMO LONG: RSI H1 {rsi_h1:.0f} + giá cách EMA9 +{dist_ema9:.1f}% — đợi pullback")
+                direction = "WAIT"
+            # Block: top của 24h range → exhaustion zone
+            elif range_pos > 88:
+                warnings.append(f"🚫 CATCH-TOP: giá ở {range_pos:.0f}% của 24h range ({low_24h:.4f}-{high_24h:.4f}) — đợi pullback")
+                direction = "WAIT"
+        elif direction == "SHORT":
+            # Block: oversold + extended dưới EMA9 → catch-bottom risk
+            if rsi_h1 < 28 and dist_ema9 < -2.5:
+                warnings.append(f"🚫 ANTI-FOMO SHORT: RSI H1 {rsi_h1:.0f} + giá cách EMA9 {dist_ema9:.1f}% — đợi bounce")
+                direction = "WAIT"
+            elif range_pos < 12:
+                warnings.append(f"🚫 CATCH-BOTTOM: giá ở {range_pos:.0f}% của 24h range — đợi bounce")
+                direction = "WAIT"
+
+    if direction == "WAIT":
+        confidence = "LOW"
+        score      = 0
+    elif direction in ("LONG", "SHORT"):
+        pass  # tiếp tục scoring
+
         if h4_bias == "LONG":
             if h4_above_ma34:     conditions.append("H4 trên MA34 — bias LONG")
             if h4_above_ma89:     conditions.append("H4 trên MA89 — trend mạnh")

@@ -17,6 +17,20 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-05-14)
+
+- ✅ **Fix 6 — Anti-FOMO filter SWING_H1** — `dashboard/swing_h1_engine.py`. Block LONG khi:
+  - RSI H1 > 72 AND giá cách EMA9 H1 > +2.5% (overbought + extended)
+  - HOẶC giá ở > 88% của 24h range (catch-top zone)
+  - Tương tự SHORT khi RSI < 28 + extended dưới EMA9 hoặc < 12% range.
+  - Root cause: 5 lệnh ARB tuần qua (4L/1W −2.49R), lệnh 4 entry 0.148 chỉ −1% từ peak 0.1495 → SL hit 1 nến (catch-top).
+  - Engine SWING_H1 KHÔNG có RSI/extended/range-position check → bug rõ ràng.
+
+- ✅ **Blacklist refresh (2026-05-14)** — `data/config.json`:
+  - **Remove** (đang win lại): OPGUSDT (4W/0L +6.54R), MONUSDT (2W/1L +2.12R)
+  - **Add** (0% WR tuần qua, n≥3): ZK, AIOT, OPN, NEAR, STORJ, AIXBT, GRT, KGEN, NEIRO, MEME, RSR, KAS, UMA, LIGHT, MYX, VIRTUAL, LIT (17 coin)
+  - Tổng blacklist: 34 coin.
+
 ## ✅ Đã apply (2026-05-12)
 
 - ✅ **Fix 1: Alt-vs-BTC relative strength filter** — `scanner/scan_engine.py`. Cache BTC 24h change ở scan start, filter `_process_result`:

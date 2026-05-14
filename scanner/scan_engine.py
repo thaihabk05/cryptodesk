@@ -157,10 +157,12 @@ def _process_result(result, sym_info, mode_tag):
     if direction == "LONG" and btc_chg_24h > 2.0:
         # Alt yếu hơn nhiều BTC HOẶC âm khi BTC dương → distribution
         if chg_24h < 0 or chg_24h < btc_chg_24h * 0.3:
-            return None  # alt-distribution: BTC +X%, alt yếu → skip LONG
+            print(f"[FIX1 BLOCK] {sym} LONG: BTC +{btc_chg_24h:.2f}% / alt {chg_24h:+.2f}% — distribution detect")
+            return None
     # Ngược lại: BTC dump > -2% nhưng alt còn dương → over-extended, dễ catch-up dump
     if direction == "LONG" and btc_chg_24h < -2.0 and chg_24h > 0:
-        return None  # BTC bearish nhưng alt còn nổi → risk catch-up
+        print(f"[FIX1 BLOCK] {sym} LONG: BTC {btc_chg_24h:.2f}% nhưng alt {chg_24h:+.2f}% — catch-up dump risk")
+        return None
 
     # ── Tag algo source ──
     result["algo"] = mode_tag

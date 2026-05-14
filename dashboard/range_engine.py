@@ -685,6 +685,44 @@ def range_analyze(symbol: str, cfg: dict) -> dict:
         }
 
     # ══════════════════════════════════════════
+    # FILTER 2 (Fix 2 — 14/5): Block RANGE_SCALP trong trending market
+    # Backtest 5/8-5/14 (188 lệnh RANGE_SCALP LONG): WR 15%, -68.36R 🔴
+    # Root cause: engine designed cho SIDEWAYS, không phù hợp khi BTC trending.
+    # BTC D1+H4 đều BULL → market trending → không phải range → RANGE_SCALP fail.
+    # ══════════════════════════════════════════
+    btc_d1_trend = btc_ctx.get("d1_trend", "")
+    btc_h4_trend = btc_ctx.get("h4_trend", "")
+    btc_sentiment = btc_ctx.get("sentiment", "")
+    if btc_d1_trend == "BULL" and btc_h4_trend == "BULL":
+        # BTC trending UP rõ → block RANGE_SCALP LONG (hay catch-top, expect bounce nhưng break out)
+        if direction == "LONG":
+            print(f"[FIX2 BLOCK] {symbol} RANGE_SCALP LONG: BTC D1+H4 đều BULL — không phải range market")
+            return {
+                "symbol": symbol, "strategy": "RANGE_SCALP", "direction": "WAIT",
+                "confidence": "LOW", "price": smart_round(price),
+                "range_high": smart_round(range_high), "range_low": smart_round(range_low),
+                "range_pct": range_pct, "range_source": range_source,
+                "d1_bias": d1_bias, "h4_bias": h4_bias,
+                "market_structure": ms, "btc_volume": btc_vol,
+                "warnings": [f"🚫 BTC trending BULL (D1+H4) — RANGE_SCALP không hiệu quả trong market trending"],
+                "conditions": [],
+            }
+    if btc_d1_trend == "BEAR" and btc_h4_trend == "BEAR":
+        # BTC trending DOWN → block RANGE_SCALP SHORT (catch-bottom risk)
+        if direction == "SHORT":
+            print(f"[FIX2 BLOCK] {symbol} RANGE_SCALP SHORT: BTC D1+H4 đều BEAR — alt sẽ dump theo, không bounce")
+            return {
+                "symbol": symbol, "strategy": "RANGE_SCALP", "direction": "WAIT",
+                "confidence": "LOW", "price": smart_round(price),
+                "range_high": smart_round(range_high), "range_low": smart_round(range_low),
+                "range_pct": range_pct, "range_source": range_source,
+                "d1_bias": d1_bias, "h4_bias": h4_bias,
+                "market_structure": ms, "btc_volume": btc_vol,
+                "warnings": [f"🚫 BTC trending BEAR (D1+H4) — RANGE_SCALP SHORT không có đáy bounce"],
+                "conditions": [],
+            }
+
+    # ══════════════════════════════════════════
     # FILTER 2a: Market structure verdict block
     # — Backtest 7 ngày: SHORT RANGE_SCALP WR 14% (-7.97R) vì hay short ngược trend.
     #   Nếu ms.verdict = LONG_ONLY (cấu trúc uptrend) → cấm SHORT ngay cả khi price tại top_zone.

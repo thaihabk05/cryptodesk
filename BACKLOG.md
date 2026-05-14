@@ -19,6 +19,13 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 
 ## ✅ Đã apply (2026-05-14)
 
+- ✅ **Fix 2 — Block RANGE_SCALP trong trending market** — `dashboard/range_engine.py`. 
+  - Block LONG khi BTC D1+H4 đều BULL → market trending up, không phải range
+  - Block SHORT khi BTC D1+H4 đều BEAR → alt sẽ dump theo, không bounce
+  - Root cause: backtest 7 ngày RANGE_SCALP LONG 188 lệnh WR 15% -68.36R. Engine designed cho sideways.
+
+- ✅ **Fix 5 — Verify Fix 1 active** — `scanner/scan_engine.py`. Thêm `[FIX1 BLOCK]` log message rõ ràng khi filter trigger để dễ verify trong Railway logs. Code Fix 1 (cache BTC 24h + filter alt-vs-BTC) đã có từ commit 2112d8e.
+
 - ✅ **Fix 6 — Anti-FOMO filter SWING_H1** — `dashboard/swing_h1_engine.py`. Block LONG khi:
   - RSI H1 > 72 AND giá cách EMA9 H1 > +2.5% (overbought + extended)
   - HOẶC giá ở > 88% của 24h range (catch-top zone)

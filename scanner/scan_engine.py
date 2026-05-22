@@ -164,6 +164,38 @@ def _process_result(result, sym_info, mode_tag):
         print(f"[FIX1 BLOCK] {sym} LONG: BTC {btc_chg_24h:.2f}% nhưng alt {chg_24h:+.2f}% — catch-up dump risk")
         return None
 
+    # ── Filter 5 (Fix 8 — 22/5): RANGE_SCALP score ≥ 7 paradox ──
+    # Backtest 22/5: 28/30 score=7 là RANGE_SCALP, WR 3% (1W/29L), -25.94R.
+    # Engine RANGE_SCALP fire "max confidence" (score 7) thường là trong range break out
+    # → fake breakout → catch-top/bottom → fail.
+    # Hard ban: RANGE_SCALP chỉ accept score 5-6.
+    score = int(result.get("score", 0) or 0)
+    if mode_tag == "RANGE_SCALP" and score >= 7:
+        print(f"[FIX8 BLOCK] {sym} {direction} RANGE_SCALP score={score} — paradox 3% WR")
+        return None
+
+    # ── Filter 6 (Fix 7 — 22/5): RANGE_SCALP block khi coin tự trending ──
+    # Backtest 22/5: RANGE_SCALP LONG 0% WR (0/18!), SHORT 13% WR. Lý do:
+    # Fix 2 chỉ check BTC trending, nhưng BTC NEUTRAL 99% time → fix không trigger.
+    # Cần check COIN-level: nếu coin H1 stack BEARISH → block LONG (catch-falling-knife).
+    # Nếu coin H1 stack BULLISH → block SHORT (catch-top).
+    if mode_tag == "RANGE_SCALP":
+        h1_info = result.get("h1") or {}
+        # H1 EMA stack từ engine output. Fallback: dùng raw price vs MA34/MA89
+        ema34_h1 = h1_info.get("ma34") or 0
+        ema89_h1 = h1_info.get("ma89") or 0
+        price_now = result.get("price", 0) or 0
+        if ema34_h1 and ema89_h1 and price_now:
+            # H1 bearish: giá < MA34 < MA89
+            h1_bearish = price_now < ema34_h1 < ema89_h1
+            h1_bullish = price_now > ema34_h1 > ema89_h1
+            if direction == "LONG" and h1_bearish:
+                print(f"[FIX7 BLOCK] {sym} RANGE_SCALP LONG: H1 coin BEARISH stack (price<MA34<MA89) — catch-falling-knife")
+                return None
+            if direction == "SHORT" and h1_bullish:
+                print(f"[FIX7 BLOCK] {sym} RANGE_SCALP SHORT: H1 coin BULLISH stack — catch-top")
+                return None
+
     # ── Tag algo source ──
     result["algo"] = mode_tag
 
@@ -180,7 +212,104 @@ def _process_result(result, sym_info, mode_tag):
     result["d1_bias"] = (result.get("d1") or {}).get("bias", "")
     result["h4_bias"] = (result.get("h4") or {}).get("bias", "")
 
+    # ══════════════════════════════════════════
+    # TIER_RATING — compute tier per signal (22/5/2026)
+    # Mục tiêu: thay vì user phải đắn đo "có vào hay không", system tự tag.
+    # Tier 1 = full size, Tier 2 = half size, Tier 3 = small / skip
+    # ══════════════════════════════════════════
+    result["tier"], result["tier_reasons"] = _compute_tier(result, sym_info)
+
     return sanitize(result)
+
+
+def _compute_tier(result: dict, sym_info: dict) -> tuple:
+    """Tính tier rating cho signal dựa trên 6 criteria từ backtest analysis.
+    Returns: (tier_str, list_of_reasons)
+
+    Criteria (backtest 22/5 — 14 ngày dữ liệu):
+    1. Strategy = SWING_H1 (RANGE_SCALP WR 6%, REVERSAL n nhỏ)
+    2. Score = 5 (sweet spot 34% WR), 6 = ok, 7 = paradox
+    3. Direction cùng chiều H4 bias
+    4. RR ≥ 2.0
+    5. Coin có 7d momentum đúng chiều (LONG: 7d > -5%, SHORT: 7d < +5%)
+    6. Funding KHÔNG ở extreme (< 0.05% absolute)
+    """
+    pts = 0
+    reasons_pos = []
+    reasons_neg = []
+
+    strategy = result.get("strategy", "") or result.get("algo", "")
+    score    = int(result.get("score", 0) or 0)
+    rr       = float(result.get("rr", 0) or 0)
+    direction = result.get("direction", "")
+    h4_bias  = result.get("h4_bias", "") or (result.get("h4") or {}).get("bias", "")
+    funding  = result.get("funding")
+
+    # Criterion 1: Strategy
+    if strategy == "SWING_H1":
+        pts += 1; reasons_pos.append("SWING_H1 (best WR)")
+    elif strategy == "REVERSAL":
+        pts += 0.5; reasons_pos.append("REVERSAL (acceptable)")
+    elif strategy == "RANGE_SCALP":
+        pts -= 0.5; reasons_neg.append("RANGE_SCALP (WR 6%)")
+
+    # Criterion 2: Score
+    if score == 5:
+        pts += 1; reasons_pos.append("Score 5 sweet-spot")
+    elif score == 6:
+        pts += 0.5; reasons_pos.append("Score 6 ok")
+    elif score >= 7:
+        pts -= 1; reasons_neg.append(f"Score {score} paradox (WR 3%)")
+
+    # Criterion 3: Direction matches H4 bias
+    if h4_bias in ("LONG", "SHORT") and h4_bias == direction:
+        pts += 1; reasons_pos.append(f"Cùng chiều H4 {h4_bias}")
+    elif h4_bias in ("LONG", "SHORT") and h4_bias != direction:
+        pts -= 0.5; reasons_neg.append(f"Counter-trend H4 {h4_bias}")
+
+    # Criterion 4: RR ≥ 2.0
+    if rr >= 2.5:
+        pts += 1; reasons_pos.append(f"RR {rr:.1f} excellent")
+    elif rr >= 2.0:
+        pts += 0.5; reasons_pos.append(f"RR {rr:.1f} good")
+    # rr < 2.0 không cộng/trừ — đã pass min filter
+
+    # Criterion 5: 7d momentum (cần fetch — đơn giản dùng price_change_pct 24h proxy)
+    chg_24h = float(sym_info.get("price_change_pct", 0) or 0)
+    if direction == "LONG":
+        if chg_24h > -3:
+            pts += 0.5; reasons_pos.append("Momentum không yếu")
+        else:
+            pts -= 0.5; reasons_neg.append(f"24h dump {chg_24h:.1f}%")
+    else:  # SHORT
+        if chg_24h < 3:
+            pts += 0.5; reasons_pos.append("Momentum không strong")
+        else:
+            pts -= 0.5; reasons_neg.append(f"24h pump {chg_24h:.1f}%")
+
+    # Criterion 6: Funding không extreme
+    if funding is not None:
+        try:
+            f_abs = abs(float(funding))
+            if f_abs < 0.03:
+                pts += 0.5; reasons_pos.append(f"Funding neutral {funding:.4f}%")
+            elif f_abs > 0.05:
+                pts -= 0.5; reasons_neg.append(f"Funding extreme {funding:.4f}%")
+        except (ValueError, TypeError):
+            pass
+
+    # ── Compute tier ──
+    if pts >= 3.5:
+        tier = "TIER_1"
+    elif pts >= 2.0:
+        tier = "TIER_2"
+    elif pts >= 0.5:
+        tier = "TIER_3"
+    else:
+        tier = "SKIP"
+
+    reasons = {"pts": round(pts, 1), "positives": reasons_pos, "negatives": reasons_neg}
+    return tier, reasons
 
 
 def analyze_symbol(sym_info: dict):

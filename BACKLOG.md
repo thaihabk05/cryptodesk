@@ -17,6 +17,28 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-05-22)
+
+- ✅ **Fix 7 — RANGE_SCALP coin-level trending block** — `scanner/scan_engine.py`. Backtest 22/5 cho thấy Fix 2 không trigger (BTC NEUTRAL 99% time) nhưng RANGE_SCALP LONG vẫn 0% WR. Root cause: COIN tự nó đang trending bearish, không phụ thuộc BTC. Logic mới: nếu mode=RANGE_SCALP và direction=LONG nhưng coin H1 stack BEARISH (price<MA34<MA89) → block. Tương tự SHORT với H1 BULLISH.
+
+- ✅ **Fix 8 — RANGE_SCALP cấm score ≥ 7** — `scanner/scan_engine.py`. Backtest 22/5: 28/30 lệnh score=7 là RANGE_SCALP với WR 3% (1W/29L) / -25.94R. Engine fire max confidence trong range break out = fake breakout = catch-top/bottom. Hard ban score≥7 cho RANGE_SCALP.
+
+- ✅ **TIER_RATING — auto tag mỗi signal** — `scanner/scan_engine.py:_compute_tier()`. Mục tiêu: user không phải đắn đo "có vào không". Mỗi signal được rate Tier 1/2/3/SKIP dựa trên 6 criteria backtest-driven:
+  1. Strategy (SWING_H1=+1, REVERSAL=+0.5, RANGE_SCALP=-0.5)
+  2. Score (5=+1, 6=+0.5, ≥7=-1)
+  3. Direction match H4 bias (match=+1, counter=-0.5)
+  4. RR (≥2.5=+1, ≥2.0=+0.5)
+  5. Momentum (LONG ko dump 24h=+0.5, SHORT ko pump=+0.5)
+  6. Funding không extreme (<0.03%=+0.5, >0.05%=-0.5)
+
+  Tier 1 (pts≥3.5): full size 1.5-2% risk
+  Tier 2 (pts≥2.0): half size 0.75-1% risk
+  Tier 3 (pts≥0.5): small 0.25% / paper trade
+  SKIP (pts<0.5): không vào
+
+  UI: hiển thị badge dưới confidence với tooltip giải thích reasoning.
+  History: lưu field `tier` + `tier_reasons` để backtest re-evaluate theo tier.
+
 ## ✅ Đã apply (2026-05-14)
 
 - ✅ **Fix 2 — Block RANGE_SCALP trong trending market** — `dashboard/range_engine.py`. 

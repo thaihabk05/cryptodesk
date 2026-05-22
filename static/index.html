@@ -1833,6 +1833,35 @@ function fmt(n) {
   else                   dec = 8;
   return '$' + v.toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec});
 }
+// ── TIER_RATING helpers (22/5/2026) ──
+function tierLabel(tier) {
+  if (tier === 'TIER_1') return '🟢 T1';
+  if (tier === 'TIER_2') return '🟡 T2';
+  if (tier === 'TIER_3') return '🟠 T3';
+  if (tier === 'SKIP')   return '⚫ SKIP';
+  return tier || '';
+}
+function tierColor(tier) {
+  if (tier === 'TIER_1') return 'var(--long)';
+  if (tier === 'TIER_2') return 'var(--wait)';
+  if (tier === 'TIER_3') return '#ff8c5a';
+  if (tier === 'SKIP')   return 'var(--muted2)';
+  return 'var(--muted)';
+}
+function tierTooltip(reasons) {
+  if (!reasons) return '';
+  var pos = (reasons.positives || []).map(function(p){ return '✅ '+p; }).join('\n');
+  var neg = (reasons.negatives || []).map(function(p){ return '❌ '+p; }).join('\n');
+  return 'Pts: ' + (reasons.pts || 0) + '\n\n' + pos + (neg ? '\n\n' + neg : '');
+}
+function tierSizeNote(tier) {
+  if (tier === 'TIER_1') return 'Full size (1.5-2% risk)';
+  if (tier === 'TIER_2') return 'Half size (0.75-1% risk)';
+  if (tier === 'TIER_3') return 'Small / paper (0.25% risk)';
+  if (tier === 'SKIP')   return 'KHÔNG vào';
+  return '';
+}
+
 function fmtVol(n) {
   if (!n) return '--';
   if (n >= 1e9) return '$'+(n/1e9).toFixed(1)+'B';
@@ -3720,7 +3749,9 @@ function renderHistory() {
       '<td style="color:var(--text);opacity:.75;font-size:11px;white-space:nowrap">'+ts+'</td>' +
       '<td><b>'+d.symbol.replace('USDT','')+'</b><span style="color:var(--muted2)">/USDT</span></td>' +
       '<td><span class="badge '+d.direction+'">'+d.direction+'</span></td>' +
-      '<td><span style="font-size:11px;font-weight:700;color:'+cc+'">'+d.confidence+'</span></td>' +
+      '<td><span style="font-size:11px;font-weight:700;color:'+cc+'">'+d.confidence+'</span>' +
+        (d.tier ? '<div style="font-size:9px;font-weight:800;margin-top:2px;color:'+tierColor(d.tier)+'" title="'+tierTooltip(d.tier_reasons)+'">'+tierLabel(d.tier)+'</div>' : '') +
+      '</td>' +
       '<td style="font-size:10px;color:var(--muted2)">'+strat+'</td>' +
       '<td>'+algoTag(d.algo)+'</td>' +
       '<td class="mono" style="color:var(--text)">'+fmt(d.price)+'</td>' +

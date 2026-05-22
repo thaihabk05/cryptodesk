@@ -367,6 +367,9 @@ def _save_signal_to_history(result: dict):
             "source":          source,
             "algo":            result.get("algo", ""),
             "alert_type":      result.get("alert_type", ""),
+            # ── TIER_RATING (22/5/2026) ──
+            "tier":            result.get("tier", ""),
+            "tier_reasons":    result.get("tier_reasons", {}),
             # ── Algorithm version tracking ──
             "algo_version":    ALGO_VERSION,
             "algo_date":       ALGO_DATE,

@@ -164,6 +164,19 @@ def _process_result(result, sym_info, mode_tag):
         print(f"[FIX1 BLOCK] {sym} LONG: BTC {btc_chg_24h:.2f}% nhưng alt {chg_24h:+.2f}% — catch-up dump risk")
         return None
 
+    # ── Filter 4c (Fix 11 — 26/5): Anti-bounce-after-dump cho SHORT ──
+    # Backtest 23/5 disaster: 15/15 SHORT đều LOSS sau khi BTC dump -2.8% rồi bounce +1.74%.
+    # Pattern kinh điển: BTC dump strong → bounce mean reversion → SHORT entries giữa range
+    # bị quét sạch. Engine fire SHORT đúng cấu trúc (RISK_OFF) nhưng timing tệ.
+    # Logic: nếu BTC dump > -2% trong 24h → block SHORT (đợi bounce settle).
+    if direction == "SHORT" and btc_chg_24h < -2.0:
+        print(f"[FIX11 BLOCK] {sym} SHORT: BTC dump {btc_chg_24h:.2f}% — risk bounce mean reversion")
+        return None
+    # Tương tự: alt đã dump quá nhiều → SHORT entry tệ (gần đáy thay vì đỉnh)
+    if direction == "SHORT" and chg_24h < -5.0:
+        print(f"[FIX11 BLOCK] {sym} SHORT: alt đã dump {chg_24h:+.2f}% — short ở vùng đáy")
+        return None
+
     # ── Filter 5 (Fix 8 — 22/5): RANGE_SCALP score ≥ 7 paradox ──
     # Backtest 22/5: 28/30 score=7 là RANGE_SCALP, WR 3% (1W/29L), -25.94R.
     # Engine RANGE_SCALP fire "max confidence" (score 7) thường là trong range break out

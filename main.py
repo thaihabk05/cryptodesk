@@ -537,14 +537,33 @@ def _check_watchlist_alert(sym: str, result: dict, cfg: dict, algo_key: str):
     if not alert_type:
         return
 
-    # Cooldown ngắn hơn cho fast loop — 15 phút (vs 1 tiếng cũ)
+    # Fix 10 (26/5): hard cooldown 4h cho watchlist alert (cũ: 15 phút).
+    # Backtest 23/5 disaster: NIL/BANANAS31/AIA fire SHORT 2-3 lần trong 6h, all LOSS.
+    # Cooldown 15 phút quá lỏng cho điều kiện market RISK_OFF.
     import time
-    cooldown_key = f"{sym}_{direction}_{algo_key}_{alert_type}"
+    cooldown_key = f"{sym}_{direction}_{algo_key}"  # Bỏ alert_type khỏi key → dedup chéo GO/APPROACHING
     now = time.time()
     last_alert = _watchlist_alert_cooldown.get(cooldown_key, 0)
-    if now - last_alert < 900:  # cooldown 15 phút
+    COOLDOWN_SEC = 4 * 3600  # 4 giờ
+    if now - last_alert < COOLDOWN_SEC:
         return
     _watchlist_alert_cooldown[cooldown_key] = now
+
+    # Fix 9 (26/5): TIER_RATING cho watchlist signals.
+    # Trước đó: scanner _process_result tính tier, nhưng watchlist bypass scanner → no tier.
+    # Backtest 23-26/5: 35/35 signals UNTAGGED → user không thấy tier badge.
+    try:
+        from scanner.scan_engine import _compute_tier
+        # Build minimal sym_info từ result để _compute_tier dùng
+        _sym_info = {
+            "volume_24h":       result.get("volume_24h", 0),
+            "price_change_pct": (result.get("market", {}) or {}).get("price_change_pct", 0),
+        }
+        result["tier"], result["tier_reasons"] = _compute_tier(result, _sym_info)
+    except Exception as e:
+        print(f"[TIER COMPUTE ERROR] {sym}: {e}")
+        result["tier"] = "UNTAGGED"
+        result["tier_reasons"] = {"pts": 0, "positives": [], "negatives": [str(e)]}
 
     # Save vào history với tag source — trước đây watchlist alert không lưu nên
     # backtest + dashboard history không phản ánh đầy đủ những signal engine đã ra

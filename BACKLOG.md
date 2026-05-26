@@ -17,6 +17,28 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-05-26)
+
+Backtest 23-26/5 (32 closed, 3 ngày): WR 15.6%, -14.95R 🔴 — disaster 23/5 (0/15).
+Root causes:
+1. BTC dump -2.8% rồi bounce +1.74% → mean reversion squeeze SHORT entries
+2. Duplicate signals: NIL/BANANAS31/AIA fire 2-3 lần SHORT trong 6h
+3. TIER_RATING không apply cho watchlist signals (35/35 UNTAGGED)
+
+- ✅ **Fix 9 — TIER_RATING cho watchlist signals** — `main.py:_check_watchlist_alert`. Trước: watchlist alert bypass scanner _process_result → no tier. Sau: gọi `_compute_tier()` trực tiếp trong watchlist flow trước khi save history.
+
+- ✅ **Fix 10 — Hard cooldown 4h** — `main.py:_check_watchlist_alert`. Cũ: cooldown 15 phút theo (symbol, direction, alert_type). Mới: cooldown **4h** theo (symbol, direction) — bỏ alert_type khỏi key → dedup chéo GO/APPROACHING. Catch case 23/5: NIL SHORT 3 lần trong 6h.
+
+- ✅ **Fix 11 — Anti-bounce-after-dump filter** — `scanner/scan_engine.py`. Block SHORT khi:
+  - BTC 24h < -2% (đợi bounce mean reversion settle)
+  - HOẶC alt 24h < -5% (short gần đáy, RR tệ)
+  - Logic: dump strong thường có bounce 3-7% trong 24h tiếp theo → SHORT entries giữa range bị quét.
+
+Simulate Fix 10+11 trên data 5/23-5/26:
+  - Trước: 32 closed, WR 15.6%, sumR -14.95R
+  - Sau:   10 closed, WR 40%, sumR +4.24R
+  - Cắt 69% volume nhưng turn -15R → +4R
+
 ## ✅ Đã apply (2026-05-22)
 
 - ✅ **Fix 7 — RANGE_SCALP coin-level trending block** — `scanner/scan_engine.py`. Backtest 22/5 cho thấy Fix 2 không trigger (BTC NEUTRAL 99% time) nhưng RANGE_SCALP LONG vẫn 0% WR. Root cause: COIN tự nó đang trending bearish, không phụ thuộc BTC. Logic mới: nếu mode=RANGE_SCALP và direction=LONG nhưng coin H1 stack BEARISH (price<MA34<MA89) → block. Tương tự SHORT với H1 BULLISH.

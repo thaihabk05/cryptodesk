@@ -17,6 +17,20 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-05-29)
+
+Backtest 5/29: 6/6 SHORT signals LOSS (ESPORTS, MEGA, SOMI, PHAROS, VVV, TRUMP).
+Root cause: BTC dump -3.06% (5/28) rồi recovery +0.23% (5/29) — Fix 11 (check 24h)
+không trigger vì 24h chg = +0.23%, nhưng thực ra đang trong "bottom bounce phase".
+
+- ✅ **Fix 12 — Expand anti-bounce SHORT** — `scanner/scan_engine.py`:
+  - Cache thêm `btc_48h_chg` và `btc_prev_24h_chg` (h-48 → h-24)
+  - Block SHORT khi:
+    - 24h chg < -2% (Fix 11 cũ)
+    - HOẶC 48h chg < -3% (Fix 12 Case 2 — vừa dump trong 48h)
+    - HOẶC prev_24h < -2.5% + 24h > -1% (Fix 12 Case 3 — recovery phase sau dump)
+  - Test trên data 5/29: Fix 12 Case 3 trigger → block tất cả 6 SHORT → save 6R.
+
 ## ✅ Đã apply (2026-05-26)
 
 Backtest 23-26/5 (32 closed, 3 ngày): WR 15.6%, -14.95R 🔴 — disaster 23/5 (0/15).

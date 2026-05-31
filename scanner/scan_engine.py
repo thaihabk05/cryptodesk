@@ -164,18 +164,29 @@ def _process_result(result, sym_info, mode_tag):
         print(f"[FIX1 BLOCK] {sym} LONG: BTC {btc_chg_24h:.2f}% nhưng alt {chg_24h:+.2f}% — catch-up dump risk")
         return None
 
-    # ── Filter 4c (Fix 11 — 26/5): Anti-bounce-after-dump cho SHORT ──
-    # Backtest 23/5 disaster: 15/15 SHORT đều LOSS sau khi BTC dump -2.8% rồi bounce +1.74%.
-    # Pattern kinh điển: BTC dump strong → bounce mean reversion → SHORT entries giữa range
-    # bị quét sạch. Engine fire SHORT đúng cấu trúc (RISK_OFF) nhưng timing tệ.
-    # Logic: nếu BTC dump > -2% trong 24h → block SHORT (đợi bounce settle).
-    if direction == "SHORT" and btc_chg_24h < -2.0:
-        print(f"[FIX11 BLOCK] {sym} SHORT: BTC dump {btc_chg_24h:.2f}% — risk bounce mean reversion")
-        return None
-    # Tương tự: alt đã dump quá nhiều → SHORT entry tệ (gần đáy thay vì đỉnh)
-    if direction == "SHORT" and chg_24h < -5.0:
-        print(f"[FIX11 BLOCK] {sym} SHORT: alt đã dump {chg_24h:+.2f}% — short ở vùng đáy")
-        return None
+    # ── Filter 4c (Fix 11 + Fix 12 — 26/5, expand 29/5): Anti-bounce-after-dump cho SHORT ──
+    # Backtest 23/5 + 29/5 disaster: SHORT signals LOSS toàn bộ sau khi BTC dump → bounce.
+    # Fix 11 (24h check) bị miss case 29/5: BTC 24h chỉ +0.23% (recovery) nhưng 48h -2.83%.
+    # Fix 12: thêm check 48h và prev_24h để catch "bottom bounce phase".
+    btc_48h_chg = float(SCAN_CFG.get("btc_48h_chg") or 0)
+    btc_prev_24h_chg = float(SCAN_CFG.get("btc_prev_24h_chg") or 0)
+    if direction == "SHORT":
+        # Case 1: BTC đang dump (Fix 11 cũ)
+        if btc_chg_24h < -2.0:
+            print(f"[FIX11 BLOCK] {sym} SHORT: BTC dump 24h {btc_chg_24h:.2f}% — risk bounce")
+            return None
+        # Case 2: BTC vừa dump trong 48h trước (Fix 12 mới)
+        if btc_48h_chg < -3.0:
+            print(f"[FIX12 BLOCK] {sym} SHORT: BTC 48h {btc_48h_chg:.2f}% — đang recovery, risk squeeze")
+            return None
+        # Case 3: Recovery phase (Fix 12 mới) — BTC dump h48→h24, giờ đang phục hồi
+        if btc_prev_24h_chg < -2.5 and btc_chg_24h > -1.0:
+            print(f"[FIX12 BLOCK] {sym} SHORT: BTC prev_24h {btc_prev_24h_chg:.2f}% + recovery — bounce phase")
+            return None
+        # Case 4: alt đã dump quá nhiều → SHORT entry tệ (gần đáy)
+        if chg_24h < -5.0:
+            print(f"[FIX11 BLOCK] {sym} SHORT: alt đã dump {chg_24h:+.2f}% — short ở vùng đáy")
+            return None
 
     # ── Filter 5 (Fix 8 — 22/5): RANGE_SCALP score ≥ 7 paradox ──
     # Backtest 22/5: 28/30 score=7 là RANGE_SCALP, WR 3% (1W/29L), -25.94R.
@@ -377,18 +388,25 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
         except Exception as e:
             print(f"[SCAN] load_config warning: {e}")
         # Fix 1 (12/5): cache BTC 24h change để filter alt-vs-BTC relative strength.
-        # Khi BTC pump mạnh mà alt không follow → distribution phase, LONG alt rất rủi ro.
-        # Backtest 5/11-5/12: RISK_ON × LONG WR chỉ 15% (-55R) vs NEUTRAL × LONG WR 34%.
+        # Fix 12 (29/5): thêm 48h chg để catch "bottom bounce" phase sau dump.
+        # Backtest 5/29 disaster: 6/6 SHORT LOSS vì BTC vừa dump -3% rồi recovery →
+        # Fix 11 (24h check) không trigger vì 24h chg = +0.23%, nhưng 48h chg = -2.83%.
         try:
             from core.binance import fetch_klines
-            df_btc = fetch_klines("BTCUSDT", "1h", 25, force_futures=False)
-            btc_now  = float(df_btc["close"].iloc[-1])
-            btc_24ha = float(df_btc["close"].iloc[0])
-            SCAN_CFG["btc_24h_chg"] = round((btc_now - btc_24ha) / btc_24ha * 100, 2)
-            print(f"[SCAN] BTC 24h change: {SCAN_CFG['btc_24h_chg']:+.2f}%")
+            df_btc = fetch_klines("BTCUSDT", "1h", 50, force_futures=False)
+            btc_now   = float(df_btc["close"].iloc[-1])
+            btc_24ha  = float(df_btc["close"].iloc[-25])
+            btc_48ha  = float(df_btc["close"].iloc[0])
+            SCAN_CFG["btc_24h_chg"] = round((btc_now  - btc_24ha) / btc_24ha * 100, 2)
+            SCAN_CFG["btc_48h_chg"] = round((btc_now  - btc_48ha) / btc_48ha * 100, 2)
+            # Đoạn dump trong 48h trước (từ 48h trước đến 24h trước) — detect "recovery phase"
+            SCAN_CFG["btc_prev_24h_chg"] = round((btc_24ha - btc_48ha) / btc_48ha * 100, 2)
+            print(f"[SCAN] BTC chg: 24h={SCAN_CFG['btc_24h_chg']:+.2f}% | 48h={SCAN_CFG['btc_48h_chg']:+.2f}% | prev_24h={SCAN_CFG['btc_prev_24h_chg']:+.2f}%")
         except Exception as e:
             print(f"[SCAN] BTC fetch warning: {e}")
             SCAN_CFG["btc_24h_chg"] = 0
+            SCAN_CFG["btc_48h_chg"] = 0
+            SCAN_CFG["btc_prev_24h_chg"] = 0
         scan_state.update({"running": True, "progress": 0, "results": [],
                            "error": None, "started_at": datetime.now(_TZ_VN).isoformat(),
                            "finished_at": None, "strategy": strategy})

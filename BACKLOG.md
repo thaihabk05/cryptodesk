@@ -17,6 +17,34 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-06-03 - phần 2)
+
+User feedback: "ARB anh short thành công +25% nhưng hệ thống không fire 1 signal nào"
+Phân tích phát hiện gap critical:
+
+- Re-eval blacklist 3/6: **14/20 coin** trong blacklist hiện đang ở H4 DOWN + 7d < -5%
+  → tradeable SHORT! Blacklist được build từ LONG losers, nhưng SHORT lại tốt.
+
+- ✅ **Fix 14a — Direction-aware blacklist** — `scanner/scan_engine.py:Filter 0`:
+  - Blacklist chỉ block LONG. SHORT vẫn cho qua (filter khác sẽ judge).
+  - Case ARB: trong blacklist nhưng SHORT vẫn được fire khi setup đúng.
+
+- ✅ **Fix 14b — Established downtrend bypass** — `scanner/scan_engine.py:Filter 4c`:
+  - Bypass Fix 11/12 (anti-bounce SHORT) khi coin đã ở "established downtrend":
+    - H4 EMA34<89<200 (PERFECT BEARISH stack)
+    - D1 bias ≠ LONG
+  - Logic: Fix 11/12 block "bottom bounce phase" — đúng ý tưởng nhưng quá strict.
+    Coin trong established downtrend (như ARB) đã DOWN từ lâu, không phải mới
+    bounce — SHORT trên đó vẫn có edge cao.
+  - Verify: ARB hiện H4 stack DOWN + D1 bias SHORT → established=True → SHORT pass.
+
+- ✅ **Fix 16 — Tier downgrade khi SL/ATR ratio < 1.0×** — `scanner/scan_engine.py:_compute_tier`:
+  - Thêm criterion 7: tính `sl_atr_ratio = sl_pct / atr_pct`
+  - ratio ≥ 1.5× → +0.5 pts (SL safe)
+  - ratio < 1.0× → -1.0 pts (SL quá tight, dễ quét)
+  - Proxy cho dynamic SL — user thấy warning trong tier reasons.
+  - Case GUA tránh: ATR% 3.61%, SL 2% → ratio 0.55× → tier downgrade nghiêm trọng.
+
 ## ✅ Đã apply (2026-06-03)
 
 Backtest 5/31-6/1: 2/2 SHORT LOSS — nhưng phân tích sâu cho thấy:

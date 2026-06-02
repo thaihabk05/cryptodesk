@@ -110,11 +110,18 @@ def _process_result(result, sym_info, mode_tag):
     if result.get("direction") not in ("LONG", "SHORT"):
         return None
 
-    # ── Filter 0: Coin blacklist — backtest 7 ngày data, các coin 0% WR ──
+    # ── Filter 0: Coin blacklist — DIRECTION-AWARE (Fix 14 — 3/6) ──
+    # Blacklist gốc được build từ LONG losers (toàn 0% WR khi LONG).
+    # Re-eval 3/6/2026: 14/20 coin blacklist hiện đang ở H4 DOWN + 7d < -5% → SHORT tradeable!
+    # Logic mới: blacklist chỉ block LONG. SHORT vẫn cho qua (engine sẽ tự filter qua các fix khác).
     sym = result.get("symbol", "")
+    direction = result.get("direction", "")
     blacklist = SCAN_CFG.get("coin_blacklist") or []
-    if sym in blacklist:
+    if sym in blacklist and direction == "LONG":
         return None
+    # SHORT trên coin blacklist: cho qua nhưng cảnh báo
+    if sym in blacklist and direction == "SHORT":
+        print(f"[BLACKLIST OVERRIDE] {sym} SHORT allowed (coin trong LONG-blacklist nhưng SHORT có thể tradeable)")
 
     # ── Filter 1: Confidence — bỏ LOW + MEDIUM ──
     # Backtest 7 ngày data: MEDIUM confidence WR chỉ 12% (n=8, -5R) → cấm.
@@ -164,29 +171,47 @@ def _process_result(result, sym_info, mode_tag):
         print(f"[FIX1 BLOCK] {sym} LONG: BTC {btc_chg_24h:.2f}% nhưng alt {chg_24h:+.2f}% — catch-up dump risk")
         return None
 
-    # ── Filter 4c (Fix 11 + Fix 12 — 26/5, expand 29/5): Anti-bounce-after-dump cho SHORT ──
-    # Backtest 23/5 + 29/5 disaster: SHORT signals LOSS toàn bộ sau khi BTC dump → bounce.
-    # Fix 11 (24h check) bị miss case 29/5: BTC 24h chỉ +0.23% (recovery) nhưng 48h -2.83%.
-    # Fix 12: thêm check 48h và prev_24h để catch "bottom bounce phase".
+    # ── Filter 4c (Fix 11 + 12 — 26-29/5, refined 3/6 với Fix 14b): Anti-bounce SHORT ──
+    # Backtest 23/5 + 29/5: SHORT signals LOSS sau BTC dump → bounce mean reversion.
+    # Fix 14b (3/6): bypass cho "ESTABLISHED DOWNTREND" — coin đã ở H4 DOWN + 7d < -8%.
+    # Case ARB: shorted 0.13 → 0.098 (+25%) trong 2 tuần qua. Nếu apply Fix 11/12 → MISS.
     btc_48h_chg = float(SCAN_CFG.get("btc_48h_chg") or 0)
     btc_prev_24h_chg = float(SCAN_CFG.get("btc_prev_24h_chg") or 0)
     if direction == "SHORT":
-        # Case 1: BTC đang dump (Fix 11 cũ)
-        if btc_chg_24h < -2.0:
-            print(f"[FIX11 BLOCK] {sym} SHORT: BTC dump 24h {btc_chg_24h:.2f}% — risk bounce")
-            return None
-        # Case 2: BTC vừa dump trong 48h trước (Fix 12 mới)
-        if btc_48h_chg < -3.0:
-            print(f"[FIX12 BLOCK] {sym} SHORT: BTC 48h {btc_48h_chg:.2f}% — đang recovery, risk squeeze")
-            return None
-        # Case 3: Recovery phase (Fix 12 mới) — BTC dump h48→h24, giờ đang phục hồi
-        if btc_prev_24h_chg < -2.5 and btc_chg_24h > -1.0:
-            print(f"[FIX12 BLOCK] {sym} SHORT: BTC prev_24h {btc_prev_24h_chg:.2f}% + recovery — bounce phase")
-            return None
-        # Case 4: alt đã dump quá nhiều → SHORT entry tệ (gần đáy)
-        if chg_24h < -5.0:
-            print(f"[FIX11 BLOCK] {sym} SHORT: alt đã dump {chg_24h:+.2f}% — short ở vùng đáy")
-            return None
+        # Fix 14b: Detect "established downtrend" — coin đã giảm structurally trong nhiều TF.
+        # Proxy: H4 PERFECT BEARISH stack + D1 đã DOWN (bias).
+        # Case ARB: H4 EMA34<89<200 đã từ 2 tuần → established, không phải mới dump.
+        h4_info = result.get("h4") or {}
+        h4_ma34 = h4_info.get("ma34") or 0
+        h4_ma89 = h4_info.get("ma89") or 0
+        h4_ma200 = h4_info.get("ma200") or 0
+        h4_established_down = (h4_ma34 and h4_ma89 and h4_ma200 and
+                               h4_ma34 < h4_ma89 < h4_ma200)
+        # Bias D1 — đa số engine output cái này
+        d1_bias = (result.get("d1") or {}).get("bias", "") or result.get("d1_bias", "")
+        # Established downtrend: H4 stack đã DOWN + D1 bias SHORT/NEUTRAL (không UP)
+        established_downtrend = h4_established_down and d1_bias != "LONG"
+
+        if established_downtrend:
+            # Bypass Fix 11/12 — SHORT trên established downtrend OK
+            pass
+        else:
+            # Case 1: BTC đang dump (Fix 11 cũ)
+            if btc_chg_24h < -2.0:
+                print(f"[FIX11 BLOCK] {sym} SHORT: BTC dump 24h {btc_chg_24h:.2f}% — risk bounce")
+                return None
+            # Case 2: BTC vừa dump trong 48h trước (Fix 12 mới)
+            if btc_48h_chg < -3.0:
+                print(f"[FIX12 BLOCK] {sym} SHORT: BTC 48h {btc_48h_chg:.2f}% — đang recovery, risk squeeze")
+                return None
+            # Case 3: Recovery phase (Fix 12 mới) — BTC dump h48→h24, giờ đang phục hồi
+            if btc_prev_24h_chg < -2.5 and btc_chg_24h > -1.0:
+                print(f"[FIX12 BLOCK] {sym} SHORT: BTC prev_24h {btc_prev_24h_chg:.2f}% + recovery — bounce phase")
+                return None
+            # Case 4: alt đã dump quá nhiều → SHORT entry tệ (gần đáy)
+            if chg_24h < -5.0:
+                print(f"[FIX11 BLOCK] {sym} SHORT: alt đã dump {chg_24h:+.2f}% — short ở vùng đáy")
+                return None
 
     # ── Filter 4d (Fix 13 — 03/6): Block coin high volatility ──
     # Backtest 2 LOSS 5/31-6/1: GUA SHORT @ 0.8604 hit SL nhưng giá thực sự GIẢM -5.94% sau đó.
@@ -334,6 +359,23 @@ def _compute_tier(result: dict, sym_info: dict) -> tuple:
                 pts -= 0.5; reasons_neg.append(f"Funding extreme {funding:.4f}%")
         except (ValueError, TypeError):
             pass
+
+    # Criterion 7 (Fix 16 — 3/6): SL/ATR ratio — cảnh báo SL quá tight với volatility
+    # Case GUA: ATR% H1 3.61% nhưng SL 1R (sl_pct ~2%) → bị quét bởi noise.
+    # Quy tắc: SL nên ≥ 1.5× ATR%. Nếu < 1× ATR% → tight, downgrade tier.
+    atr_ratio = result.get("atr_ratio") or (result.get("market") or {}).get("atr_ratio") or 0
+    sl_pct = result.get("sl_pct") or 0
+    try:
+        atr_pct = float(atr_ratio) * 100 if atr_ratio < 1 else float(atr_ratio)
+        sl_pct_val = float(sl_pct)
+        if atr_pct > 0 and sl_pct_val > 0:
+            sl_atr_ratio = sl_pct_val / atr_pct
+            if sl_atr_ratio >= 1.5:
+                pts += 0.5; reasons_pos.append(f"SL/ATR {sl_atr_ratio:.1f}x safe")
+            elif sl_atr_ratio < 1.0:
+                pts -= 1.0; reasons_neg.append(f"SL/ATR {sl_atr_ratio:.1f}x QUÁ TIGHT — dễ quét")
+    except (ValueError, TypeError):
+        pass
 
     # ── Compute tier ──
     if pts >= 3.5:

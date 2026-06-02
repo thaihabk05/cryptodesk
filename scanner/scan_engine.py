@@ -188,6 +188,19 @@ def _process_result(result, sym_info, mode_tag):
             print(f"[FIX11 BLOCK] {sym} SHORT: alt đã dump {chg_24h:+.2f}% — short ở vùng đáy")
             return None
 
+    # ── Filter 4d (Fix 13 — 03/6): Block coin high volatility ──
+    # Backtest 2 LOSS 5/31-6/1: GUA SHORT @ 0.8604 hit SL nhưng giá thực sự GIẢM -5.94% sau đó.
+    # Root cause: GUA ATR% H1 = 3.61% → SL 1R (~2%) bị quét bởi noise bình thường.
+    # Coin biến động > 2.5%/giờ không phù hợp swing trade với SL fixed.
+    atr_ratio_h1 = result.get("atr_ratio") or (result.get("market") or {}).get("atr_ratio") or 0
+    try:
+        atr_pct_h1 = float(atr_ratio_h1) * 100 if atr_ratio_h1 < 1 else float(atr_ratio_h1)
+    except (ValueError, TypeError):
+        atr_pct_h1 = 0
+    if atr_pct_h1 > 2.5:
+        print(f"[FIX13 BLOCK] {sym} {direction}: ATR% H1 {atr_pct_h1:.2f}% > 2.5% — too volatile for fixed SL")
+        return None
+
     # ── Filter 5 (Fix 8 — 22/5): RANGE_SCALP score ≥ 7 paradox ──
     # Backtest 22/5: 28/30 score=7 là RANGE_SCALP, WR 3% (1W/29L), -25.94R.
     # Engine RANGE_SCALP fire "max confidence" (score 7) thường là trong range break out

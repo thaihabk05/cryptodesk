@@ -17,6 +17,20 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-06-03)
+
+Backtest 5/31-6/1: 2/2 SHORT LOSS — nhưng phân tích sâu cho thấy:
+- GUAUSDT SHORT @ 0.8604 → SL hit. Nhưng giá thực tế giảm -5.94% sau đó (đúng direction!)
+- ONDOUSDT SHORT @ 0.3579 → giá pump +4.36% (sai direction)
+
+Root cause GUA: ATR% H1 = **3.61%** → SL 1R bị quét bởi noise. Right idea, wrong sizing.
+
+- ✅ **Fix 13 — Block high-volatility coin** — `scanner/scan_engine.py`:
+  - Block khi ATR% H1 > 2.5%
+  - Logic: coin biến động > 2.5%/giờ không phù hợp swing trade với SL fixed.
+  - Pattern lặp lại trong 2 disaster sessions trước (23/5, 29/5) — đa số coin LOSS
+    đều có ATR% cao.
+
 ## ✅ Đã apply (2026-05-29)
 
 Backtest 5/29: 6/6 SHORT signals LOSS (ESPORTS, MEGA, SOMI, PHAROS, VVV, TRUMP).

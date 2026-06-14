@@ -110,18 +110,22 @@ def _process_result(result, sym_info, mode_tag):
     if result.get("direction") not in ("LONG", "SHORT"):
         return None
 
-    # ── Filter 0: Coin blacklist — DIRECTION-AWARE (Fix 14 — 3/6) ──
-    # Blacklist gốc được build từ LONG losers (toàn 0% WR khi LONG).
-    # Re-eval 3/6/2026: 14/20 coin blacklist hiện đang ở H4 DOWN + 7d < -5% → SHORT tradeable!
-    # Logic mới: blacklist chỉ block LONG. SHORT vẫn cho qua (engine sẽ tự filter qua các fix khác).
+    # ── Filter 0: Coin blacklist — DIRECTION-AWARE (Fix 14 — 3/6, refined 14/6) ──
+    # Blacklist gốc: LONG losers (chỉ block LONG, SHORT pass).
+    # Strict blacklist (Fix 18 — 14/6): toxic coin block CẢ 2 chiều.
+    # Backtest 6/8-6/14: GUA fire 5 SHORT all LOSS, SKR 3/3, BANANAS31 2/2, RKLB 2/2 → strict.
     sym = result.get("symbol", "")
     direction = result.get("direction", "")
     blacklist = SCAN_CFG.get("coin_blacklist") or []
+    blacklist_strict = SCAN_CFG.get("coin_blacklist_strict") or []
+    if sym in blacklist_strict:
+        print(f"[STRICT BLACKLIST] {sym} {direction} blocked (toxic both directions)")
+        return None
     if sym in blacklist and direction == "LONG":
         return None
-    # SHORT trên coin blacklist: cho qua nhưng cảnh báo
+    # SHORT trên coin blacklist (non-strict): cho qua nhưng cảnh báo
     if sym in blacklist and direction == "SHORT":
-        print(f"[BLACKLIST OVERRIDE] {sym} SHORT allowed (coin trong LONG-blacklist nhưng SHORT có thể tradeable)")
+        print(f"[BLACKLIST OVERRIDE] {sym} SHORT allowed (LONG-only blacklist)")
 
     # ── Filter 1: Confidence — bỏ LOW + MEDIUM ──
     # Backtest 7 ngày data: MEDIUM confidence WR chỉ 12% (n=8, -5R) → cấm.
@@ -234,6 +238,14 @@ def _process_result(result, sym_info, mode_tag):
     score = int(result.get("score", 0) or 0)
     if mode_tag == "RANGE_SCALP" and score >= 7:
         print(f"[FIX8 BLOCK] {sym} {direction} RANGE_SCALP score={score} — paradox 3% WR")
+        return None
+
+    # ── Filter 5b (Fix 17 — 14/6): SWING_H1 score 6 paradox ──
+    # Backtest 3 lần liên tiếp (22/5, 26/5, 14/6): SWING_H1 sc=6 WR <15% / sumR âm.
+    # 14/6 data: sc=6 4 lệnh LONG WR 25%, 5 lệnh SHORT WR 0%, RANGE sc=6 SHORT 0%.
+    # Pattern paradox đã đủ confirm sau 3 sample → hard ban.
+    if mode_tag in ("SWING_H1", "RANGE_SCALP") and score == 6:
+        print(f"[FIX17 BLOCK] {sym} {direction} {mode_tag} score=6 — paradox sample đã đủ confirm")
         return None
 
     # ── Filter 6 (Fix 7 — 22/5): RANGE_SCALP block khi coin tự trending ──
@@ -438,8 +450,10 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
         try:
             from main import load_config
             _cfg = load_config()
-            SCAN_CFG["coin_blacklist"] = _cfg.get("coin_blacklist") or []
-            SCAN_CFG["scan_min_rr"]    = float(_cfg.get("scan_min_rr", 1.8))
+            SCAN_CFG["coin_blacklist"]        = _cfg.get("coin_blacklist") or []
+            SCAN_CFG["coin_blacklist_strict"] = _cfg.get("coin_blacklist_strict") or []
+            SCAN_CFG["scan_min_rr"]           = float(_cfg.get("scan_min_rr", 1.8))
+            print(f"[SCAN] Blacklist: {len(SCAN_CFG['coin_blacklist'])} LONG-only + {len(SCAN_CFG['coin_blacklist_strict'])} strict")
         except Exception as e:
             print(f"[SCAN] load_config warning: {e}")
         # Fix 1 (12/5): cache BTC 24h change để filter alt-vs-BTC relative strength.

@@ -20,6 +20,19 @@
   ],
   "scan_min_rr": 1.8,
   "min_vol_scan": 2000000,
+  "coin_blacklist_strict": [
+    "GUAUSDT",
+    "SKRUSDT",
+    "HEMIUSDT",
+    "ZESTUSDT",
+    "BANANAS31USDT",
+    "RKLBUSDT",
+    "XAIUSDT",
+    "PYTHUSDT",
+    "UBUSDT",
+    "TIAUSDT",
+    "XMRUSDT"
+  ],
   "coin_blacklist": [
     "ARBUSDT",
     "TRIAUSDT",

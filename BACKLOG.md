@@ -17,6 +17,33 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-06-14)
+
+Backtest 6/8-6/14 (41 closed): WR 22%, -13.11R 🔴
+Discovery quan trọng: export raw_signals KHÔNG bao gồm tier/atr_ratio/source
+→ 3 fix trước đây không verify được vì data thiếu fields.
+
+- ✅ **Fix export raw_signals** — `static/index.html:exportAnalysis`:
+  Thêm 4 fields: `tier`, `tier_reasons`, `atr_ratio`, `source`. Backtest sau
+  này sẽ có đủ data để verify TIER và Fix 13 hoạt động.
+
+- ✅ **Fix 17 — Hard ban SWING_H1/RANGE_SCALP score 6** — `scanner/scan_engine.py`:
+  Paradox xác nhận sau 3 backtest liên tiếp (22/5, 26/5, 14/6):
+  - SWING_H1 sc=6: WR 8-25%, sumR luôn âm
+  - RANGE_SCALP sc=6: WR 0-27%, sumR âm
+  Sample đã đủ confirm — hard ban hoàn toàn.
+
+- ✅ **Fix 18 — Strict blacklist (block both directions)** — `data/config.json` + scanner:
+  Thêm `coin_blacklist_strict` cho coin toxic cả 2 chiều:
+    GUA, SKR, HEMI, ZEST, BANANAS31, RKLB, XAI, PYTH, UB, TIA, XMR
+  Backtest 6/8-6/14: 13 lệnh từ các coin này → 0 WIN.
+  Khác với `coin_blacklist` (chỉ block LONG): strict block CẢ 2.
+
+Simulate impact Fix 17+18 trên data 6/8-6/14:
+  Trước: 41 closed, WR 22%, sumR -13.11R
+  Sau:   15 closed, WR 53%, sumR +9.85R
+  → Cắt 63% volume, turn -13R → +10R, WR đạt target 50%
+
 ## ✅ Đã apply (2026-06-03 - phần 2)
 
 User feedback: "ARB anh short thành công +25% nhưng hệ thống không fire 1 signal nào"

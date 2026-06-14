@@ -5926,8 +5926,12 @@ function exportAnalysis() {
         score:       r.score,
         oi_change:   r.oi_change,
         funding:     r.funding,
+        atr_ratio:   r.atr_ratio || (r.market ? r.market.atr_ratio : null),
         btc_sentiment: r.btc_sentiment,
         strategy:    r.strategy,
+        source:      r.source || null,
+        tier:        r.tier || null,
+        tier_reasons: r.tier_reasons || null,
         num_conditions: r.num_conditions,
         num_warnings:   r.num_warnings,
       };

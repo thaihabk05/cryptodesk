@@ -1111,6 +1111,105 @@ def index():
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
+
+# ── Edge v1 paper-trade viewer ────────────────
+@app.route("/api/paper/trades")
+def api_paper_trades():
+    """Trả về paper trades v1 + stats (forward vs backtest)."""
+    import os as _os
+    pf = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "data", "paper_trades_v1.json")
+    if not _os.path.exists(pf):
+        return jsonify({"open": [], "closed": [], "stats": None})
+    try:
+        p = json.loads(open(pf).read())
+    except Exception:
+        return jsonify({"open": [], "closed": [], "stats": None})
+    closed = p.get("closed", [])
+    opens  = p.get("open", [])
+    n = len(closed)
+    wins = sum(1 for c in closed if (c.get("pnl_r") or 0) > 0)
+    totalR = round(sum((c.get("pnl_r") or 0) for c in closed), 2)
+    stats = {
+        "closed": n, "open": len(opens), "wins": wins,
+        "losses": n - wins,
+        "win_rate": round(wins / n * 100, 1) if n else None,
+        "total_r": totalR,
+        "expectancy": round(totalR / n, 3) if n else None,
+        "bt_win_rate": 67, "bt_expectancy": 0.13,   # baseline backtest 3 năm
+    }
+    return jsonify({"open": opens, "closed": closed, "stats": stats})
+
+
+@app.route("/paper")
+def paper_view():
+    return make_response(PAPER_HTML)
+
+
+PAPER_HTML = """<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Edge v1 — Paper Trade</title>
+<style>
+:root{--bg:#0b0e14;--bg2:#141821;--bd:#222836;--tx:#e6e9ef;--mu:#8b93a7;--lg:#1d9e75;--sh:#e5484d;--ac:#3b82f6;--wt:#ba7517}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;padding:18px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--mu);font-size:12px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:18px}
+.card{background:var(--bg2);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;text-align:center}
+.card .l{font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:.6px}
+.card .v{font-size:22px;font-weight:800;font-family:ui-monospace,monospace;margin-top:3px}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:24px}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--bd)}
+th{color:var(--mu);font-size:10px;text-transform:uppercase;font-weight:600}
+td.mono{font-family:ui-monospace,monospace}
+.sec{font-size:13px;font-weight:700;margin:18px 0 8px}
+.short{color:var(--sh);font-weight:700}.win{color:var(--lg);font-weight:700}.loss{color:var(--sh);font-weight:700}.open{color:var(--ac);font-weight:700}
+.empty{color:var(--mu);padding:20px;text-align:center;background:var(--bg2);border:1px solid var(--bd);border-radius:10px}
+.cmp{font-size:11px;color:var(--mu)}.ref{background:var(--bg2);border:1px dashed var(--bd);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--mu);margin-bottom:18px}
+.pos{color:var(--lg)}.neg{color:var(--sh)}
+</style></head><body>
+<h1>📊 Edge v1 — Paper Trade (funding-short)</h1>
+<div class="sub">SHORT khi funding ≥0.05% + giá rời 24h-high ≥1.5% + close &lt; EMA9 H1 · SL 3×ATR / TP 2×ATR · KHÔNG tiền thật</div>
+<div class="ref">📐 <b>Backtest 3 năm (baseline):</b> WR 67% · expectancy +0.13R · 535 lệnh · 75% quý dương. Forward phải khớp ~đây mới tin.</div>
+<div class="cards" id="cards"></div>
+<div class="sec">⏳ Đang mở</div><div id="open"></div>
+<div class="sec">📕 Đã đóng</div><div id="closed"></div>
+<script>
+function fmt(n){if(n==null)return '—';var a=Math.abs(n);var d=a>=100?2:a>=1?3:a>=.01?5:6;return Number(n).toFixed(d);}
+function card(l,v,cls){return '<div class="card"><div class="l">'+l+'</div><div class="v '+(cls||'')+'">'+v+'</div></div>';}
+fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
+  var s=d.stats;
+  var c=document.getElementById('cards');
+  if(!s||s.closed===0){
+    c.innerHTML=card('Đang mở',(s?s.open:0))+card('Đã đóng','0')+card('Trạng thái','Chờ data','');
+  }else{
+    var wrCls=s.win_rate>=55?'pos':s.win_rate>=45?'':'neg';
+    var expCls=s.expectancy>0?'pos':'neg';
+    c.innerHTML=card('Win Rate',s.win_rate+'%',wrCls)+
+      card('Expectancy',(s.expectancy>0?'+':'')+s.expectancy+'R',expCls)+
+      card('Total R',(s.total_r>0?'+':'')+s.total_r+'R',s.total_r>0?'pos':'neg')+
+      card('W / L',s.wins+' / '+s.losses,'')+
+      card('Đang mở',s.open,'')+
+      card('vs Backtest','WR 67% / +0.13R','');
+  }
+  // open
+  var o=d.open||[];
+  document.getElementById('open').innerHTML = o.length? (
+    '<table><thead><tr><th>Time</th><th>Symbol</th><th>Dir</th><th>Funding</th><th>Entry</th><th>SL</th><th>TP</th></tr></thead><tbody>'+
+    o.map(p=>'<tr><td class="mono">'+(p.entry_time||'').slice(5,16).replace('T',' ')+'</td><td><b>'+p.symbol+'</b></td>'+
+    '<td class="short">SHORT</td><td class="mono">'+fmt(p.funding)+'%</td><td class="mono">'+fmt(p.entry)+'</td>'+
+    '<td class="mono">'+fmt(p.sl)+'</td><td class="mono">'+fmt(p.tp)+'</td></tr>').join('')+'</tbody></table>'
+  ) : '<div class="empty">Chưa có lệnh đang mở. Thị trường calm → chờ funding ≥0.05%.</div>';
+  // closed
+  var cl=(d.closed||[]).slice().reverse();
+  document.getElementById('closed').innerHTML = cl.length? (
+    '<table><thead><tr><th>Entry time</th><th>Symbol</th><th>Funding</th><th>Entry</th><th>Exit</th><th>Kết quả</th><th>R</th></tr></thead><tbody>'+
+    cl.map(p=>'<tr><td class="mono">'+(p.entry_time||'').slice(5,16).replace('T',' ')+'</td><td><b>'+p.symbol+'</b></td>'+
+    '<td class="mono">'+fmt(p.funding)+'%</td><td class="mono">'+fmt(p.entry)+'</td><td class="mono">'+fmt(p.exit)+'</td>'+
+    '<td class="'+(p.status==='WIN'?'win':'loss')+'">'+p.status+'</td>'+
+    '<td class="mono '+((p.pnl_r||0)>0?'win':'loss')+'">'+((p.pnl_r||0)>0?'+':'')+p.pnl_r+'R</td></tr>').join('')+'</tbody></table>'
+  ) : '<div class="empty">Chưa có lệnh đóng.</div>';
+}).catch(e=>{document.getElementById('cards').innerHTML='<div class="empty">Lỗi tải: '+e.message+'</div>';});
+</script></body></html>"""
+
 # ── API — Dashboard ───────────────────────────
 @app.route("/api/config", methods=["GET", "POST"])
 def config_api():

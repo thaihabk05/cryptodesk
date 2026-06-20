@@ -17,6 +17,43 @@ Backtest baseline: WR 38.4%, +93.37R, expectancy +0.22R/lệnh trên 422 lệnh 
 - 🔍 **Realistic capital simulation** — feature đề xuất: backtest mode mới mô phỏng vốn thực tế (cap concurrent positions, trừ fee 0.1%/lệnh, trừ funding theo thời gian giữ lệnh). Output: P&L USD thực tế (vs theory). Mục tiêu: biết được "+93R = bao nhiêu $ thực" trên vốn cụ thể. Effort ~30 phút.
 - 🔍 **min_vol_scan 2M check** — đã hạ từ 5M xuống 2M để pick up FORM/MET/MUBARAK/UAI (top winners bị miss). Sau 1 tuần verify: nếu số signal/tuần tăng > 2x mà WR giảm > 5% → revert 2.5M. Nếu WR giữ/tăng → confirm fix tốt. Track metric: total signals/tuần, WR per vol bucket (2-5M / 5-20M / >20M).
 
+## ✅ Đã apply (2026-06-20)
+
+Backtest 6/13-6/20 (52 closed): WR 27%, -10.57R. LẦN ĐẦU có TIER + ATR data thật
+trong export (sau export fix tuần trước).
+
+Discovery quan trọng:
+1. **TIER_1 paradox**: TIER_1 (43 lệnh) WR 26% vs TIER_2 (4 lệnh) WR 50% 🔴
+   → TIER criteria quá liberal, cần tighten threshold.
+2. **Score 6 ĐẢO**: Fix 17 (block sc=6) SAI trong data hiện tại:
+   - SWING_H1 sc=6: WR 33-67%, +3.24R ✅
+   - SWING_H1 sc=5: WR 0-23%, -12R 🔴
+3. **Fix 18 (strict blacklist) work**: GUA/SKR/BANANAS31/RKLB không còn xuất hiện.
+
+- ✅ **Revert Fix 17** — bỏ block SWING_H1/RANGE sc=6:
+  Pattern paradox đảo trong market regime mới. Tuần trước (sideway) sc=6 fail,
+  tuần này (trending) sc=6 win. Score không phải predictor stable.
+
+- ✅ **Fix 19 — Block SWING_H1 SHORT sc=5** — `scanner/scan_engine.py`:
+  Sample: 4/4 LOSS, -4R. Pattern lặp với 3 backtest trước (5-7 lệnh sc=5 SHORT
+  toàn LOSS).
+
+- ✅ **Update TIER_RATING criteria**:
+  - Score 6 → +1 pts (was +0.5)
+  - Score 5 → 0 pts (was +1) — không còn sweet-spot
+  - TIER_1 threshold: 3.5 → **4.5** (chỉ best of best)
+  - TIER_2 threshold: 2.0 → 3.0
+  - TIER_3 threshold: 0.5 → 1.5
+
+Simulate impact Fix 19 + Revert 17 trên data 6/13-6/20:
+  Trước: 52 closed, WR 27%, -10.57R
+  Sau:   48 closed, WR 29%, -6.57R (cắt 4 lệnh, +4R)
+  Improvement nhẹ. Vấn đề chính: 26 lệnh SWING_H1 LONG sc=5 vẫn pass.
+
+WARNING: Đang risk overfitting. Tuần trước ban sc=6, tuần này revert.
+Score-based filters không stable. Cần focus vào structure features
+(h4_stack, atr, btc_context) thay vì score.
+
 ## ✅ Đã apply (2026-06-14)
 
 Backtest 6/8-6/14 (41 closed): WR 22%, -13.11R 🔴

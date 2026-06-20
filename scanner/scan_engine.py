@@ -240,12 +240,20 @@ def _process_result(result, sym_info, mode_tag):
         print(f"[FIX8 BLOCK] {sym} {direction} RANGE_SCALP score={score} — paradox 3% WR")
         return None
 
-    # ── Filter 5b (Fix 17 — 14/6): SWING_H1 score 6 paradox ──
-    # Backtest 3 lần liên tiếp (22/5, 26/5, 14/6): SWING_H1 sc=6 WR <15% / sumR âm.
-    # 14/6 data: sc=6 4 lệnh LONG WR 25%, 5 lệnh SHORT WR 0%, RANGE sc=6 SHORT 0%.
-    # Pattern paradox đã đủ confirm sau 3 sample → hard ban.
-    if mode_tag in ("SWING_H1", "RANGE_SCALP") and score == 6:
-        print(f"[FIX17 BLOCK] {sym} {direction} {mode_tag} score=6 — paradox sample đã đủ confirm")
+    # ── Filter 5b (Fix 17 REVERTED 20/6): score 6 đảo paradox ──
+    # Backtest 6/13-6/20 (52 closed) LẦN ĐẦU có TIER data thật:
+    #   SWING_H1 LONG sc=6:  9 lệnh, WR 33%, +1.62R ✅
+    #   SWING_H1 SHORT sc=6: 3 lệnh, WR 67%, +1.62R ✅
+    #   SWING_H1 LONG sc=5: 26 lệnh, WR 23%, -8.16R 🔴
+    #   SWING_H1 SHORT sc=5: 4 lệnh, WR 0%, -4R 🔴
+    # → Pattern ĐẢO. Score 6 giờ là winner, score 5 là loser.
+    # Có thể do market regime change (sideway → trending). Fix 17 đã block 12 lệnh
+    # có sumR +3.24R = mistake. REVERT, block sc=5 thay.
+
+    # ── Fix 19 (20/6): Block SWING_H1 SHORT score 5 ──
+    # Sample: 4/4 LOSS, -4R. Pattern lặp với 3 backtest trước.
+    if mode_tag == "SWING_H1" and direction == "SHORT" and score == 5:
+        print(f"[FIX19 BLOCK] {sym} SHORT SWING_H1 sc=5 — 0% WR pattern xác nhận")
         return None
 
     # ── Filter 6 (Fix 7 — 22/5): RANGE_SCALP block khi coin tự trending ──
@@ -327,13 +335,15 @@ def _compute_tier(result: dict, sym_info: dict) -> tuple:
     elif strategy == "RANGE_SCALP":
         pts -= 0.5; reasons_neg.append("RANGE_SCALP (WR 6%)")
 
-    # Criterion 2: Score
-    if score == 5:
-        pts += 1; reasons_pos.append("Score 5 sweet-spot")
-    elif score == 6:
-        pts += 0.5; reasons_pos.append("Score 6 ok")
+    # Criterion 2: Score (REVISED 20/6 — pattern đảo từ data mới nhất)
+    # Score 6 giờ là winner: WR 33-67%, sumR positive
+    # Score 5 là loser: WR 23%, sumR -13R
+    if score == 6:
+        pts += 1; reasons_pos.append("Score 6 winner pattern")
+    elif score == 5:
+        pts += 0; reasons_neg.append("Score 5 weak signal")
     elif score >= 7:
-        pts -= 1; reasons_neg.append(f"Score {score} paradox (WR 3%)")
+        pts -= 1; reasons_neg.append(f"Score {score} edge case")
 
     # Criterion 3: Direction matches H4 bias
     if h4_bias in ("LONG", "SHORT") and h4_bias == direction:
@@ -389,12 +399,14 @@ def _compute_tier(result: dict, sym_info: dict) -> tuple:
     except (ValueError, TypeError):
         pass
 
-    # ── Compute tier ──
-    if pts >= 3.5:
+    # ── Compute tier (REVISED 20/6 — tighten thresholds) ──
+    # Backtest 20/6: TIER_1 cũ (≥3.5) WR 26%, TIER_2 (≥2.0) WR 50%.
+    # → TIER_1 quá liberal, gồm cả setup tệ. Tăng threshold để TIER_1 thực sự "best of best".
+    if pts >= 4.5:
         tier = "TIER_1"
-    elif pts >= 2.0:
+    elif pts >= 3.0:
         tier = "TIER_2"
-    elif pts >= 0.5:
+    elif pts >= 1.5:
         tier = "TIER_3"
     else:
         tier = "SKIP"

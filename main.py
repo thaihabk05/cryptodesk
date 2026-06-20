@@ -4314,6 +4314,14 @@ def auto_start_scanner():
 # Chạy auto-start trong thread riêng để không block gunicorn worker
 threading.Thread(target=auto_start_scanner, daemon=True).start()
 
+# ── Edge v1 paper-trade loop (funding-short) — tách hẳn, không đụng engine cũ ──
+try:
+    from paper_signal import paper_signal_loop
+    threading.Thread(target=paper_signal_loop, daemon=True).start()
+    print("[AUTO-START] Edge v1 paper-trade loop started")
+except Exception as _e:
+    print(f"[PAPER] không start được: {_e}")
+
 
 # ── Run ───────────────────────────────────────
 

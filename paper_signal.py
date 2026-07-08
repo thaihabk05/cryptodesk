@@ -1,8 +1,9 @@
 """
 paper_signal.py — Paper-trade engine EDGE V1 (funding-short). Deployable, chạy 24/7 trên Railway.
 
-Edge (validated backtest 3 năm: WR 67%, exp +0.13R, 75% quý dương):
-  SHORT khi: funding ≥ 0.05% + giá rời 24h-high ≥1.5% + close < EMA9 H1.
+Edge (validated backtest 3 năm). Ngưỡng validate 0.03%: 1193 lệnh, WR 62%, exp +0.051R,
+80% quý dương. Ngưỡng tiền-thật 0.05%: WR 67%, exp +0.13R, 75% quý.
+  SHORT khi: funding ≥ FUNDING_MIN + giá rời 24h-high ≥1.5% + close < EMA9 H1.
   SL = 3×ATR(H1), TP = 2×ATR(H1).
 
 KHÔNG đặt lệnh thật — chỉ log + Telegram [PAPER] để validate forward (out-of-sample).
@@ -22,8 +23,11 @@ UNIVERSE   = os.path.join(DATA_DIR, "universe_v1.json")
 CONFIG     = os.path.join(DATA_DIR, "config.json")
 TZ = timezone(timedelta(hours=7))
 
-# ── Edge v1 params (KHÓA) ────────────────────────────────────────────────
-FUNDING_MIN  = 0.05
+# ── Edge v1 params ───────────────────────────────────────────────────────
+# FUNDING_MIN 0.03 cho GIAI ĐOẠN VALIDATE (nhiều data nhanh hơn; backtest 3 năm
+# ngưỡng 0.03: 1193 lệnh, WR 62%, exp +0.051R, 80% quý dương).
+# Tiền thật sau này → về 0.05 (sắc nhất: WR 67%, exp +0.13R).
+FUNDING_MIN  = 0.03
 OFF_HIGH_MIN = 0.015
 SL_ATR       = 3.0
 TP_ATR       = 2.0

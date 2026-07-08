@@ -1135,7 +1135,7 @@ def api_paper_trades():
         "win_rate": round(wins / n * 100, 1) if n else None,
         "total_r": totalR,
         "expectancy": round(totalR / n, 3) if n else None,
-        "bt_win_rate": 67, "bt_expectancy": 0.13,   # baseline backtest 3 năm
+        "bt_win_rate": 62, "bt_expectancy": 0.051,  # baseline backtest 3 năm @ ngưỡng 0.03%
     }
     return jsonify({"open": opens, "closed": closed, "stats": stats})
 
@@ -1167,8 +1167,8 @@ td.mono{font-family:ui-monospace,monospace}
 .pos{color:var(--lg)}.neg{color:var(--sh)}
 </style></head><body>
 <h1>📊 Edge v1 — Paper Trade (funding-short)</h1>
-<div class="sub">SHORT khi funding ≥0.05% + giá rời 24h-high ≥1.5% + close &lt; EMA9 H1 · SL 3×ATR / TP 2×ATR · KHÔNG tiền thật</div>
-<div class="ref">📐 <b>Backtest 3 năm (baseline):</b> WR 67% · expectancy +0.13R · 535 lệnh · 75% quý dương. Forward phải khớp ~đây mới tin.</div>
+<div class="sub">SHORT khi funding ≥0.03% + giá rời 24h-high ≥1.5% + close &lt; EMA9 H1 · SL 3×ATR / TP 2×ATR · KHÔNG tiền thật</div>
+<div class="ref">📐 <b>Backtest 3 năm @ 0.03% (baseline validate):</b> WR 62% · expectancy +0.051R · 1193 lệnh · 80% quý dương. Forward phải khớp ~đây. (Tiền thật sau này dùng 0.05%: WR 67% / +0.13R)</div>
 <div class="cards" id="cards"></div>
 <div class="sec">⏳ Đang mở</div><div id="open"></div>
 <div class="sec">📕 Đã đóng</div><div id="closed"></div>
@@ -1188,7 +1188,7 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
       card('Total R',(s.total_r>0?'+':'')+s.total_r+'R',s.total_r>0?'pos':'neg')+
       card('W / L',s.wins+' / '+s.losses,'')+
       card('Đang mở',s.open,'')+
-      card('vs Backtest','WR 67% / +0.13R','');
+      card('vs Backtest','WR 62% / +0.05R','');
   }
   // open
   var o=d.open||[];
@@ -1197,7 +1197,7 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
     o.map(p=>'<tr><td class="mono">'+(p.entry_time||'').slice(5,16).replace('T',' ')+'</td><td><b>'+p.symbol+'</b></td>'+
     '<td class="short">SHORT</td><td class="mono">'+fmt(p.funding)+'%</td><td class="mono">'+fmt(p.entry)+'</td>'+
     '<td class="mono">'+fmt(p.sl)+'</td><td class="mono">'+fmt(p.tp)+'</td></tr>').join('')+'</tbody></table>'
-  ) : '<div class="empty">Chưa có lệnh đang mở. Thị trường calm → chờ funding ≥0.05%.</div>';
+  ) : '<div class="empty">Chưa có lệnh đang mở. Thị trường calm → chờ funding ≥0.03%.</div>';
   // closed
   var cl=(d.closed||[]).slice().reverse();
   document.getElementById('closed').innerHTML = cl.length? (

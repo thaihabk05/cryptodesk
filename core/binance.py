@@ -1,4 +1,6 @@
 """binance.py — Tất cả Binance API calls, dùng chung cho Dashboard & Scanner"""
+import time as _time
+import threading as _threading
 import requests
 import pandas as pd
 
@@ -7,17 +9,41 @@ FUTURES_BASE = "https://fapi.binance.com"
 # Luôn dùng Futures API — tránh 451 geo-block của Spot API
 # Dashboard chỉ trade futures nên data futures là chính xác hơn
 
+# ── Global rate-limit guard ──────────────────────────────────────────────
+# Binance escalate: 429 (cảnh báo) → 418 (BAN IP tăng dần). Khi bị ban, RETRY
+# càng đào sâu ban. Giải pháp: 1 cờ toàn cục "banned_until" — khi thấy 418/429,
+# NGỪNG mọi call tới khi hết hạn (đọc Retry-After nếu có). Tránh retry-storm.
+_ban_lock = _threading.Lock()
+_banned_until = 0.0
+
+def _rate_limited() -> bool:
+    return _time.time() < _banned_until
+
+def _trip_ban(resp):
+    """Ghi nhận ban từ 418/429. Dùng Retry-After nếu có, mặc định 60s (418) / 10s (429)."""
+    global _banned_until
+    try:
+        ra = int(resp.headers.get("Retry-After", "0"))
+    except (ValueError, TypeError):
+        ra = 0
+    dur = ra if ra > 0 else (120 if resp.status_code == 418 else 10)
+    with _ban_lock:
+        _banned_until = max(_banned_until, _time.time() + dur)
+    print(f"[BINANCE {resp.status_code}] rate-limited — backoff {dur}s")
+
+
 def fetch_klines(symbol: str, interval: str, limit: int = 300,
                  force_futures: bool = False) -> pd.DataFrame:
-    import time as _t
+    _t = _time
+    if _rate_limited():
+        raise RuntimeError("Binance rate-limited (đang backoff) — bỏ qua call")
     url = FUTURES_BASE + "/fapi/v1/klines"
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     for attempt in range(3):
         r = requests.get(url, params=params, timeout=10)
-        if r.status_code == 429:
-            wait = 2 ** attempt  # 1s, 2s, 4s
-            _t.sleep(wait)
-            continue
+        if r.status_code in (418, 429):
+            _trip_ban(r)
+            r.raise_for_status()   # fail fast — KHÔNG retry để tránh đào sâu ban
         r.raise_for_status()
         break
     else:
@@ -60,7 +86,11 @@ def fetch_all_futures_tickers(min_volume_usd: float = 10_000_000) -> list:
     MIN_PRICE = 0.000001
     # ───────────────────────────────────────────────────────────────────
 
+    if _rate_limited():
+        raise RuntimeError("Binance rate-limited (đang backoff)")
     r = requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr", timeout=15)
+    if r.status_code in (418, 429):
+        _trip_ban(r)
     r.raise_for_status()
     out = []
     for t in r.json():
@@ -101,8 +131,12 @@ def fetch_all_funding_rates() -> dict:
     """Lấy funding rate cho TẤT CẢ futures pairs trong 1 call.
     Return dict {symbol: funding_pct}. Funding pct đã x100 (vd 0.0382 = 0.0382%).
     """
+    if _rate_limited():
+        return {}
     try:
         r = requests.get(FUTURES_BASE + "/fapi/v1/premiumIndex", timeout=10)
+        if r.status_code in (418, 429):
+            _trip_ban(r); return {}
         if r.status_code != 200: return {}
         data = r.json()
         if not isinstance(data, list): return {}

@@ -224,6 +224,14 @@
       "listing_days": 180,
       "vol_coverage": 0.817,
       "avg_daily_vol_usd": 64109897.0
+    },
+    {
+      "symbol": "ARBUSDT",
+      "tier": "midcap",
+      "listing_days": 1080,
+      "vol_coverage": 0.9,
+      "avg_daily_vol_usd": 50000000,
+      "note": "added manual \u2014 Rule A funding-short"
     }
   ]
 }

@@ -142,8 +142,61 @@ def _stats(p):
     return f"{n} đóng | WR {w/n*100:.0f}% | totalR {tot:+.2f} | exp {tot/n:+.3f}R | {len(p['open'])} mở"
 
 
+# ── ARB monitor — Rule B/C (chỉ CẢNH BÁO, KHÔNG auto paper-trade) ─────────
+# Rule B/C single-coin dễ overfit → không tự đặt lệnh, chỉ báo để anh tự quyết.
+_arb_monitor_cooldown = {"B": 0, "C": 0}
+
+def _emas(df):
+    for p in [9,34,89,200]: df[f"e{p}"]=df["close"].ewm(span=p,adjust=False).mean()
+    d=df["close"].diff(); g=d.clip(lower=0).rolling(14,min_periods=1).mean()
+    l=(-d.clip(upper=0)).rolling(14,min_periods=1).mean()
+    df["rsi"]=(100-100/(1+g/l.replace(0,float('inf')))).fillna(50)
+    return df
+
+def arb_monitor():
+    """Check Rule B (trend rejection) + C (rel-weak vs BTC) trên ARB. Alert nếu có setup."""
+    import time as _t
+    now = _t.time()
+    try:
+        arb = _emas(fetch_klines("ARBUSDT", "1h", 220, force_futures=True))
+        row = arb.iloc[-1]; prev = arb.iloc[-2]
+        close = float(row["close"]); atr_col = (arb["high"]-arb["low"]).rolling(14,min_periods=1).mean()
+        atr = float(atr_col.iloc[-1])
+        e9,e34,e89,e200 = [float(row[f"e{p}"]) for p in [9,34,89,200]]
+        rsi = float(row["rsi"])
+        downtrend = e34 < e89 < e200
+        below9 = close < e9
+
+        # Rule B — downtrend + hồi chạm EMA34 + rejection
+        touched = float(prev["high"]) >= float(prev["e34"]) or float(row["high"]) >= e34
+        rejected = below9 and close < float(row["open"])
+        if downtrend and touched and rejected and rsi >= 45:
+            if now - _arb_monitor_cooldown["B"] > 14400:  # cooldown 4h
+                _arb_monitor_cooldown["B"] = now
+                sl = max(float(row["high"]), float(prev["high"])) + atr*0.5
+                _tg(f"🔍 [ARB MONITOR] Rule B — Trend rejection\n"
+                    f"Downtrend + hồi chạm EMA34 rồi bị đẩy xuống\n"
+                    f"Giá {close:.5g} | gợi ý SHORT: SL ~{sl:.5g} TP ~{close-atr*2:.5g}\n"
+                    f"(discretionary — anh tự quyết, KHÔNG auto)")
+
+        # Rule C — ARB underperform BTC ≥3pp/24h + downtrend
+        btc = fetch_klines("BTCUSDT", "1h", 30, force_futures=True)
+        arb24 = (close/float(arb["close"].iloc[-25])-1)*100
+        btc24 = (float(btc["close"].iloc[-1])/float(btc["close"].iloc[-25])-1)*100
+        if (arb24 - btc24) <= -3 and (e34 < e89) and below9:
+            if now - _arb_monitor_cooldown["C"] > 14400:
+                _arb_monitor_cooldown["C"] = now
+                _tg(f"🔍 [ARB MONITOR] Rule C — Yếu hơn BTC\n"
+                    f"ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp) + downtrend\n"
+                    f"Giá {close:.5g} | gợi ý SHORT: SL ~{close+atr*3:.5g} TP ~{close-atr*2:.5g}\n"
+                    f"(discretionary — anh tự quyết, KHÔNG auto)")
+    except Exception as e:
+        print(f"[arb monitor err] {e}")
+
+
 def run_once():
     p = _load(); p = _check_open(p); p, new = _scan(p); _save(p)
+    arb_monitor()   # Rule B/C — chỉ cảnh báo, không đụng paper state
     print(f"[PAPER {_now()}] signal mới: {new} | {_stats(p)}")
     return new
 

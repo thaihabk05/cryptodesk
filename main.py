@@ -1220,7 +1220,15 @@ def config_api():
 
 @app.route("/api/scan")
 def scan_now():
-    cfg = load_config(); out = []
+    from core.binance import ban_remaining
+    import time as _t
+    cfg = load_config()
+    # CHỐNG 418: đang bị ban → KHÔNG poke Binance (tránh burst re-ban khi vừa hết
+    # ban). Trả kết quả CACHE (list như cũ, front-end render bình thường).
+    if ban_remaining() > 0:
+        with scan_lock:
+            return jsonify(list(scan_results.values()))
+    out = []
     for sym in cfg["symbols"]:
         try:
             r = get_analyze_fn(cfg)(sym, cfg)
@@ -1228,6 +1236,9 @@ def scan_now():
             out.append(r)
         except Exception as e:
             out.append({"symbol": sym, "error": str(e)})
+        _t.sleep(0.3)   # giãn nhịp mỗi coin — tránh burst 400 call/lần refresh
+        if ban_remaining() > 0:   # vừa chạm 418 giữa chừng → dừng ngay, khỏi đào sâu
+            break
     return jsonify(out)
 
 @app.route("/api/symbol/<symbol>")

@@ -4134,6 +4134,17 @@ def stop_dashboard_scanner():
 def dashboard_scanner_status():
     return jsonify({"running": scanner_running, **scanner_status})
 
+@app.route("/api/binance/ban")
+def binance_ban_status():
+    """Xem còn bao lâu nữa hết local backoff (do 418/429). remaining=0 → sẵn sàng."""
+    from core.binance import ban_remaining
+    rem = ban_remaining()
+    return jsonify({
+        "banned": rem > 0,
+        "remaining_sec": round(rem),
+        "remaining_min": round(rem / 60, 1),
+    })
+
 # ── API — Market Scanner ──────────────────────
 @app.route("/api/market-scan/start", methods=["POST"])
 def market_scan_start():
@@ -4399,10 +4410,18 @@ def telegram_test():
 
 # ── Auto-start scanner khi app khởi động ──────
 def auto_start_scanner():
-    """Tự động start scanner sau khi app ready — không cần user bấm tay."""
+    """Tự động start scanner sau khi app ready — không cần user bấm tay.
+
+    CHỐNG 418: mặc định KHÔNG auto-start. Restart/deploy sẽ không tạo burst quét
+    → không đào sâu ban Binance. Bật lại bằng config auto_start_scanner=true HOẶC
+    gọi POST /api/scanner/start khi mọi thứ đã ổn.
+    """
     global scanner_running
     cfg = load_config()
-    # Chỉ auto-start nếu config có symbols hoặc đây là production (Railway)
+    if not cfg.get("auto_start_scanner", False):
+        print("[AUTO-START] tắt (auto_start_scanner=false) — chống 418 khi restart. "
+              "Bật scanner qua POST /api/scanner/start.")
+        return
     if not scanner_running:
         scanner_running = True
         threading.Thread(target=dashboard_scanner_loop, daemon=True).start()

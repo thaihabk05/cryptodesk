@@ -19,6 +19,10 @@ _banned_until = 0.0
 def _rate_limited() -> bool:
     return _time.time() < _banned_until
 
+def ban_remaining() -> float:
+    """Số giây còn lại của local backoff (0 nếu không bị chặn). Cho endpoint debug."""
+    return max(0.0, _banned_until - _time.time())
+
 def _trip_ban(resp):
     """Ghi nhận ban từ 418/429. Dùng Retry-After nếu có, mặc định 60s (418) / 10s (429)."""
     global _banned_until
@@ -26,7 +30,7 @@ def _trip_ban(resp):
         ra = int(resp.headers.get("Retry-After", "0"))
     except (ValueError, TypeError):
         ra = 0
-    dur = ra if ra > 0 else (120 if resp.status_code == 418 else 10)
+    dur = ra if ra > 0 else (300 if resp.status_code == 418 else 10)
     with _ban_lock:
         _banned_until = max(_banned_until, _time.time() + dur)
     print(f"[BINANCE {resp.status_code}] rate-limited — backoff {dur}s")
@@ -63,9 +67,13 @@ def fetch_klines(symbol: str, interval: str, limit: int = 300,
 
 def fetch_volume_24h(symbol: str) -> float:
     """Lấy volume 24h USDT của 1 symbol từ futures ticker."""
+    if _rate_limited():
+        return 0.0
     try:
         r = requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr",
                          params={"symbol": symbol}, timeout=5)
+        if r.status_code in (418, 429):
+            _trip_ban(r); return 0.0
         r.raise_for_status()
         return float(r.json().get("quoteVolume", 0))
     except Exception:
@@ -117,9 +125,13 @@ def fetch_all_futures_tickers(min_volume_usd: float = 10_000_000) -> list:
 
 
 def fetch_funding_rate(symbol: str):
+    if _rate_limited():
+        return None
     try:
         r = requests.get(FUTURES_BASE + "/fapi/v1/premiumIndex",
                          params={"symbol": symbol}, timeout=5)
+        if r.status_code in (418, 429):
+            _trip_ban(r); return None
         if r.status_code != 200: return None
         d = r.json()
         if isinstance(d, list): return None
@@ -147,9 +159,13 @@ def fetch_all_funding_rates() -> dict:
 
 
 def fetch_oi_change(symbol: str, period: str = "1h", limit: int = 25):
+    if _rate_limited():
+        return None
     try:
         r = requests.get(FUTURES_BASE + "/futures/data/openInterestHist",
                          params={"symbol": symbol, "period": period, "limit": limit}, timeout=5)
+        if r.status_code in (418, 429):
+            _trip_ban(r); return None
         if r.status_code != 200: return None
         data = r.json()
         if not data or isinstance(data, dict) or len(data) < 2: return None
@@ -166,10 +182,14 @@ def fetch_taker_ratio(symbol: str, period: str = "5m", limit: int = 6) -> dict:
       buy_ratio > 1.2 → lực mua mạnh (scalp LONG)
       buy_ratio < 0.8 → lực bán mạnh (scalp SHORT)
     """
+    if _rate_limited():
+        return None
     try:
         r = requests.get(FUTURES_BASE + "/futures/data/takerlongshortRatio",
                          params={"symbol": symbol, "period": period, "limit": limit},
                          timeout=5)
+        if r.status_code in (418, 429):
+            _trip_ban(r); return None
         if r.status_code != 200: return None
         data = r.json()
         if not data or isinstance(data, dict): return None
@@ -214,10 +234,14 @@ def fetch_long_short_ratio(symbol: str, period: str = "5m", limit: int = 6) -> d
       long_pct > 70% → quá đông LONG, rủi ro long squeeze
       short_pct > 70% → quá đông SHORT, rủi ro short squeeze
     """
+    if _rate_limited():
+        return None
     try:
         r = requests.get(FUTURES_BASE + "/futures/data/globalLongShortAccountRatio",
                          params={"symbol": symbol, "period": period, "limit": limit},
                          timeout=5)
+        if r.status_code in (418, 429):
+            _trip_ban(r); return None
         if r.status_code != 200: return None
         data = r.json()
         if not data or isinstance(data, dict): return None
@@ -260,10 +284,14 @@ def fetch_order_book_imbalance(symbol: str, limit: int = 50) -> dict:
       imbalance > 1.5 → sổ lệnh thiên mua (scalp LONG)
       imbalance < 0.67 → sổ lệnh thiên bán (scalp SHORT)
     """
+    if _rate_limited():
+        return None
     try:
         r = requests.get(FUTURES_BASE + "/fapi/v1/depth",
                          params={"symbol": symbol, "limit": limit},
                          timeout=5)
+        if r.status_code in (418, 429):
+            _trip_ban(r); return None
         if r.status_code != 200: return None
         data = r.json()
 

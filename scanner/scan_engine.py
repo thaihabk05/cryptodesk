@@ -11,6 +11,9 @@ from pathlib import Path
 from core.binance import fetch_all_futures_tickers
 from core.utils import sanitize
 
+# CAP số coin quét full-market (chống tải Binance/418). Top-N theo volume.
+MAX_SCAN_COINS = 30
+
 # Dùng cùng volume path với main.py
 import os as _os
 _SCAN_DATA_DIR  = Path("/data") if Path("/data").exists() and _os.access("/data", _os.W_OK) else Path("data")
@@ -495,7 +498,11 @@ def run_full_scan(min_vol: float = 10_000_000, max_workers: int = 3, strategy: s
     try:
         print(f"[SCAN] Bắt đầu fetch tickers min_vol={min_vol:,.0f}...")
         symbols = fetch_all_futures_tickers(min_vol)
-        print(f"[SCAN] Lấy được {len(symbols)} symbols")
+        # CAP số coin — chống tải Binance (trước quét 100-200 coin/lần). Lấy top
+        # theo volume (list đã sort desc). Tạm 30 coin cho giai đoạn focus.
+        _total_avail = len(symbols)
+        symbols = symbols[:MAX_SCAN_COINS]
+        print(f"[SCAN] Lấy được {_total_avail} symbols → cap top {len(symbols)} theo volume")
         scan_state["total"] = len(symbols)
         results, done = [], 0
 

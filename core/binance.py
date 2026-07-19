@@ -36,6 +36,28 @@ def _trip_ban(resp):
     print(f"[BINANCE {resp.status_code}] rate-limited — backoff {dur}s")
 
 
+# ── Global throttle (token-spacing) ──────────────────────────────────────
+# Nguyên nhân gốc gây 418: scan/refresh fan-out hàng trăm call ĐỒNG THỜI →
+# Binance thấy burst → ban. Guard backoff chỉ chặn SAU khi đã ăn 418.
+# Throttle này serialize MỌI call Binance, cách nhau tối thiểu _MIN_GAP giây
+# → tối đa ~1/_MIN_GAP call/giây toàn cục, không bao giờ burst được nữa.
+_gap_lock = _threading.Lock()
+_last_call = 0.0
+_MIN_GAP = 0.15   # 150ms giữa 2 call = ~6.6 call/s = ~400/phút (ngưỡng Binance 2400/phút)
+
+def _throttle():
+    """Chặn cho tới khi đủ giãn cách so với call Binance trước đó. Trả None."""
+    global _last_call
+    with _gap_lock:
+        now = _time.time()
+        wait = _last_call + _MIN_GAP - now
+        if wait > 0:
+            _time.sleep(wait)
+            now = _time.time()
+        _last_call = now
+    return None
+
+
 def fetch_klines(symbol: str, interval: str, limit: int = 300,
                  force_futures: bool = False) -> pd.DataFrame:
     _t = _time
@@ -44,7 +66,7 @@ def fetch_klines(symbol: str, interval: str, limit: int = 300,
     url = FUTURES_BASE + "/fapi/v1/klines"
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     for attempt in range(3):
-        r = requests.get(url, params=params, timeout=10)
+        r = _throttle() or requests.get(url, params=params, timeout=10)
         if r.status_code in (418, 429):
             _trip_ban(r)
             r.raise_for_status()   # fail fast — KHÔNG retry để tránh đào sâu ban
@@ -70,7 +92,7 @@ def fetch_volume_24h(symbol: str) -> float:
     if _rate_limited():
         return 0.0
     try:
-        r = requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr",
+        r = _throttle() or requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr",
                          params={"symbol": symbol}, timeout=5)
         if r.status_code in (418, 429):
             _trip_ban(r); return 0.0
@@ -96,7 +118,7 @@ def fetch_all_futures_tickers(min_volume_usd: float = 10_000_000) -> list:
 
     if _rate_limited():
         raise RuntimeError("Binance rate-limited (đang backoff)")
-    r = requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr", timeout=15)
+    r = _throttle() or requests.get(FUTURES_BASE + "/fapi/v1/ticker/24hr", timeout=15)
     if r.status_code in (418, 429):
         _trip_ban(r)
     r.raise_for_status()
@@ -128,7 +150,7 @@ def fetch_funding_rate(symbol: str):
     if _rate_limited():
         return None
     try:
-        r = requests.get(FUTURES_BASE + "/fapi/v1/premiumIndex",
+        r = _throttle() or requests.get(FUTURES_BASE + "/fapi/v1/premiumIndex",
                          params={"symbol": symbol}, timeout=5)
         if r.status_code in (418, 429):
             _trip_ban(r); return None
@@ -146,7 +168,7 @@ def fetch_all_funding_rates() -> dict:
     if _rate_limited():
         return {}
     try:
-        r = requests.get(FUTURES_BASE + "/fapi/v1/premiumIndex", timeout=10)
+        r = _throttle() or requests.get(FUTURES_BASE + "/fapi/v1/premiumIndex", timeout=10)
         if r.status_code in (418, 429):
             _trip_ban(r); return {}
         if r.status_code != 200: return {}
@@ -162,7 +184,7 @@ def fetch_oi_change(symbol: str, period: str = "1h", limit: int = 25):
     if _rate_limited():
         return None
     try:
-        r = requests.get(FUTURES_BASE + "/futures/data/openInterestHist",
+        r = _throttle() or requests.get(FUTURES_BASE + "/futures/data/openInterestHist",
                          params={"symbol": symbol, "period": period, "limit": limit}, timeout=5)
         if r.status_code in (418, 429):
             _trip_ban(r); return None
@@ -185,7 +207,7 @@ def fetch_taker_ratio(symbol: str, period: str = "5m", limit: int = 6) -> dict:
     if _rate_limited():
         return None
     try:
-        r = requests.get(FUTURES_BASE + "/futures/data/takerlongshortRatio",
+        r = _throttle() or requests.get(FUTURES_BASE + "/futures/data/takerlongshortRatio",
                          params={"symbol": symbol, "period": period, "limit": limit},
                          timeout=5)
         if r.status_code in (418, 429):
@@ -237,7 +259,7 @@ def fetch_long_short_ratio(symbol: str, period: str = "5m", limit: int = 6) -> d
     if _rate_limited():
         return None
     try:
-        r = requests.get(FUTURES_BASE + "/futures/data/globalLongShortAccountRatio",
+        r = _throttle() or requests.get(FUTURES_BASE + "/futures/data/globalLongShortAccountRatio",
                          params={"symbol": symbol, "period": period, "limit": limit},
                          timeout=5)
         if r.status_code in (418, 429):
@@ -287,7 +309,7 @@ def fetch_order_book_imbalance(symbol: str, limit: int = 50) -> dict:
     if _rate_limited():
         return None
     try:
-        r = requests.get(FUTURES_BASE + "/fapi/v1/depth",
+        r = _throttle() or requests.get(FUTURES_BASE + "/fapi/v1/depth",
                          params={"symbol": symbol, "limit": limit},
                          timeout=5)
         if r.status_code in (418, 429):

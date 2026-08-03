@@ -12,7 +12,9 @@ from core.binance import fetch_all_futures_tickers
 from core.utils import sanitize
 
 # CAP số coin quét full-market (chống tải Binance/418). Top-N theo volume.
-MAX_SCAN_COINS = 30
+# 60: sau khi có IP sạch + throttle 150ms, nâng từ 30 để phủ thêm mid-cap
+# (nhiều setup hơn major). Scan ~55s, throttle vẫn giữ dưới ngưỡng Binance.
+MAX_SCAN_COINS = 60
 
 # Dùng cùng volume path với main.py
 import os as _os

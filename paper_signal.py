@@ -154,7 +154,14 @@ def _emas(df):
     return df
 
 def arb_monitor():
-    """Check Rule B (trend rejection) + C (rel-weak vs BTC) trên ARB. Alert nếu có setup."""
+    """Check Rule B/C trên ARB — CHỈ khi ARB thật sự downtrend.
+
+    REGIME-GATE (thêm 9/2026): Rule B/C validate trên 3 năm ARB DOWNTREND (-74%).
+    Khi ARB flip UPTREND (Robinhood Chain catalyst) → short bắn sai liên tục
+    (giá 0.085 short, chạy lên 0.106). Gate tắt HẲN short-alert khi ARB:
+      (1) trên EMA200 H4 = uptrend macro, HOẶC
+      (2) outperform BTC 7 ngày = đang MẠNH (không phải "yếu" như Rule C giả định).
+    """
     import time as _t
     now = _t.time()
     try:
@@ -166,6 +173,26 @@ def arb_monitor():
         rsi = float(row["rsi"])
         downtrend = e34 < e89 < e200
         below9 = close < e9
+
+        # ── REGIME GATE ────────────────────────────────────────────────
+        h4 = fetch_klines("ARBUSDT", "4h", 250, force_futures=True)
+        e200_h4 = float(h4["close"].ewm(span=200, adjust=False).mean().iloc[-1])
+        above_macro = close > e200_h4
+        btc = fetch_klines("BTCUSDT", "1h", 200, force_futures=True)
+        arb7 = (close / float(arb["close"].iloc[-168]) - 1) * 100     # 168 nến H1 = 7 ngày
+        btc7 = (float(btc["close"].iloc[-1]) / float(btc["close"].iloc[-168]) - 1) * 100
+        rel7 = arb7 - btc7
+        if above_macro or rel7 > 0:
+            # ARB đang uptrend/outperform → KHÔNG short. Cảnh báo strength bất thường.
+            if rel7 >= 10 and now - _arb_monitor_cooldown.get("S", 0) > 86400:  # 1 lần/ngày
+                _arb_monitor_cooldown["S"] = now
+                _tg(f"⚠️ [ARB MONITOR] ARB đang MẠNH bất thường\n"
+                    f"ARB 7d {arb7:+.1f}% vs BTC {btc7:+.1f}% (hơn {rel7:+.1f}pp) | giá {close:.5g}\n"
+                    f"→ ARB uptrend/outperform BTC. KHÔNG short. Có thể có tin/catalyst — check news.\n"
+                    f"(short-monitor tạm TẮT tới khi ARB yếu lại)")
+            print(f"[arb monitor] SKIP short — uptrend/outperform "
+                  f"(aboveEMA200H4={above_macro} rel7d={rel7:+.1f}pp)")
+            return
 
         # Rule B — downtrend + hồi chạm EMA34 + rejection
         touched = float(prev["high"]) >= float(prev["e34"]) or float(row["high"]) >= e34
@@ -180,7 +207,6 @@ def arb_monitor():
                     f"(discretionary — anh tự quyết, KHÔNG auto)")
 
         # Rule C — ARB underperform BTC ≥3pp/24h + downtrend
-        btc = fetch_klines("BTCUSDT", "1h", 30, force_futures=True)
         arb24 = (close/float(arb["close"].iloc[-25])-1)*100
         btc24 = (float(btc["close"].iloc[-1])/float(btc["close"].iloc[-25])-1)*100
         if (arb24 - btc24) <= -3 and (e34 < e89) and below9:

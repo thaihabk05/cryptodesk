@@ -1140,6 +1140,60 @@ def api_paper_trades():
     return jsonify({"open": opens, "closed": closed, "stats": stats})
 
 
+_arb_status_cache = {"ts": 0.0, "data": None}
+
+@app.route("/api/arb/status")
+def api_arb_status():
+    """Regime + gate status của ARB monitor (tính on-demand, cache 60s). Cho UI /paper."""
+    from core.binance import fetch_klines, ban_remaining
+    now = time.time()
+    if _arb_status_cache["data"] and now - _arb_status_cache["ts"] < 60:
+        return jsonify(_arb_status_cache["data"])
+    if ban_remaining() > 0:
+        return jsonify({"error": "Binance đang backoff — thử lại sau", "banned": True})
+    try:
+        def ema(s, p): return s.ewm(span=p, adjust=False).mean()
+        def trend(df):
+            c = df["close"]
+            e34, e89, e200 = ema(c,34).iloc[-1], ema(c,89).iloc[-1], ema(c,200).iloc[-1]
+            if e34 < e89 < e200: return "DOWN"
+            if e34 > e89 > e200: return "UP"
+            return "RANGE"
+        arb1 = fetch_klines("ARBUSDT","1h",220, force_futures=True)
+        arb4 = fetch_klines("ARBUSDT","4h",250, force_futures=True)
+        arbD = fetch_klines("ARBUSDT","1d",250, force_futures=True)
+        btc1 = fetch_klines("BTCUSDT","1h",200, force_futures=True)
+        close = float(arb1["close"].iloc[-1])
+        e200_h4 = float(ema(arb4["close"],200).iloc[-1])
+        above_macro = close > e200_h4
+        d = arb1["close"].diff()
+        g = d.clip(lower=0).rolling(14,min_periods=1).mean()
+        l = (-d.clip(upper=0)).rolling(14,min_periods=1).mean()
+        rsi = float((100 - 100/(1 + g/l.replace(0, float('inf')))).fillna(50).iloc[-1])
+        arb7 = (close/float(arb1["close"].iloc[-168]) - 1)*100
+        btc7 = (float(btc1["close"].iloc[-1])/float(btc1["close"].iloc[-168]) - 1)*100
+        arb24 = (close/float(arb1["close"].iloc[-25]) - 1)*100
+        btc24 = (float(btc1["close"].iloc[-1])/float(btc1["close"].iloc[-25]) - 1)*100
+        rel7, rel24 = arb7 - btc7, arb24 - btc24
+        short_on = (not above_macro) and (rel7 <= 0)
+        reason = ("ARB dưới EMA200 H4 + không mạnh hơn BTC 7d → downtrend: short-monitor BẬT"
+                  if short_on else
+                  f"ARB {'trên' if above_macro else 'dưới'} EMA200 H4"
+                  + (f" + mạnh hơn BTC 7d ({rel7:+.1f}pp)" if rel7 > 0 else "")
+                  + " → uptrend/outperform: short-monitor TẮT (đúng thiết kế)")
+        data = {
+            "price": close, "trend_h1": trend(arb1), "trend_h4": trend(arb4), "trend_d1": trend(arbD),
+            "above_ema200_h4": above_macro, "ema200_h4": e200_h4, "rsi_h1": round(rsi,1),
+            "arb_7d": round(arb7,1), "btc_7d": round(btc7,1), "rel_7d": round(rel7,1),
+            "arb_24h": round(arb24,1), "btc_24h": round(btc24,1), "rel_24h": round(rel24,1),
+            "short_monitor": "ON" if short_on else "OFF", "reason": reason,
+        }
+        _arb_status_cache.update(ts=now, data=data)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/paper")
 def paper_view():
     return make_response(PAPER_HTML)
@@ -1165,10 +1219,26 @@ td.mono{font-family:ui-monospace,monospace}
 .empty{color:var(--mu);padding:20px;text-align:center;background:var(--bg2);border:1px solid var(--bd);border-radius:10px}
 .cmp{font-size:11px;color:var(--mu)}.ref{background:var(--bg2);border:1px dashed var(--bd);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--mu);margin-bottom:18px}
 .pos{color:var(--lg)}.neg{color:var(--sh)}
+.nav{display:flex;gap:6px;align-items:center;margin:-4px 0 16px;flex-wrap:wrap}
+.nav a{text-decoration:none;color:var(--mu);background:var(--bg2);border:1px solid var(--bd);border-radius:8px;padding:7px 13px;font-size:13px;font-weight:600}
+.nav a:hover{color:var(--tx);border-color:var(--ac)}
+.nav a.on{color:#fff;background:var(--ac);border-color:var(--ac)}
+.arb{background:var(--bg2);border:1px solid var(--bd);border-radius:10px;padding:13px 15px;margin-bottom:18px}
+.arb .badge{font-weight:800;font-size:14px}.arb .pill{display:inline-block;margin:3px 12px 3px 0;font-size:12px}
+.arb .pill b{color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-right:4px}
+.arb .why{font-size:11px;color:var(--mu);margin-top:7px}
+.tUP{color:var(--lg);font-weight:700}.tDOWN{color:var(--sh);font-weight:700}.tRANGE{color:var(--wt);font-weight:700}
 </style></head><body>
+<nav class="nav">
+  <a href="/">🏠 Dashboard</a>
+  <a href="/paper" class="on">📊 Paper</a>
+  <a href="/api/arb/status" target="_blank">🔍 ARB JSON</a>
+</nav>
 <h1>📊 Edge v1 — Paper Trade (funding-short)</h1>
 <div class="sub">SHORT khi funding ≥0.03% + giá rời 24h-high ≥1.5% + close &lt; EMA9 H1 · SL 3×ATR / TP 2×ATR · KHÔNG tiền thật</div>
 <div class="ref">📐 <b>Backtest 3 năm @ 0.03% (baseline validate):</b> WR 62% · expectancy +0.051R · 1193 lệnh · 80% quý dương. Forward phải khớp ~đây. (Tiền thật sau này dùng 0.05%: WR 67% / +0.13R)</div>
+<div class="sec">🎯 ARB Monitor — regime &amp; gate</div>
+<div class="arb" id="arbBox">Đang tải ARB…</div>
 <div class="cards" id="cards"></div>
 <div class="sec">⏳ Đang mở</div><div id="open"></div>
 <div class="sec">📕 Đã đóng</div><div id="closed"></div>
@@ -1208,6 +1278,27 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
     '<td class="mono '+((p.pnl_r||0)>0?'win':'loss')+'">'+((p.pnl_r||0)>0?'+':'')+p.pnl_r+'R</td></tr>').join('')+'</tbody></table>'
   ) : '<div class="empty">Chưa có lệnh đóng.</div>';
 }).catch(e=>{document.getElementById('cards').innerHTML='<div class="empty">Lỗi tải: '+e.message+'</div>';});
+
+function pill(l,v,cls){return '<span class="pill"><b>'+l+'</b><span class="'+(cls||'')+'">'+v+'</span></span>';}
+function sgn(n){return (n>0?'+':'')+n;}
+fetch('/api/arb/status').then(r=>r.json()).then(a=>{
+  var b=document.getElementById('arbBox');
+  if(a.error){b.innerHTML='⚠️ '+(a.banned?'Binance đang backoff, thử lại sau.':a.error);return;}
+  var on=a.short_monitor==='ON';
+  var badge='<span class="badge" style="color:'+(on?'var(--sh)':'var(--lg)')+'">'+
+            (on?'🔴 Short-monitor: BẬT':'🟢 Short-monitor: TẮT')+'</span>';
+  var relCls=a.rel_7d>0?'pos':'neg';
+  b.innerHTML=badge+'<div style="margin-top:8px">'+
+    pill('Giá',fmt(a.price))+
+    pill('H1','<span class="t'+a.trend_h1+'">'+a.trend_h1+'</span>')+
+    pill('H4','<span class="t'+a.trend_h4+'">'+a.trend_h4+'</span>')+
+    pill('D1','<span class="t'+a.trend_d1+'">'+a.trend_d1+'</span>')+
+    pill('RSI H1',a.rsi_h1)+'</div>'+
+    '<div>'+pill('ARB 7d',sgn(a.arb_7d)+'%')+pill('BTC 7d',sgn(a.btc_7d)+'%')+
+    pill('Rel 7d',sgn(a.rel_7d)+'pp',relCls)+
+    pill('Rel 24h',sgn(a.rel_24h)+'pp',a.rel_24h>0?'pos':'neg')+'</div>'+
+    '<div class="why">'+a.reason+'</div>';
+}).catch(e=>{document.getElementById('arbBox').innerHTML='⚠️ Lỗi tải ARB: '+e.message;});
 </script></body></html>"""
 
 # ── API — Dashboard ───────────────────────────

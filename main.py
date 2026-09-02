@@ -1239,6 +1239,48 @@ def api_arb_status():
         watch = ""
         if near_sup: watch += f"Giữ trên {near_sup:g} → xu hướng còn giữ. "
         if near_res: watch += f"Phá {near_res:g} mới xác nhận đi tiếp."
+        # ── Gợi ý vùng vào lệnh (regime-aware, THAM KHẢO) ──
+        e9_h1  = float(ema(c1,9).iloc[-1]); e34_h1 = float(ema(c1,34).iloc[-1])
+        R1 = resistances[0]["level"] if resistances else None
+        R2 = resistances[1]["level"] if len(resistances) > 1 else None
+        S1 = supports[0]["level"] if supports else None
+        S2 = supports[1]["level"] if len(supports) > 1 else None
+        def _rr(entry, stop, target):
+            risk = abs(entry-stop); return round(abs(target-entry)/risk, 1) if risk > 0 else None
+        setups = []
+        direction = "LONG" if bias in ("UP","STRONG_UP") else "SHORT" if bias == "DOWN" else "RANGE"
+        if direction == "LONG" and R1 and S1 and S2:
+            pe = (S1 + e34_h1)/2
+            setups.append({"name":"Pullback (RR tốt)","dir":"LONG",
+                "zone":f"{min(S1,e34_h1):g}–{max(S1,e34_h1):g}", "stop":round(S2*0.99,5),
+                "target":R1, "rr":_rr(pe, S2*0.99, R1),
+                "note":"Chờ giá chỉnh về hỗ trợ/EMA34 rồi mua — mua support, không mua tường"})
+            if R2:
+                setups.append({"name":"Breakout","dir":"LONG",
+                    "zone":f"retest {R1:g} sau khi ĐÓNG H1 > {R1:g}", "stop":round(R1*0.985,5),
+                    "target":R2, "rr":_rr(R1, R1*0.985, R2),
+                    "note":"Chỉ vào khi break-hold; đóng lại dưới thì hủy"})
+        elif direction == "SHORT" and R1 and S1:
+            setups.append({"name":"Rejection kháng cự","dir":"SHORT",
+                "zone":f"{R1:g} (khi bị đẩy xuống)", "stop":round(R1*1.015,5),
+                "target":S1, "rr":_rr(R1, R1*1.015, S1),
+                "note":"Short khi rejection tại kháng cự, SL trên đỉnh"})
+            if S2:
+                setups.append({"name":"Breakdown","dir":"SHORT",
+                    "zone":f"retest {S1:g} sau khi ĐÓNG H1 < {S1:g}", "stop":round(S1*1.015,5),
+                    "target":S2, "rr":_rr(S1, S1*1.015, S2),
+                    "note":"Chỉ vào khi phá hỗ trợ dứt khoát"})
+        d_r = (R1/close-1)*100 if R1 else 99
+        d_s = (close/S1-1)*100 if S1 else 99
+        if R1 and S1 and d_r < 3.5 and d_s > 3.5:
+            now_note = f"⚠️ Giá đang giữa range / sát kháng cự (+{d_r:.1f}% tới {R1:g}) — RR kém, NÊN CHỜ vùng bên dưới."
+        elif S1 and d_s <= 1.5:
+            now_note = "🟢 Gần hỗ trợ — vùng canh vào lệnh có RR tốt hơn."
+        elif R1 and d_r <= 1.5:
+            now_note = "🔴 Sát kháng cự — không đuổi; chờ rejection hoặc breakout xác nhận."
+        else:
+            now_note = "Giá ở vùng trung tính."
+        entry_plan = {"direction": direction, "now_note": now_note, "setups": setups}
         short_on = (not above_h4) and (rel7 <= 0)
         reason = ("ARB dưới EMA200 H4 + không mạnh hơn BTC 7d → downtrend: short-monitor BẬT"
                   if short_on else
@@ -1256,7 +1298,7 @@ def api_arb_status():
             "above_ema200_h4": above_h4, "above_ema200_d1": above_d1, "dist_ema200_d1_pct": round(dist_d1,1),
             "range30_low": round(lo30,5), "range30_high": round(hi30,5), "range30_pos_pct": round(pos30),
             "vol_now_x": vol_now_x, "vol_max24_x": vol_max24_x, "funding": fund, "flow_note": flow,
-            "resistances": resistances, "supports": supports, "watch": watch,
+            "resistances": resistances, "supports": supports, "watch": watch, "entry_plan": entry_plan,
             "short_monitor": "ON" if short_on else "OFF", "reason": reason,
         }
         _arb_status_cache.update(ts=now, data=data)
@@ -1303,6 +1345,9 @@ td.mono{font-family:ui-monospace,monospace}
 .arb .srh{font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;margin-bottom:4px}
 .arb .lvl{font-size:12px;line-height:1.7}
 .arb .mono{font-family:ui-monospace,monospace}
+.arb .ep{margin-top:8px;border-top:1px solid var(--bd);padding-top:8px}
+.arb .setup{font-size:12px;line-height:1.6;margin:5px 0;padding:6px 9px;background:var(--bg);border:1px solid var(--bd);border-radius:7px}
+.arb .setupnote{color:var(--mu);font-size:11px;margin-top:2px}
 .tUP{color:var(--lg);font-weight:700}.tDOWN{color:var(--sh);font-weight:700}.tRANGE{color:var(--wt);font-weight:700}
 </style></head><body>
 <nav class="nav">
@@ -1390,6 +1435,17 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
       '<div class="srcol"><div class="srh">Range 30d</div><div class="lvl mono">'+fmt(a.range30_low)+' – '+fmt(a.range30_high)+'</div><div class="lvl" style="color:var(--mu)">vị trí '+a.range30_pos_pct+'%</div></div>'+
     '</div>'+
     (a.watch?'<div class="why" style="margin-top:8px">👁 <b>Theo dõi:</b> '+a.watch+'</div>':'')+
+    (function(){var ep=a.entry_plan;if(!ep)return '';
+      var dc=ep.direction==='LONG'?'var(--lg)':ep.direction==='SHORT'?'var(--sh)':'var(--wt)';
+      var h='<div class="ep"><div class="srh">🎯 Gợi ý vùng vào lệnh · <span style="color:'+dc+'">'+ep.direction+'</span></div>'+
+        '<div class="why" style="margin:2px 0 6px">'+ep.now_note+'</div>';
+      if(ep.setups&&ep.setups.length){h+=ep.setups.map(function(s){
+        var sc=s.dir==='LONG'?'var(--lg)':'var(--sh)';
+        return '<div class="setup"><b style="color:'+sc+'">'+s.name+'</b> · Vào <span class="mono">'+s.zone+
+          '</span> · SL <span class="mono">'+fmt(s.stop)+'</span> · TP <span class="mono">'+fmt(s.target)+
+          '</span> · RR <b>'+(s.rr!=null?s.rr:'—')+'</b><div class="setupnote">'+s.note+'</div></div>';}).join('');}
+      else{h+='<div class="why">Thị trường đi ngang — chờ break biên, tránh đánh giữa range.</div>';}
+      return h+'</div>';})()+
     '<div class="why" style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+(on?'🔴':'🟢')+' '+a.reason+'</div>'+
     '<div class="why" style="opacity:.7;font-style:italic">Phân tích tham khảo (giá/EMA/pivot) — không phải lời khuyên đầu tư.</div>';
 }).catch(e=>{document.getElementById('arbBox').innerHTML='⚠️ Lỗi tải ARB: '+e.message;});

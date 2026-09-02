@@ -1153,7 +1153,7 @@ def api_arb_status():
     """ARB: regime, sức mạnh vs BTC (24h/7d/30d), kháng cự/hỗ trợ, thiên hướng xu
     hướng + gate short-monitor. Tính on-demand, cache 60s. Cho UI /paper.
     LƯU Ý: phân tích tham khảo dựa trên giá/EMA/pivot, KHÔNG phải lời khuyên đầu tư."""
-    from core.binance import fetch_klines, ban_remaining
+    from core.binance import fetch_klines, ban_remaining, fetch_funding_rate
     now = time.time()
     if _arb_status_cache["data"] and now - _arb_status_cache["ts"] < 60:
         return jsonify(_arb_status_cache["data"])
@@ -1189,6 +1189,24 @@ def api_arb_status():
         rel24, rel7, rel30 = arb24-btc24, arb7-btc7, arb30-btc30
         lo30 = float(arbD["low"].iloc[-30:].min()); hi30 = float(arbD["high"].iloc[-30:].max())
         pos30 = (close-lo30)/(hi30-lo30)*100 if hi30 > lo30 else 50
+        # ── Volume & Funding (dòng tiền) ──
+        volb = float(arb1["volume"].iloc[-200:].median())
+        vol_now_x   = round(float(arb1["volume"].iloc[-4:-1].mean())/volb, 1) if volb > 0 else 0
+        vol_max24_x = round(float(arb1["volume"].iloc[-24:].max())/volb, 1) if volb > 0 else 0
+        fund = fetch_funding_rate("ARBUSDT")
+        fund = round(fund, 4) if fund is not None else None
+        if fund is None:
+            flow = "—"
+        elif fund >= 0.05:
+            flow = f"Đòn bẩy: LONG RẤT đông (funding {fund:+.3f}%) → rủi ro long-squeeze / setup short"
+        elif fund >= 0.03:
+            flow = f"Đòn bẩy: long đông dần (funding {fund:+.3f}%) — theo dõi"
+        elif fund <= -0.03:
+            flow = f"Đòn bẩy: short đông (funding {fund:+.3f}%) → rủi ro short-squeeze"
+        elif vol_max24_x >= 5 and abs(fund) < 0.02:
+            flow = f"SPOT-driven: volume spike {vol_max24_x:g}× baseline mà funding thấp ({fund:+.3f}%) → cầu THẬT, không quá đòn bẩy (lành)"
+        else:
+            flow = f"Bình thường (funding {fund:+.3f}%, vol {vol_now_x:g}× baseline)"
         # ── Kháng cự / Hỗ trợ: pivot D1 (±4 nến) + range 30d, gộp mức gần ~2% ──
         H, L, W = arbD["high"].values, arbD["low"].values, 4
         piv_hi = [float(H[i]) for i in range(W,len(H)-W) if H[i]==max(H[i-W:i+W+1])]
@@ -1237,6 +1255,7 @@ def api_arb_status():
             "ema200_h4": round(e200_h4,5), "ema200_d1": round(e200_d1,5),
             "above_ema200_h4": above_h4, "above_ema200_d1": above_d1, "dist_ema200_d1_pct": round(dist_d1,1),
             "range30_low": round(lo30,5), "range30_high": round(hi30,5), "range30_pos_pct": round(pos30),
+            "vol_now_x": vol_now_x, "vol_max24_x": vol_max24_x, "funding": fund, "flow_note": flow,
             "resistances": resistances, "supports": supports, "watch": watch,
             "short_monitor": "ON" if short_on else "OFF", "reason": reason,
         }
@@ -1360,6 +1379,11 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
       '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Sức mạnh vs BTC</b><br>'+
       pill('Rel 24h',sgn(a.rel_24h)+'pp',relCls(a.rel_24h))+pill('Rel 7d',sgn(a.rel_7d)+'pp',relCls(a.rel_7d))+pill('Rel 30d',sgn(a.rel_30d)+'pp',relCls(a.rel_30d))+
       '<span class="pill" style="color:'+bc+';font-weight:700">'+a.strength+'</span></div>'+
+    '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+      '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Dòng tiền</b><br>'+
+      pill('Vol hiện tại',a.vol_now_x+'×')+pill('Spike 24h',a.vol_max24_x+'×')+
+      pill('Funding',(a.funding!=null?sgn(a.funding)+'%':'—'),(a.funding>=0.03?'neg':a.funding<=-0.03?'pos':''))+
+      '<div class="why">'+a.flow_note+'</div></div>'+
     '<div class="sr">'+
       '<div class="srcol"><div class="srh" style="color:var(--sh)">🔴 Kháng cự</div>'+lvlList(a.resistances)+'</div>'+
       '<div class="srcol"><div class="srh" style="color:var(--lg)">🟢 Hỗ trợ</div>'+lvlList(a.supports)+'</div>'+

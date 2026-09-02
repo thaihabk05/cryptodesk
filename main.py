@@ -1273,6 +1273,17 @@ def api_arb_status():
             risk = abs(entry-stop); return round(abs(target-entry)/risk, 1) if risk > 0 else None
         setups = []
         direction = "LONG" if bias in ("UP","STRONG_UP") else "SHORT" if bias == "DOWN" else "RANGE"
+        def _broken(df, cl, dr, lookback=72, win=3):
+            """Mức intraday VỪA PHÁ: swing-high dưới giá (kháng cự→hỗ trợ) cho LONG,
+            swing-low trên giá (hỗ trợ→kháng cự) cho SHORT. Lấy mức gần giá nhất."""
+            H = df["high"].values; L = df["low"].values; n = len(df); lo = max(win, n-lookback)
+            if dr == "LONG":
+                sh = [float(H[i]) for i in range(lo, n-win)
+                      if H[i] == max(H[i-win:i+win+1]) and cl*0.90 < H[i] < cl*0.985]
+                return max(sh) if sh else None
+            sl = [float(L[i]) for i in range(lo, n-win)
+                  if L[i] == min(L[i-win:i+win+1]) and cl*1.015 < L[i] < cl*1.10]
+            return min(sl) if sl else None
         if direction == "LONG" and R1 and S1 and S2:
             pe = (S1 + e34_h1)/2
             setups.append({"name":"Pullback (RR tốt)","dir":"LONG",
@@ -1294,6 +1305,18 @@ def api_arb_status():
                     "zone":f"retest {S1:g} sau khi ĐÓNG H1 < {S1:g}", "stop":round(S1*1.015,5),
                     "target":S2, "rr":_rr(S1, S1*1.015, S2),
                     "note":"Chỉ vào khi phá hỗ trợ dứt khoát"})
+        # Retest mức intraday VỪA PHÁ — chèn LÊN ĐẦU (điểm vào RR tốt nhất)
+        bro = _broken(arb1, close, direction if direction in ("LONG","SHORT") else "LONG")
+        if direction == "LONG" and bro and R1 and bro < close:
+            sb = round(bro*0.985, 5)
+            setups.insert(0, {"name":"Retest mức vừa phá (ưu tiên)","dir":"LONG",
+                "zone":f"~{bro:g} (chờ về + GIỮ)", "stop":sb, "target":R1, "rr":_rr(bro, sb, R1),
+                "note":"Kháng cự cũ vừa phá → hỗ trợ mới. Vào khi giá về đây và BẬT lên; thủng thì cắt"})
+        elif direction == "SHORT" and bro and S1 and bro > close:
+            sb = round(bro*1.015, 5)
+            setups.insert(0, {"name":"Retest mức vừa phá (ưu tiên)","dir":"SHORT",
+                "zone":f"~{bro:g} (chờ hồi lên + rejection)", "stop":sb, "target":S1, "rr":_rr(bro, sb, S1),
+                "note":"Hỗ trợ cũ vừa phá → kháng cự mới. Vào khi giá hồi lên đây rồi bị đẩy xuống"})
         d_r = (R1/close-1)*100 if R1 else 99
         d_s = (close/S1-1)*100 if S1 else 99
         if R1 and S1 and d_r < 3.5 and d_s > 3.5:

@@ -1140,11 +1140,19 @@ def api_paper_trades():
     return jsonify({"open": opens, "closed": closed, "stats": stats})
 
 
+def _rsi_series(s, n=14):
+    d = s.diff()
+    g = d.clip(lower=0).rolling(n, min_periods=1).mean()
+    l = (-d.clip(upper=0)).rolling(n, min_periods=1).mean()
+    return (100 - 100/(1 + g/l.replace(0, float('inf')))).fillna(50)
+
 _arb_status_cache = {"ts": 0.0, "data": None}
 
 @app.route("/api/arb/status")
 def api_arb_status():
-    """Regime + gate status của ARB monitor (tính on-demand, cache 60s). Cho UI /paper."""
+    """ARB: regime, sức mạnh vs BTC (24h/7d/30d), kháng cự/hỗ trợ, thiên hướng xu
+    hướng + gate short-monitor. Tính on-demand, cache 60s. Cho UI /paper.
+    LƯU Ý: phân tích tham khảo dựa trên giá/EMA/pivot, KHÔNG phải lời khuyên đầu tư."""
     from core.binance import fetch_klines, ban_remaining
     now = time.time()
     if _arb_status_cache["data"] and now - _arb_status_cache["ts"] < 60:
@@ -1161,31 +1169,75 @@ def api_arb_status():
             return "RANGE"
         arb1 = fetch_klines("ARBUSDT","1h",220, force_futures=True)
         arb4 = fetch_klines("ARBUSDT","4h",250, force_futures=True)
-        arbD = fetch_klines("ARBUSDT","1d",250, force_futures=True)
+        arbD = fetch_klines("ARBUSDT","1d",300, force_futures=True)
         btc1 = fetch_klines("BTCUSDT","1h",200, force_futures=True)
-        close = float(arb1["close"].iloc[-1])
+        btcD = fetch_klines("BTCUSDT","1d",300, force_futures=True)
+        c1, cD = arb1["close"], arbD["close"]
+        close = float(c1.iloc[-1])
+        th1, th4, tD = trend(arb1), trend(arb4), trend(arbD)
         e200_h4 = float(ema(arb4["close"],200).iloc[-1])
-        above_macro = close > e200_h4
-        d = arb1["close"].diff()
-        g = d.clip(lower=0).rolling(14,min_periods=1).mean()
-        l = (-d.clip(upper=0)).rolling(14,min_periods=1).mean()
-        rsi = float((100 - 100/(1 + g/l.replace(0, float('inf')))).fillna(50).iloc[-1])
-        arb7 = (close/float(arb1["close"].iloc[-168]) - 1)*100
-        btc7 = (float(btc1["close"].iloc[-1])/float(btc1["close"].iloc[-168]) - 1)*100
-        arb24 = (close/float(arb1["close"].iloc[-25]) - 1)*100
-        btc24 = (float(btc1["close"].iloc[-1])/float(btc1["close"].iloc[-25]) - 1)*100
-        rel7, rel24 = arb7 - btc7, arb24 - btc24
-        short_on = (not above_macro) and (rel7 <= 0)
+        e200_d1 = float(ema(cD,200).iloc[-1])
+        above_h4, above_d1 = close > e200_h4, close > e200_d1
+        dist_d1 = (close/e200_d1 - 1)*100
+        rsi_h1 = round(float(_rsi_series(c1).iloc[-1]),1)
+        rsi_h4 = round(float(_rsi_series(arb4["close"]).iloc[-1]),1)
+        rsi_d1 = round(float(_rsi_series(cD).iloc[-1]),1)
+        def ret(s, n): return (float(s.iloc[-1])/float(s.iloc[-1-n]) - 1)*100
+        arb24, btc24 = ret(c1,24), ret(btc1["close"],24)
+        arb7,  btc7  = ret(c1,168), ret(btc1["close"],168)
+        arb30, btc30 = ret(cD,30), ret(btcD["close"],30)
+        rel24, rel7, rel30 = arb24-btc24, arb7-btc7, arb30-btc30
+        lo30 = float(arbD["low"].iloc[-30:].min()); hi30 = float(arbD["high"].iloc[-30:].max())
+        pos30 = (close-lo30)/(hi30-lo30)*100 if hi30 > lo30 else 50
+        # ── Kháng cự / Hỗ trợ: pivot D1 (±4 nến) + range 30d, gộp mức gần ~2% ──
+        H, L, W = arbD["high"].values, arbD["low"].values, 4
+        piv_hi = [float(H[i]) for i in range(W,len(H)-W) if H[i]==max(H[i-W:i+W+1])]
+        piv_lo = [float(L[i]) for i in range(W,len(L)-W) if L[i]==min(L[i-W:i+W+1])]
+        def cluster(levels):
+            out=[]
+            for x in sorted(levels):
+                if not out or abs(x-out[-1])/out[-1] > 0.02: out.append(x)
+                else: out[-1]=(out[-1]+x)/2
+            return out
+        res_c = cluster([x for x in piv_hi if x > close*1.005] + [hi30])
+        sup_c = cluster([x for x in piv_lo if x < close*0.995] + [lo30])
+        resistances = [{"level":round(x,5),"pct":round((x/close-1)*100,1)} for x in sorted(res_c)[:3]]
+        supports    = [{"level":round(x,5),"pct":round((x/close-1)*100,1)} for x in sorted(sup_c, reverse=True)[:3]]
+        # ── Thiên hướng (bias) từ đa khung + vị trí EMA200 D1 + rel-strength ──
+        score = sum(1 if t=="UP" else (-1 if t=="DOWN" else 0) for t in (th1,th4,tD))
+        score += 1 if above_d1 else -1
+        score += 1 if rel7 > 0 else (-1 if rel7 < 0 else 0)
+        bias = "STRONG_UP" if score>=4 else "UP" if score>=2 else "DOWN" if score<=-2 else "NEUTRAL"
+        overheat = dist_d1 > 30 and rsi_d1 >= 70
+        strength = ("RẤT MẠNH so BTC" if rel7>=10 else "mạnh hơn BTC" if rel7>=3 else
+                    "RẤT YẾU so BTC" if rel7<=-10 else "yếu hơn BTC" if rel7<=-3 else "ngang BTC")
+        biasmap = {"STRONG_UP":"Uptrend mạnh, đa khung đồng thuận","UP":"Thiên hướng TĂNG",
+                   "NEUTRAL":"Trung tính / đi ngang","DOWN":"Thiên hướng GIẢM"}
+        note = f"{biasmap[bias]} · {strength} (7d {rel7:+.1f}pp)"
+        if overheat:
+            note += f" · ⚠️ quá nhiệt (xa EMA200 D1 {dist_d1:+.0f}%, RSI_D1 {rsi_d1}) — dễ điều chỉnh"
+        near_sup = supports[0]["level"] if supports else None
+        near_res = resistances[0]["level"] if resistances else None
+        watch = ""
+        if near_sup: watch += f"Giữ trên {near_sup:g} → xu hướng còn giữ. "
+        if near_res: watch += f"Phá {near_res:g} mới xác nhận đi tiếp."
+        short_on = (not above_h4) and (rel7 <= 0)
         reason = ("ARB dưới EMA200 H4 + không mạnh hơn BTC 7d → downtrend: short-monitor BẬT"
                   if short_on else
-                  f"ARB {'trên' if above_macro else 'dưới'} EMA200 H4"
+                  f"ARB {'trên' if above_h4 else 'dưới'} EMA200 H4"
                   + (f" + mạnh hơn BTC 7d ({rel7:+.1f}pp)" if rel7 > 0 else "")
                   + " → uptrend/outperform: short-monitor TẮT (đúng thiết kế)")
         data = {
-            "price": close, "trend_h1": trend(arb1), "trend_h4": trend(arb4), "trend_d1": trend(arbD),
-            "above_ema200_h4": above_macro, "ema200_h4": e200_h4, "rsi_h1": round(rsi,1),
-            "arb_7d": round(arb7,1), "btc_7d": round(btc7,1), "rel_7d": round(rel7,1),
-            "arb_24h": round(arb24,1), "btc_24h": round(btc24,1), "rel_24h": round(rel24,1),
+            "price": close, "trend_h1": th1, "trend_h4": th4, "trend_d1": tD,
+            "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
+            "rsi_h1": rsi_h1, "rsi_h4": rsi_h4, "rsi_d1": rsi_d1,
+            "arb_24h": round(arb24,1), "arb_7d": round(arb7,1), "arb_30d": round(arb30,1),
+            "btc_24h": round(btc24,1), "btc_7d": round(btc7,1), "btc_30d": round(btc30,1),
+            "rel_24h": round(rel24,1), "rel_7d": round(rel7,1), "rel_30d": round(rel30,1),
+            "ema200_h4": round(e200_h4,5), "ema200_d1": round(e200_d1,5),
+            "above_ema200_h4": above_h4, "above_ema200_d1": above_d1, "dist_ema200_d1_pct": round(dist_d1,1),
+            "range30_low": round(lo30,5), "range30_high": round(hi30,5), "range30_pos_pct": round(pos30),
+            "resistances": resistances, "supports": supports, "watch": watch,
             "short_monitor": "ON" if short_on else "OFF", "reason": reason,
         }
         _arb_status_cache.update(ts=now, data=data)
@@ -1227,6 +1279,11 @@ td.mono{font-family:ui-monospace,monospace}
 .arb .badge{font-weight:800;font-size:14px}.arb .pill{display:inline-block;margin:3px 12px 3px 0;font-size:12px}
 .arb .pill b{color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-right:4px}
 .arb .why{font-size:11px;color:var(--mu);margin-top:7px}
+.arb .sr{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;border-top:1px solid var(--bd);padding-top:8px}
+.arb .srcol{min-width:120px}
+.arb .srh{font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;margin-bottom:4px}
+.arb .lvl{font-size:12px;line-height:1.7}
+.arb .mono{font-family:ui-monospace,monospace}
 .tUP{color:var(--lg);font-weight:700}.tDOWN{color:var(--sh);font-weight:700}.tRANGE{color:var(--wt);font-weight:700}
 </style></head><body>
 <nav class="nav">
@@ -1281,23 +1338,36 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
 
 function pill(l,v,cls){return '<span class="pill"><b>'+l+'</b><span class="'+(cls||'')+'">'+v+'</span></span>';}
 function sgn(n){return (n>0?'+':'')+n;}
+function trendSpan(t){return '<span class="t'+t+'">'+t+'</span>';}
+function relCls(v){return v>0?'pos':v<0?'neg':'';}
+function lvlList(arr){return (arr&&arr.length)? arr.map(function(x){
+  return '<div class="lvl"><span class="mono">'+fmt(x.level)+'</span> <span class="'+(x.pct>0?'pos':'neg')+'">('+sgn(x.pct)+'%)</span></div>';}).join('')
+  : '<div class="lvl" style="color:var(--mu)">—</div>';}
 fetch('/api/arb/status').then(r=>r.json()).then(a=>{
   var b=document.getElementById('arbBox');
   if(a.error){b.innerHTML='⚠️ '+(a.banned?'Binance đang backoff, thử lại sau.':a.error);return;}
   var on=a.short_monitor==='ON';
-  var badge='<span class="badge" style="color:'+(on?'var(--sh)':'var(--lg)')+'">'+
-            (on?'🔴 Short-monitor: BẬT':'🟢 Short-monitor: TẮT')+'</span>';
-  var relCls=a.rel_7d>0?'pos':'neg';
-  b.innerHTML=badge+'<div style="margin-top:8px">'+
-    pill('Giá',fmt(a.price))+
-    pill('H1','<span class="t'+a.trend_h1+'">'+a.trend_h1+'</span>')+
-    pill('H4','<span class="t'+a.trend_h4+'">'+a.trend_h4+'</span>')+
-    pill('D1','<span class="t'+a.trend_d1+'">'+a.trend_d1+'</span>')+
-    pill('RSI H1',a.rsi_h1)+'</div>'+
-    '<div>'+pill('ARB 7d',sgn(a.arb_7d)+'%')+pill('BTC 7d',sgn(a.btc_7d)+'%')+
-    pill('Rel 7d',sgn(a.rel_7d)+'pp',relCls)+
-    pill('Rel 24h',sgn(a.rel_24h)+'pp',a.rel_24h>0?'pos':'neg')+'</div>'+
-    '<div class="why">'+a.reason+'</div>';
+  var bc=(a.bias==='STRONG_UP'||a.bias==='UP')?'var(--lg)':(a.bias==='DOWN')?'var(--sh)':'var(--wt)';
+  var bl={STRONG_UP:'📈 UPTREND MẠNH',UP:'↗ THIÊN HƯỚNG TĂNG',NEUTRAL:'↔ TRUNG TÍNH',DOWN:'↘ THIÊN HƯỚNG GIẢM'}[a.bias]||a.bias;
+  var mon='<span class="pill" style="float:right"><b>Short-monitor</b><span style="color:'+(on?'var(--sh)':'var(--lg)')+';font-weight:800">'+(on?'BẬT':'TẮT')+'</span></span>';
+  b.innerHTML=
+    mon+
+    '<div class="badge" style="color:'+bc+'">'+bl+'</div>'+
+    '<div class="why" style="margin:3px 0 10px">'+a.bias_note+'</div>'+
+    '<div>'+pill('Giá',fmt(a.price))+pill('H1',trendSpan(a.trend_h1))+pill('H4',trendSpan(a.trend_h4))+pill('D1',trendSpan(a.trend_d1))+'</div>'+
+    '<div>'+pill('RSI H1',a.rsi_h1)+pill('RSI H4',a.rsi_h4)+pill('RSI D1',a.rsi_d1)+pill('vs EMA200 D1',sgn(a.dist_ema200_d1_pct)+'%',relCls(a.dist_ema200_d1_pct))+'</div>'+
+    '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+      '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Sức mạnh vs BTC</b><br>'+
+      pill('Rel 24h',sgn(a.rel_24h)+'pp',relCls(a.rel_24h))+pill('Rel 7d',sgn(a.rel_7d)+'pp',relCls(a.rel_7d))+pill('Rel 30d',sgn(a.rel_30d)+'pp',relCls(a.rel_30d))+
+      '<span class="pill" style="color:'+bc+';font-weight:700">'+a.strength+'</span></div>'+
+    '<div class="sr">'+
+      '<div class="srcol"><div class="srh" style="color:var(--sh)">🔴 Kháng cự</div>'+lvlList(a.resistances)+'</div>'+
+      '<div class="srcol"><div class="srh" style="color:var(--lg)">🟢 Hỗ trợ</div>'+lvlList(a.supports)+'</div>'+
+      '<div class="srcol"><div class="srh">Range 30d</div><div class="lvl mono">'+fmt(a.range30_low)+' – '+fmt(a.range30_high)+'</div><div class="lvl" style="color:var(--mu)">vị trí '+a.range30_pos_pct+'%</div></div>'+
+    '</div>'+
+    (a.watch?'<div class="why" style="margin-top:8px">👁 <b>Theo dõi:</b> '+a.watch+'</div>':'')+
+    '<div class="why" style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+(on?'🔴':'🟢')+' '+a.reason+'</div>'+
+    '<div class="why" style="opacity:.7;font-style:italic">Phân tích tham khảo (giá/EMA/pivot) — không phải lời khuyên đầu tư.</div>';
 }).catch(e=>{document.getElementById('arbBox').innerHTML='⚠️ Lỗi tải ARB: '+e.message;});
 </script></body></html>"""
 

@@ -1207,6 +1207,30 @@ def api_arb_status():
             flow = f"SPOT-driven: volume spike {vol_max24_x:g}× baseline mà funding thấp ({fund:+.3f}%) → cầu THẬT, không quá đòn bẩy (lành)"
         else:
             flow = f"Bình thường (funding {fund:+.3f}%, vol {vol_now_x:g}× baseline)"
+        # ── Đà ngắn hạn (4h): mạnh lên / yếu đi — đo HƯỚNG, lọc nhiễu 15m ──
+        rsi_c1 = _rsi_series(c1)
+        bc1 = btc1["close"]
+        def _r4(s, off=0):   # % return của cửa sổ 4h, off=0 là 4h gần nhất, off=1 là 4h trước đó
+            a = -1 - off*4
+            return (float(s.iloc[a])/float(s.iloc[a-4]) - 1)*100
+        rel_now  = _r4(c1,0) - _r4(bc1,0)
+        rel_prev = _r4(c1,1) - _r4(bc1,1)
+        rel_delta = rel_now - rel_prev                    # >0: ARB nới rộng khoảng cách vs BTC
+        rsi_slope = float(rsi_c1.iloc[-1]) - float(rsi_c1.iloc[-7])   # RSI 6h
+        up = arb1["close"] > arb1["open"]
+        v8 = arb1["volume"].iloc[-8:]; u8 = up.iloc[-8:]
+        upv = float(v8[u8].sum()); dnv = float(v8[~u8].sum())
+        buy_pct = upv/(upv+dnv)*100 if (upv+dnv) > 0 else 50
+        e9s = ema(c1,9)
+        msc  = (2 if rel_delta > 1 else -2 if rel_delta < -1 else 0)
+        msc += (1 if rsi_slope > 3 else -1 if rsi_slope < -3 else 0)
+        msc += (1 if buy_pct >= 58 else -1 if buy_pct <= 42 else 0)
+        msc += (1 if float(e9s.iloc[-1]) > float(e9s.iloc[-5]) else -1 if float(e9s.iloc[-1]) < float(e9s.iloc[-5]) else 0)
+        mom_state = "MẠNH LÊN" if msc >= 3 else "YẾU ĐI" if msc <= -3 else "GIỮ NGUYÊN"
+        mom_note = (f"vs BTC {'nới rộng' if rel_delta >= 0 else 'thu hẹp'} {rel_delta:+.1f}pp/4h · "
+                    f"RSI {'↑' if rsi_slope >= 0 else '↓'}{abs(rsi_slope):.0f} · vol mua {buy_pct:.0f}%")
+        momentum = {"state": mom_state, "rel_delta_pp": round(rel_delta,1),
+                    "rsi_slope": round(rsi_slope,1), "buy_vol_pct": round(buy_pct), "note": mom_note}
         # ── Kháng cự / Hỗ trợ: pivot D1 (±4 nến) + range 30d, gộp mức gần ~2% ──
         H, L, W = arbD["high"].values, arbD["low"].values, 4
         piv_hi = [float(H[i]) for i in range(W,len(H)-W) if H[i]==max(H[i-W:i+W+1])]
@@ -1298,6 +1322,7 @@ def api_arb_status():
             "above_ema200_h4": above_h4, "above_ema200_d1": above_d1, "dist_ema200_d1_pct": round(dist_d1,1),
             "range30_low": round(lo30,5), "range30_high": round(hi30,5), "range30_pos_pct": round(pos30),
             "vol_now_x": vol_now_x, "vol_max24_x": vol_max24_x, "funding": fund, "flow_note": flow,
+            "momentum": momentum,
             "resistances": resistances, "supports": supports, "watch": watch, "entry_plan": entry_plan,
             "short_monitor": "ON" if short_on else "OFF", "reason": reason,
         }
@@ -1429,6 +1454,15 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
       pill('Vol hiện tại',a.vol_now_x+'×')+pill('Spike 24h',a.vol_max24_x+'×')+
       pill('Funding',(a.funding!=null?sgn(a.funding)+'%':'—'),(a.funding>=0.03?'neg':a.funding<=-0.03?'pos':''))+
       '<div class="why">'+a.flow_note+'</div></div>'+
+    (function(){var m=a.momentum;if(!m)return '';
+      var mc=m.state==='MẠNH LÊN'?'var(--lg)':m.state==='YẾU ĐI'?'var(--sh)':'var(--wt)';
+      var mi=m.state==='MẠNH LÊN'?'🟢':m.state==='YẾU ĐI'?'🔴':'↔';
+      return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+        '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Đà ngắn hạn (4h)</b> '+
+        '<span style="font-weight:800;color:'+mc+'">'+mi+' '+m.state+'</span><br>'+
+        pill('Rel Δ',sgn(m.rel_delta_pp)+'pp',relCls(m.rel_delta_pp))+pill('RSI slope',sgn(m.rsi_slope),relCls(m.rsi_slope))+
+        pill('Vol mua',m.buy_vol_pct+'%',m.buy_vol_pct>=58?'pos':m.buy_vol_pct<=42?'neg':'')+
+        '<div class="why">'+m.note+'</div></div>';})()+
     '<div class="sr">'+
       '<div class="srcol"><div class="srh" style="color:var(--sh)">🔴 Kháng cự</div>'+lvlList(a.resistances)+'</div>'+
       '<div class="srcol"><div class="srh" style="color:var(--lg)">🟢 Hỗ trợ</div>'+lvlList(a.supports)+'</div>'+

@@ -1355,6 +1355,57 @@ def api_arb_status():
         return jsonify({"error": str(e)})
 
 
+_arb_news_cache = {"ts": 0.0, "data": None}
+_NEWS_FEEDS = [("CoinTelegraph","https://cointelegraph.com/rss"),
+               ("CoinDesk","https://www.coindesk.com/arc/outboundfeeds/rss/"),
+               ("Decrypt","https://decrypt.co/feed"),
+               ("TheBlock","https://www.theblock.co/rss.xml")]
+
+@app.route("/api/arb/news")
+def api_arb_news():
+    """Tin ARB gần đây từ RSS (display-only, THAM KHẢO — không phải tín hiệu). Cache 10'."""
+    import re, html as _html, email.utils as _eu
+    now = time.time()
+    if _arb_news_cache["data"] and now - _arb_news_cache["ts"] < 600:
+        return jsonify(_arb_news_cache["data"])
+    def esc(s): return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+    def safelink(u):
+        u = u.strip()
+        return u if u.startswith(("http://","https://")) else ""
+    ua = {"User-Agent": "Mozilla/5.0"}
+    items = []
+    for name, url in _NEWS_FEEDS:
+        try:
+            r = requests.get(url, timeout=8, headers=ua)
+            for m in re.finditer(r"<item>(.*?)</item>", r.text, re.S):
+                b = m.group(1)
+                def g(tag, blk=b):
+                    mm = re.search(rf"<{tag}[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</{tag}>", blk, re.S)
+                    return _html.unescape(mm.group(1).strip()) if mm else ""
+                title = g("title")
+                if not title: continue
+                try: ts = _eu.parsedate_to_datetime(g("pubDate")).timestamp()
+                except Exception: ts = 0
+                items.append({"title": title, "link": g("link"), "source": name, "ts": ts,
+                              "text": (title + " " + g("description")).lower()})
+        except Exception:
+            continue
+    def ago(ts):
+        if not ts: return ""
+        s = now - ts
+        return f"{int(s/60)}m trước" if s < 3600 else f"{int(s/3600)}h trước" if s < 86400 else f"{int(s/86400)}d trước"
+    def out(x): return {"title": esc(x["title"])[:150], "link": safelink(x["link"]), "source": x["source"], "ago": ago(x["ts"])}
+    arb = sorted([x for x in items if "arbitrum" in x["text"] or re.search(r"\barb\b", x["text"])],
+                 key=lambda x: x["ts"], reverse=True)
+    if arb:
+        data = {"arb_specific": True, "items": [out(x) for x in arb[:5]]}
+    else:
+        items.sort(key=lambda x: x["ts"], reverse=True)
+        data = {"arb_specific": False, "items": [out(x) for x in items[:3]]}
+    _arb_news_cache.update(ts=now, data=data)
+    return jsonify(data)
+
+
 @app.route("/paper")
 def paper_view():
     return make_response(PAPER_HTML)
@@ -1408,6 +1459,8 @@ td.mono{font-family:ui-monospace,monospace}
 <div class="ref">📐 <b>Backtest 3 năm @ 0.03% (baseline validate):</b> WR 62% · expectancy +0.051R · 1193 lệnh · 80% quý dương. Forward phải khớp ~đây. (Tiền thật sau này dùng 0.05%: WR 67% / +0.13R)</div>
 <div class="sec">🎯 ARB Monitor — regime &amp; gate</div>
 <div class="arb" id="arbBox">Đang tải ARB…</div>
+<div class="sec" style="font-size:12px">📰 Tin gần đây (ARB)</div>
+<div class="arb" id="arbNews">Đang tải tin…</div>
 <div class="cards" id="cards"></div>
 <div class="sec">⏳ Đang mở</div><div id="open"></div>
 <div class="sec">📕 Đã đóng</div><div id="closed"></div>
@@ -1506,6 +1559,16 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
     '<div class="why" style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+(on?'🔴':'🟢')+' '+a.reason+'</div>'+
     '<div class="why" style="opacity:.7;font-style:italic">Phân tích tham khảo (giá/EMA/pivot) — không phải lời khuyên đầu tư.</div>';
 }).catch(e=>{document.getElementById('arbBox').innerHTML='⚠️ Lỗi tải ARB: '+e.message;});
+
+fetch('/api/arb/news').then(r=>r.json()).then(n=>{
+  var el=document.getElementById('arbNews'); if(!el)return;
+  if(!n.items||!n.items.length){el.innerHTML='<span style="color:var(--mu)">Chưa lấy được tin.</span>';return;}
+  var head=n.arb_specific?'':'<div class="why" style="margin-bottom:5px">Chưa có tin ARB nổi bật — tin thị trường chung:</div>';
+  el.innerHTML=head+n.items.map(function(x){
+    var t=x.link?('<a href="'+x.link+'" target="_blank" rel="noopener" style="color:var(--ac);text-decoration:none">'+x.title+'</a>'):x.title;
+    return '<div class="lvl">'+t+' <span style="color:var(--mu);font-size:11px">· '+x.source+(x.ago?' · '+x.ago:'')+'</span></div>';
+  }).join('')+'<div class="why" style="opacity:.7;font-style:italic;margin-top:4px">Tin tham khảo/phân loại — không phải tín hiệu vào lệnh.</div>';
+}).catch(function(e){var el=document.getElementById('arbNews');if(el)el.innerHTML='<span style="color:var(--mu)">Lỗi tải tin.</span>';});
 </script></body></html>"""
 
 # ── API — Dashboard ───────────────────────────

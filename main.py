@@ -1337,8 +1337,8 @@ def api_arb_status():
         bt = btc1["close"]
         bt34, bt89, bt200 = float(ema(bt,34).iloc[-1]), float(ema(bt,89).iloc[-1]), float(ema(bt,200).iloc[-1])
         btc_chg24 = (float(bt.iloc[-1])/float(bt.iloc[-25]) - 1)*100
-        btc_tr = "tăng" if bt34 > bt89 > bt200 else "giảm" if bt34 < bt89 < bt200 else "đi ngang"
-        btc_line = f"BTC: {btc_tr} ({btc_chg24:+.1f}%/24h)"
+        btc_tr = "xu hướng tăng" if bt34 > bt89 > bt200 else "xu hướng giảm" if bt34 < bt89 < bt200 else "đi ngang"
+        btc_line = f"BTC: {btc_tr}, 24h {btc_chg24:+.1f}%"
         best = setups[0] if setups else None
         best_txt = f"{best['name'].split(' (')[0]} {best['zone']} (RR {best['rr']})" if best else "chờ setup rõ"
         if direction == "LONG":

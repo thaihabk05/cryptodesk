@@ -1328,6 +1328,29 @@ def api_arb_status():
         else:
             now_note = "Giá ở vùng trung tính."
         entry_plan = {"direction": direction, "now_note": now_note, "setups": setups}
+        # ── TÓM TẮT (BLUF): vào là thấy ngay tình hình + nên làm gì ──
+        _bmap = {"STRONG_UP":"Uptrend mạnh","UP":"Thiên hướng tăng","NEUTRAL":"Trung tính/đi ngang","DOWN":"Thiên hướng giảm"}
+        _mmap = {"MẠNH LÊN":"đà mạnh lên","YẾU ĐI":"đang hạ nhiệt/điều chỉnh","GIỮ NGUYÊN":"đà chững, chờ xác nhận"}
+        situation = f"{_bmap.get(bias,bias)}, {_mmap.get(mom_state,'')} · {strength}"
+        if pos30 >= 88: situation += " · sát đỉnh 30d"
+        elif pos30 <= 15: situation += " · gần đáy 30d"
+        bt = btc1["close"]
+        bt34, bt89, bt200 = float(ema(bt,34).iloc[-1]), float(ema(bt,89).iloc[-1]), float(ema(bt,200).iloc[-1])
+        btc_chg24 = (float(bt.iloc[-1])/float(bt.iloc[-25]) - 1)*100
+        btc_tr = "tăng" if bt34 > bt89 > bt200 else "giảm" if bt34 < bt89 < bt200 else "đi ngang"
+        btc_line = f"BTC: {btc_tr} ({btc_chg24:+.1f}%/24h)"
+        best = setups[0] if setups else None
+        best_txt = f"{best['name'].split(' (')[0]} {best['zone']} (RR {best['rr']})" if best else "chờ setup rõ"
+        if direction == "LONG":
+            lead = ("CHỜ vào, không đuổi" if ("sát kháng cự" in now_note or "giữa range" in now_note or "trung tính" in now_note)
+                    else "Gần hỗ trợ — canh vào dip" if "Gần hỗ trợ" in now_note else "Canh LONG")
+        elif direction == "SHORT":
+            lead = "Bối cảnh SHORT — canh vùng gợi ý"
+        else:
+            lead = "Đi ngang — chờ break biên, tránh đánh giữa"
+        posture = f"{lead}. Ưu tiên: {best_txt}." + (f" Vô hiệu nếu mất {near_sup:g}." if near_sup else "")
+        updated = datetime.now(timezone(timedelta(hours=7))).strftime("%H:%M")
+        summary = {"situation": situation, "posture": posture, "btc": btc_line, "updated": updated}
         short_on = (not above_h4) and (rel7 <= 0)
         reason = ("ARB dưới EMA200 H4 + không mạnh hơn BTC 7d → downtrend: short-monitor BẬT"
                   if short_on else
@@ -1345,7 +1368,7 @@ def api_arb_status():
             "above_ema200_h4": above_h4, "above_ema200_d1": above_d1, "dist_ema200_d1_pct": round(dist_d1,1),
             "range30_low": round(lo30,5), "range30_high": round(hi30,5), "range30_pos_pct": round(pos30),
             "vol_now_x": vol_now_x, "vol_max24_x": vol_max24_x, "funding": fund, "flow_note": flow,
-            "momentum": momentum,
+            "momentum": momentum, "summary": summary,
             "resistances": resistances, "supports": supports, "watch": watch, "entry_plan": entry_plan,
             "short_monitor": "ON" if short_on else "OFF", "reason": reason,
         }
@@ -1447,6 +1470,9 @@ td.mono{font-family:ui-monospace,monospace}
 .arb .ep{margin-top:8px;border-top:1px solid var(--bd);padding-top:8px}
 .arb .setup{font-size:12px;line-height:1.6;margin:5px 0;padding:6px 9px;background:var(--bg);border:1px solid var(--bd);border-radius:7px}
 .arb .setupnote{color:var(--mu);font-size:11px;margin-top:2px}
+.arb .bluf{background:var(--bg);border:1px solid var(--ac);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.arb .blufrow{font-size:13px;line-height:1.5;margin:2px 0}
+.arb .blufmeta{font-size:11px;color:var(--mu);margin-top:5px;border-top:1px solid var(--bd);padding-top:5px}
 .tUP{color:var(--lg);font-weight:700}.tDOWN{color:var(--sh);font-weight:700}.tRANGE{color:var(--wt);font-weight:700}
 </style></head><body>
 <nav class="nav">
@@ -1514,9 +1540,14 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
   var on=a.short_monitor==='ON';
   var bc=(a.bias==='STRONG_UP'||a.bias==='UP')?'var(--lg)':(a.bias==='DOWN')?'var(--sh)':'var(--wt)';
   var bl={STRONG_UP:'📈 UPTREND MẠNH',UP:'↗ THIÊN HƯỚNG TĂNG',NEUTRAL:'↔ TRUNG TÍNH',DOWN:'↘ THIÊN HƯỚNG GIẢM'}[a.bias]||a.bias;
-  var mon='<span class="pill" style="float:right"><b>Short-monitor</b><span style="color:'+(on?'var(--sh)':'var(--lg)')+';font-weight:800">'+(on?'BẬT':'TẮT')+'</span></span>';
+  var s=a.summary||{};
+  var bluf='<div class="bluf">'+
+    '<div class="blufrow"><b>📌 '+(s.situation||'—')+'</b></div>'+
+    '<div class="blufrow">🎯 '+(s.posture||'—')+'</div>'+
+    '<div class="blufmeta">🕐 '+(s.updated||'')+' · '+(s.btc||'')+' · Short-monitor: <b style="color:'+(on?'var(--sh)':'var(--lg)')+'">'+(on?'BẬT':'TẮT')+'</b></div>'+
+  '</div>';
   b.innerHTML=
-    mon+
+    bluf+
     '<div class="badge" style="color:'+bc+'">'+bl+'</div>'+
     '<div class="why" style="margin:3px 0 10px">'+a.bias_note+'</div>'+
     '<div>'+pill('Giá',fmt(a.price))+pill('H1',trendSpan(a.trend_h1))+pill('H4',trendSpan(a.trend_h4))+pill('D1',trendSpan(a.trend_d1))+'</div>'+

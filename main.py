@@ -1417,7 +1417,18 @@ def api_arb_news():
         if not ts: return ""
         s = now - ts
         return f"{int(s/60)}m trước" if s < 3600 else f"{int(s/3600)}h trước" if s < 86400 else f"{int(s/86400)}d trước"
-    def out(x): return {"title": esc(x["title"])[:150], "link": safelink(x["link"]), "source": x["source"], "ago": ago(x["ts"])}
+    def relevance(t):
+        if "arbitrum" in t or re.search(r"\barb\b", t) or "robinhood chain" in t or "offchain labs" in t or "stylus" in t:
+            return ("Cao", "Trực tiếp ARB / hệ sinh thái Arbitrum")
+        if any(k in t for k in ("layer 2","layer-2","layer2"," l2 ","optimism"," base "," base,","zksync","zk-","zk rollup","rollup","ethereum"," eth "," eth,","scaling","dex volume")):
+            return ("Trung bình", "L2/Ethereum — cạnh tranh/hệ sinh thái")
+        if any(k in t for k in ("bitcoin"," btc ","btc,","federal reserve","the fed"," sec "," etf ","etf,","rate cut","interest rate","macro","cpi","inflation","regulat","tariff")):
+            return ("Trung bình", "Vĩ mô/BTC — ARB beta cao, ảnh hưởng gián tiếp")
+        return ("Thấp", "Chủ đề khác — liên quan ARB thấp")
+    def out(x):
+        lvl, why = relevance(x["text"])
+        return {"title": esc(x["title"])[:150], "link": safelink(x["link"]), "source": x["source"],
+                "ago": ago(x["ts"]), "rel": lvl, "rel_why": why}
     arb = sorted([x for x in items if "arbitrum" in x["text"] or re.search(r"\barb\b", x["text"])],
                  key=lambda x: x["ts"], reverse=True)
     if arb:
@@ -1597,8 +1608,10 @@ fetch('/api/arb/news').then(r=>r.json()).then(n=>{
   var head=n.arb_specific?'':'<div class="why" style="margin-bottom:5px">Chưa có tin ARB nổi bật — tin thị trường chung:</div>';
   el.innerHTML=head+n.items.map(function(x){
     var t=x.link?('<a href="'+x.link+'" target="_blank" rel="noopener" style="color:var(--ac);text-decoration:none">'+x.title+'</a>'):x.title;
-    return '<div class="lvl">'+t+' <span style="color:var(--mu);font-size:11px">· '+x.source+(x.ago?' · '+x.ago:'')+'</span></div>';
-  }).join('')+'<div class="why" style="opacity:.7;font-style:italic;margin-top:4px">Tin tham khảo/phân loại — không phải tín hiệu vào lệnh.</div>';
+    var rc=x.rel==='Cao'?'var(--ac)':x.rel==='Trung bình'?'var(--wt)':'var(--mu)';
+    var tag=x.rel?('<span style="font-size:10px;font-weight:700;color:'+rc+';border:1px solid '+rc+';border-radius:4px;padding:0 5px;margin-right:6px;white-space:nowrap">'+x.rel+'</span>'):'';
+    return '<div class="lvl" style="margin:6px 0">'+tag+t+' <span style="color:var(--mu);font-size:11px">· '+x.source+(x.ago?' · '+x.ago:'')+'</span>'+(x.rel_why?'<div style="color:var(--mu);font-size:11px;margin-left:2px">↳ '+x.rel_why+'</div>':'')+'</div>';
+  }).join('')+'<div class="why" style="opacity:.7;font-style:italic;margin-top:4px">Nhãn liên quan tự phân loại theo từ khoá · tin tham khảo, không phải tín hiệu vào lệnh.</div>';
 }).catch(function(e){var el=document.getElementById('arbNews');if(el)el.innerHTML='<span style="color:var(--mu)">Lỗi tải tin.</span>';});
 </script></body></html>"""
 

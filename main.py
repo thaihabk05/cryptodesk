@@ -1296,6 +1296,27 @@ def api_arb_status():
                     continue
                 dn_res.append({"level": round(v,5), "label": lbl, "pct": round((v/close-1)*100,1)})
             dn_res = dn_res[:4]
+        # Mục tiêu ĐÀ GIẢM (phía DƯỚI): EMA support + đáy H1 + hỗ trợ D1 — nơi giá đang rơi tới.
+        dn_tgt = []; air_pocket = None
+        if st_state == "GIẢM":
+            cand = [(v, lbl) for lbl, v in (("EMA200 H1", e200_h1), ("EMA89 H1", e89_h1)) if v < close*0.998]
+            Ll = arb1["low"].values; nL = len(Ll)
+            for i in range(max(3, nL-72), nL-3):
+                if Ll[i] == min(Ll[i-3:i+4]) and close*0.60 < Ll[i] < close*0.998:
+                    cand.append((float(Ll[i]), "đáy H1"))
+            for sp in supports:
+                if sp["level"] < close*0.998: cand.append((sp["level"], "hỗ trợ D1"))
+            for v, lbl in sorted(cand, reverse=True):
+                if dn_tgt and abs(v - dn_tgt[-1]["level"])/dn_tgt[-1]["level"] < 0.012:
+                    if "EMA" in lbl and "EMA" not in dn_tgt[-1]["label"]: dn_tgt[-1]["label"] = lbl
+                    continue
+                dn_tgt.append({"level": round(v,5), "label": lbl, "pct": round((v/close-1)*100,1)})
+            dn_tgt = dn_tgt[:4]
+            for i in range(len(dn_tgt)-1):
+                gap = (dn_tgt[i]["level"] - dn_tgt[i+1]["level"]) / dn_tgt[i]["level"] * 100
+                if gap >= 7:
+                    air_pocket = f"⚠️ Hỗ trợ mỏng: mất {dn_tgt[i]['level']:g} dễ rơi nhanh tới {dn_tgt[i+1]['level']:g} (gap {gap:.0f}%)"
+                    break
         R1 = resistances[0]["level"] if resistances else None
         R2 = resistances[1]["level"] if len(resistances) > 1 else None
         S1 = supports[0]["level"] if supports else None
@@ -1390,7 +1411,7 @@ def api_arb_status():
             "price": close, "trend_h1": th1, "trend_h4": th4, "trend_d1": tD,
             "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
             "headline": headline, "hkey": hkey, "st_state": st_state, "st_reason": st_reason,
-            "dn_res": dn_res,
+            "dn_res": dn_res, "dn_tgt": dn_tgt, "air_pocket": air_pocket,
             "rsi_h1": rsi_h1, "rsi_h4": rsi_h4, "rsi_d1": rsi_d1,
             "arb_24h": round(arb24,1), "arb_7d": round(arb7,1), "arb_30d": round(arb30,1),
             "btc_24h": round(btc24,1), "btc_7d": round(btc7,1), "btc_30d": round(btc30,1),
@@ -1617,6 +1638,11 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
         '<b style="color:var(--sh);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🔻 Kháng cự đà giảm — bounce dễ bị chặn ở</b>'+
         dr.map(function(x){return '<div class="lvl"><span class="mono">'+fmt(x.level)+'</span> <span style="color:var(--mu);font-size:11px">('+(x.pct>0?'+':'')+x.pct+'% · '+x.label+')</span></div>';}).join('')+
         '<div class="why" style="font-size:11px">Reclaim mức trên cùng mới phủ nhận đà giảm.</div></div>';})()+
+    (function(){var dt=a.dn_tgt;if(!dt||!dt.length)return '';
+      return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+        '<b style="color:var(--lg);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🎯 Mục tiêu đà giảm — đang rơi tới</b>'+
+        dt.map(function(x){return '<div class="lvl"><span class="mono">'+fmt(x.level)+'</span> <span style="color:var(--mu);font-size:11px">('+x.pct+'% · '+x.label+')</span></div>';}).join('')+
+        (a.air_pocket?'<div class="why" style="font-size:11px;color:var(--sh)">'+a.air_pocket+'</div>':'')+'</div>';})()+
     '<div class="sr">'+
       '<div class="srcol"><div class="srh" style="color:var(--sh)">🔴 Kháng cự</div>'+lvlList(a.resistances)+'</div>'+
       '<div class="srcol"><div class="srh" style="color:var(--lg)">🟢 Hỗ trợ</div>'+lvlList(a.supports)+'</div>'+

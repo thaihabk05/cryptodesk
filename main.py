@@ -1281,6 +1281,21 @@ def api_arb_status():
         if near_res: watch += f"Phá {near_res:g} mới xác nhận đi tiếp."
         # ── Gợi ý vùng vào lệnh (regime-aware, THAM KHẢO) ──
         e9_h1  = float(ema(c1,9).iloc[-1]); e34_h1 = float(ema(c1,34).iloc[-1])
+        # Kháng cự ĐÀ GIẢM (chỉ khi ngắn hạn GIẢM): EMA overhead H1 + đỉnh H1 gần —
+        # nơi bounce dễ bị chặn / canh rejection / mức cần reclaim để phủ nhận giảm.
+        dn_res = []
+        if st_state == "GIẢM":
+            cand = [(v, lbl) for lbl, v in (("EMA34 H1", e34_h1), ("EMA89 H1", e89_h1), ("EMA200 H1", e200_h1)) if v > close*1.002]
+            Hh = arb1["high"].values; nH = len(Hh)
+            for i in range(max(3, nH-60), nH-3):
+                if Hh[i] == max(Hh[i-3:i+4]) and close*1.002 < Hh[i] < close*1.30:
+                    cand.append((float(Hh[i]), "đỉnh H1"))
+            for v, lbl in sorted(cand):
+                if dn_res and abs(v - dn_res[-1]["level"])/dn_res[-1]["level"] < 0.012:
+                    if "EMA" in lbl and "EMA" not in dn_res[-1]["label"]: dn_res[-1]["label"] = lbl
+                    continue
+                dn_res.append({"level": round(v,5), "label": lbl, "pct": round((v/close-1)*100,1)})
+            dn_res = dn_res[:4]
         R1 = resistances[0]["level"] if resistances else None
         R2 = resistances[1]["level"] if len(resistances) > 1 else None
         S1 = supports[0]["level"] if supports else None
@@ -1375,6 +1390,7 @@ def api_arb_status():
             "price": close, "trend_h1": th1, "trend_h4": th4, "trend_d1": tD,
             "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
             "headline": headline, "hkey": hkey, "st_state": st_state, "st_reason": st_reason,
+            "dn_res": dn_res,
             "rsi_h1": rsi_h1, "rsi_h4": rsi_h4, "rsi_d1": rsi_d1,
             "arb_24h": round(arb24,1), "arb_7d": round(arb7,1), "arb_30d": round(arb30,1),
             "btc_24h": round(btc24,1), "btc_7d": round(btc7,1), "btc_30d": round(btc30,1),
@@ -1596,6 +1612,11 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
         pill('Rel Δ',sgn(m.rel_delta_pp)+'pp',relCls(m.rel_delta_pp))+pill('RSI slope',sgn(m.rsi_slope),relCls(m.rsi_slope))+
         pill('Vol mua',m.buy_vol_pct+'%',m.buy_vol_pct>=58?'pos':m.buy_vol_pct<=42?'neg':'')+
         '<div class="why">'+m.note+'</div></div>';})()+
+    (function(){var dr=a.dn_res;if(!dr||!dr.length)return '';
+      return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+        '<b style="color:var(--sh);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🔻 Kháng cự đà giảm — bounce dễ bị chặn ở</b>'+
+        dr.map(function(x){return '<div class="lvl"><span class="mono">'+fmt(x.level)+'</span> <span style="color:var(--mu);font-size:11px">('+(x.pct>0?'+':'')+x.pct+'% · '+x.label+')</span></div>';}).join('')+
+        '<div class="why" style="font-size:11px">Reclaim mức trên cùng mới phủ nhận đà giảm.</div></div>';})()+
     '<div class="sr">'+
       '<div class="srcol"><div class="srh" style="color:var(--sh)">🔴 Kháng cự</div>'+lvlList(a.resistances)+'</div>'+
       '<div class="srcol"><div class="srh" style="color:var(--lg)">🟢 Hỗ trợ</div>'+lvlList(a.supports)+'</div>'+

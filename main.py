@@ -1253,11 +1253,27 @@ def api_arb_status():
         overheat = dist_d1 > 30 and rsi_d1 >= 70
         strength = ("RẤT MẠNH so BTC" if rel7>=10 else "mạnh hơn BTC" if rel7>=3 else
                     "RẤT YẾU so BTC" if rel7<=-10 else "yếu hơn BTC" if rel7<=-3 else "ngang BTC")
-        biasmap = {"STRONG_UP":"Uptrend mạnh, đa khung đồng thuận","UP":"Thiên hướng TĂNG",
-                   "NEUTRAL":"Trung tính / đi ngang","DOWN":"Thiên hướng GIẢM"}
-        note = f"{biasmap[bias]} · {strength} (7d {rel7:+.1f}pp)"
+        # ── Trạng thái NGẮN HẠN (price-action — phản ứng NHANH hơn EMA-ordering) ──
+        # Sửa lỗi bias báo "uptrend mạnh" khi giá đã rơi: xét giá-vs-EMA200/89 H1 +
+        # đà 4h + đổi giá 24h, thay vì chỉ thứ tự EMA (chậm nhiều ngày).
+        e89_h1 = float(ema(c1,89).iloc[-1]); e200_h1 = float(ema(c1,200).iloc[-1])
+        st = (1 if close > e200_h1 else -1) + (1 if close > e89_h1 else -1)
+        st += 1 if mom_state == "MẠNH LÊN" else -1 if mom_state == "YẾU ĐI" else 0
+        st += 1 if arb24 > 3 else -1 if arb24 < -3 else 0
+        st_state = "TĂNG" if st >= 2 else "GIẢM" if st <= -2 else "ĐI NGANG"
+        st_reason = f"giá {'trên' if close > e200_h1 else 'dưới'} EMA200 H1, đà {mom_state.lower()}, 24h {arb24:+.1f}%"
+        # ── Nhãn TỔNG HỢP: cấu trúc lớn (chậm) + ngắn hạn (nhanh) ──
+        struct_up = bias in ("STRONG_UP", "UP")
+        if struct_up and st_state == "TĂNG":       hkey, headline = "UP",     "📈 UPTREND MẠNH"
+        elif struct_up and st_state == "GIẢM":     hkey, headline = "MIXED",  "⚠️ Uptrend lớn · ĐANG GIẢM ngắn hạn"
+        elif struct_up and st_state == "ĐI NGANG": hkey, headline = "PAUSE",  "↗ Uptrend · đang chững/tích lũy"
+        elif bias == "DOWN" or st_state == "GIẢM": hkey, headline = "DOWN",   "↘ ĐANG GIẢM"
+        elif st_state == "TĂNG":                   hkey, headline = "UP",     "↗ Đang tăng"
+        else:                                      hkey, headline = "NEUTRAL","↔ Trung tính"
+        note = (f"Cấu trúc lớn: {'uptrend' if struct_up else 'giảm' if bias=='DOWN' else 'trung tính'} "
+                f"(EMA200 D1 {dist_d1:+.0f}%, {strength}) · Ngắn hạn: {st_state} — {st_reason}")
         if overheat:
-            note += f" · ⚠️ quá nhiệt (xa EMA200 D1 {dist_d1:+.0f}%, RSI_D1 {rsi_d1}) — dễ điều chỉnh"
+            note += " · ⚠️ quá nhiệt, dễ điều chỉnh"
         near_sup = supports[0]["level"] if supports else None
         near_res = resistances[0]["level"] if resistances else None
         watch = ""
@@ -1329,9 +1345,7 @@ def api_arb_status():
             now_note = "Giá ở vùng trung tính."
         entry_plan = {"direction": direction, "now_note": now_note, "setups": setups}
         # ── TÓM TẮT (BLUF): vào là thấy ngay tình hình + nên làm gì ──
-        _bmap = {"STRONG_UP":"Uptrend mạnh","UP":"Thiên hướng tăng","NEUTRAL":"Trung tính/đi ngang","DOWN":"Thiên hướng giảm"}
-        _mmap = {"MẠNH LÊN":"đà mạnh lên","YẾU ĐI":"đang hạ nhiệt/điều chỉnh","GIỮ NGUYÊN":"đà chững, chờ xác nhận"}
-        situation = f"{_bmap.get(bias,bias)}, {_mmap.get(mom_state,'')} · {strength}"
+        situation = f"{headline} · {strength}"
         if pos30 >= 88: situation += " · sát đỉnh 30d"
         elif pos30 <= 15: situation += " · gần đáy 30d"
         bt = btc1["close"]
@@ -1360,6 +1374,7 @@ def api_arb_status():
         data = {
             "price": close, "trend_h1": th1, "trend_h4": th4, "trend_d1": tD,
             "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
+            "headline": headline, "hkey": hkey, "st_state": st_state, "st_reason": st_reason,
             "rsi_h1": rsi_h1, "rsi_h4": rsi_h4, "rsi_d1": rsi_d1,
             "arb_24h": round(arb24,1), "arb_7d": round(arb7,1), "arb_30d": round(arb30,1),
             "btc_24h": round(btc24,1), "btc_7d": round(btc7,1), "btc_30d": round(btc30,1),
@@ -1549,8 +1564,8 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
   var b=document.getElementById('arbBox');
   if(a.error){b.innerHTML='⚠️ '+(a.banned?'Binance đang backoff, thử lại sau.':a.error);return;}
   var on=a.short_monitor==='ON';
-  var bc=(a.bias==='STRONG_UP'||a.bias==='UP')?'var(--lg)':(a.bias==='DOWN')?'var(--sh)':'var(--wt)';
-  var bl={STRONG_UP:'📈 UPTREND MẠNH',UP:'↗ THIÊN HƯỚNG TĂNG',NEUTRAL:'↔ TRUNG TÍNH',DOWN:'↘ THIÊN HƯỚNG GIẢM'}[a.bias]||a.bias;
+  var bc=(a.hkey==='UP')?'var(--lg)':(a.hkey==='DOWN')?'var(--sh)':(a.hkey==='NEUTRAL')?'var(--mu)':'var(--wt)';
+  var bl=a.headline||'—';
   var s=a.summary||{};
   var bluf='<div class="bluf">'+
     '<div class="blufrow"><b>📌 '+(s.situation||'—')+'</b></div>'+

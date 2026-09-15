@@ -219,14 +219,17 @@ def arb_monitor():
                     f"Giá {close:.5g} | gợi ý SHORT: SL ~{sl:.5g} TP ~{close-atr*2:.5g}\n"
                     f"(discretionary — anh tự quyết, KHÔNG auto)")
 
-        # Rule C — ARB underperform BTC ≥3pp/24h + bearish (RSI≥40 tránh short đáy)
+        # Rule C — thua BTC + short khi HỒI lên chạm EMA34 bị đẩy xuống (KHÔNG short
+        # lúc đang rơi/vào đáy — đó là chỗ dễ bounce ngược, entry tệ).
         btc24 = (float(btc["close"].iloc[-1])/float(btc["close"].iloc[-25])-1)*100
-        if (arb24 - btc24) <= -3 and bearish and below9 and rsi >= 40:
+        c_reject = (float(prev["high"]) >= float(prev["e34"]) or float(row["high"]) >= e34) and close < float(row["open"])
+        if (arb24 - btc24) <= -3 and bearish and c_reject and rsi >= 42:
             if now - _arb_monitor_cooldown["C"] > 14400:
                 _arb_monitor_cooldown["C"] = now
-                _tg(f"🔍 [ARB MONITOR] Rule C — Yếu hơn BTC ({_tag})\n"
-                    f"ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp)\n"
-                    f"Giá {close:.5g} | gợi ý SHORT: SL ~{close+atr*3:.5g} TP ~{close-atr*2:.5g}\n"
+                sl = max(float(row["high"]), float(prev["high"])) + atr*0.5
+                _tg(f"🔍 [ARB MONITOR] Rule C — Yếu hơn BTC + rejection ({_tag})\n"
+                    f"ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp) · hồi chạm EMA34 bị đẩy xuống\n"
+                    f"Giá {close:.5g} | gợi ý SHORT: SL ~{sl:.5g} TP ~{close-atr*2:.5g}\n"
                     f"(discretionary — anh tự quyết, KHÔNG auto)")
     except Exception as e:
         print(f"[arb monitor err] {e}")

@@ -161,6 +161,9 @@ def arb_monitor():
     (giá 0.085 short, chạy lên 0.106). Gate tắt HẲN short-alert khi ARB:
       (1) trên EMA200 H4 = uptrend macro, HOẶC
       (2) outperform BTC 7 ngày = đang MẠNH (không phải "yếu" như Rule C giả định).
+    BREAKDOWN OVERRIDE (9/2026): gate cũ quá thận trọng — chặn cả short 1 cú giảm
+    hợp lệ khi ARB vẫn trên EMA200 H4 (vd -28% vừa qua). Nếu st_break (thủng EMA200
+    H1 + dưới EMA34 H1 + giảm) → MỞ gate, Rule B/C bắn được trong markdown ngắn hạn.
     """
     import time as _t
     now = _t.time()
@@ -173,6 +176,7 @@ def arb_monitor():
         rsi = float(row["rsi"])
         downtrend = e34 < e89 < e200
         below9 = close < e9
+        arb24 = (close/float(arb["close"].iloc[-25]) - 1) * 100
 
         # ── REGIME GATE ────────────────────────────────────────────────
         h4 = fetch_klines("ARBUSDT", "4h", 250, force_futures=True)
@@ -182,8 +186,14 @@ def arb_monitor():
         arb7 = (close / float(arb["close"].iloc[-168]) - 1) * 100     # 168 nến H1 = 7 ngày
         btc7 = (float(btc["close"].iloc[-1]) / float(btc["close"].iloc[-168]) - 1) * 100
         rel7 = arb7 - btc7
-        if above_macro or rel7 > 0:
-            # ARB đang uptrend/outperform → KHÔNG short. Cảnh báo strength bất thường.
+        # BREAKDOWN NGẮN HẠN xác nhận: thủng EMA200 H1 + dưới EMA34 H1 + đang giảm.
+        # Mở gate kể cả khi cấu trúc chậm (EMA200 H4/rel7) chưa lật → bắt cú phân phối/
+        # markdown mà gate cũ bỏ lỡ (vd ARB -28% vừa qua vẫn trên EMA200 H4).
+        st_break = (close < e200) and (close < e34) and (arb24 < -2)
+        # Mở gate khi: downtrend H1 xác nhận (e34<e89<e200) HOẶC st_break — EMA200 H4
+        # quá chậm, không được phép veto khi cấu trúc nhanh đã lật bearish.
+        if (above_macro or rel7 > 0) and not downtrend and not st_break:
+            # ARB mạnh + CHƯA gãy ngắn hạn → KHÔNG short. Cảnh báo strength bất thường.
             if rel7 >= 10 and now - _arb_monitor_cooldown.get("S", 0) > 86400:  # 1 lần/ngày
                 _arb_monitor_cooldown["S"] = now
                 _tg(f"⚠️ [ARB MONITOR] ARB đang MẠNH bất thường\n"
@@ -191,29 +201,31 @@ def arb_monitor():
                     f"→ ARB uptrend/outperform BTC. KHÔNG short. Có thể có tin/catalyst — check news.\n"
                     f"(short-monitor tạm TẮT tới khi ARB yếu lại)")
             print(f"[arb monitor] SKIP short — uptrend/outperform "
-                  f"(aboveEMA200H4={above_macro} rel7d={rel7:+.1f}pp)")
+                  f"(aboveEMA200H4={above_macro} rel7d={rel7:+.1f}pp st_break={st_break})")
             return
 
-        # Rule B — downtrend + hồi chạm EMA34 + rejection
+        bearish = downtrend or st_break
+        _tag = "Breakdown ngắn hạn (thủng EMA200 H1)" if (st_break and not downtrend) else "Downtrend"
+
+        # Rule B — bearish + hồi chạm EMA34 + rejection (RSI≥45 tránh short đáy quá bán)
         touched = float(prev["high"]) >= float(prev["e34"]) or float(row["high"]) >= e34
         rejected = below9 and close < float(row["open"])
-        if downtrend and touched and rejected and rsi >= 45:
+        if bearish and touched and rejected and rsi >= 45:
             if now - _arb_monitor_cooldown["B"] > 14400:  # cooldown 4h
                 _arb_monitor_cooldown["B"] = now
                 sl = max(float(row["high"]), float(prev["high"])) + atr*0.5
-                _tg(f"🔍 [ARB MONITOR] Rule B — Trend rejection\n"
-                    f"Downtrend + hồi chạm EMA34 rồi bị đẩy xuống\n"
+                _tg(f"🔍 [ARB MONITOR] Rule B — Rejection ({_tag})\n"
+                    f"Hồi chạm EMA34 rồi bị đẩy xuống\n"
                     f"Giá {close:.5g} | gợi ý SHORT: SL ~{sl:.5g} TP ~{close-atr*2:.5g}\n"
                     f"(discretionary — anh tự quyết, KHÔNG auto)")
 
-        # Rule C — ARB underperform BTC ≥3pp/24h + downtrend
-        arb24 = (close/float(arb["close"].iloc[-25])-1)*100
+        # Rule C — ARB underperform BTC ≥3pp/24h + bearish (RSI≥40 tránh short đáy)
         btc24 = (float(btc["close"].iloc[-1])/float(btc["close"].iloc[-25])-1)*100
-        if (arb24 - btc24) <= -3 and (e34 < e89) and below9:
+        if (arb24 - btc24) <= -3 and bearish and below9 and rsi >= 40:
             if now - _arb_monitor_cooldown["C"] > 14400:
                 _arb_monitor_cooldown["C"] = now
-                _tg(f"🔍 [ARB MONITOR] Rule C — Yếu hơn BTC\n"
-                    f"ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp) + downtrend\n"
+                _tg(f"🔍 [ARB MONITOR] Rule C — Yếu hơn BTC ({_tag})\n"
+                    f"ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp)\n"
                     f"Giá {close:.5g} | gợi ý SHORT: SL ~{close+atr*3:.5g} TP ~{close-atr*2:.5g}\n"
                     f"(discretionary — anh tự quyết, KHÔNG auto)")
     except Exception as e:

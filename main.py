@@ -1398,6 +1398,26 @@ def api_arb_status():
                   "Chưa đủ xác nhận — chờ thêm (mất EMA200 H1 / downtrend)" if ss >= 30 else
                   "KHÔNG nên short — uptrend/đi ngang, thiếu xác nhận bearish")
         short_score = {"score": ss, "label": slab, "note": s_note, "factors": sf}
+        # ── ĐIỂM CHẤT LƯỢNG LONG (0-100): đối xứng short. LƯU Ý: gauge KỸ THUẬT,
+        # KHÔNG phải edge đã validate (research không tìm được long-edge robust). ──
+        ls = 0; lf = []
+        if close > e200_h1: ls += 25; lf.append("trên EMA200 H1")
+        if th1 == "UP":     ls += 15; lf.append("uptrend H1")
+        if rel7 > 0:        ls += 15; lf.append(f"mạnh hơn BTC 7d (+{rel7:.0f}pp)")
+        if mom_state == "MẠNH LÊN": ls += 15; lf.append("đà 4h mạnh lên")
+        _bo = (float(arb1["low"].iloc[-1]) <= e34_h1 or float(arb1["low"].iloc[-2]) <= e34_h1) and close > float(arb1["open"].iloc[-1])
+        if _bo and close > e34_h1: ls += 10; lf.append("bật lên từ EMA34")
+        if fund is not None and -0.02 <= fund < 0.03: ls += 10; lf.append("funding lành (không quá đòn bẩy)")
+        if 40 <= rsi_h1 <= 66: ls += 10; lf.append("RSI chưa quá mua")
+        if dist_d1 > 60:   ls -= 25; lf.append(f"⚠️ quá căng +{dist_d1:.0f}% trên EMA200 D1 — đuổi đỉnh")
+        elif dist_d1 > 40: ls -= 15; lf.append(f"⚠️ căng +{dist_d1:.0f}% trên EMA200 D1")
+        ls = max(0, ls)
+        llab = "MẠNH" if ls >= 75 else "KHÁ" if ls >= 55 else "TRUNG BÌNH" if ls >= 30 else "YẾU"
+        l_note = ("Setup long sạch (uptrend + xác nhận, chưa quá căng)" if ls >= 75 else
+                  "Long đang hình thành — cân nhắc khi bật từ hỗ trợ" if ls >= 55 else
+                  "Uptrend nhưng căng/thiếu xác nhận — chờ pullback, đừng đuổi" if ls >= 30 else
+                  "KHÔNG nên long — downtrend/đang giảm")
+        long_score = {"score": ls, "label": llab, "note": l_note, "factors": lf}
         # ── TÓM TẮT (BLUF): vào là thấy ngay tình hình + nên làm gì ──
         situation = f"{headline} · {strength}"
         if pos30 >= 88: situation += " · sát đỉnh 30d"
@@ -1429,7 +1449,8 @@ def api_arb_status():
             "price": close, "trend_h1": th1, "trend_h4": th4, "trend_d1": tD,
             "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
             "headline": headline, "hkey": hkey, "st_state": st_state, "st_reason": st_reason,
-            "dn_res": dn_res, "dn_tgt": dn_tgt, "air_pocket": air_pocket, "short_score": short_score,
+            "dn_res": dn_res, "dn_tgt": dn_tgt, "air_pocket": air_pocket,
+            "short_score": short_score, "long_score": long_score,
             "rsi_h1": rsi_h1, "rsi_h4": rsi_h4, "rsi_d1": rsi_d1,
             "arb_24h": round(arb24,1), "arb_7d": round(arb7,1), "arb_30d": round(arb30,1),
             "btc_24h": round(btc24,1), "btc_7d": round(btc7,1), "btc_30d": round(btc30,1),
@@ -1651,12 +1672,14 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
         pill('Rel Δ',sgn(m.rel_delta_pp)+'pp',relCls(m.rel_delta_pp))+pill('RSI slope',sgn(m.rsi_slope),relCls(m.rsi_slope))+
         pill('Vol mua',m.buy_vol_pct+'%',m.buy_vol_pct>=58?'pos':m.buy_vol_pct<=42?'neg':'')+
         '<div class="why">'+m.note+'</div></div>';})()+
-    (function(){var q=a.short_score;if(!q)return '';
-      var sc=q.score>=75?'var(--sh)':q.score>=55?'var(--wt)':q.score>=30?'var(--mu)':'var(--lg)';
-      return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
-        '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🎯 Điểm SHORT</b> '+
-        '<span style="font-weight:800;color:'+sc+'">'+q.score+'/100 · '+q.label+'</span>'+
-        '<div class="why">'+q.note+(q.factors&&q.factors.length?' · Yếu tố: '+q.factors.join(', '):'')+'</div></div>';})()+
+    (function(){var qs=a.short_score,ql=a.long_score;if(!qs&&!ql)return '';
+      function colL(s){return s>=55?'var(--lg)':s>=30?'var(--wt)':'var(--sh)';}
+      function colS(s){return s>=55?'var(--sh)':s>=30?'var(--wt)':'var(--lg)';}
+      var h='<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+        '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🎯 Điểm setup (gauge kỹ thuật)</b>';
+      if(ql)h+='<div class="lvl">📈 LONG <b style="color:'+colL(ql.score)+'">'+ql.score+'/100 · '+ql.label+'</b> — <span style="color:var(--mu);font-size:11px">'+ql.note+'</span></div>';
+      if(qs)h+='<div class="lvl">📉 SHORT <b style="color:'+colS(qs.score)+'">'+qs.score+'/100 · '+qs.label+'</b> — <span style="color:var(--mu);font-size:11px">'+qs.note+'</span></div>';
+      return h+'<div class="why" style="opacity:.7;font-style:italic">Điểm = chất lượng setup TA, KHÔNG phải edge đã validate.</div></div>';})()+
     (function(){var dr=a.dn_res;if(!dr||!dr.length)return '';
       return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
         '<b style="color:var(--sh);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🔻 Kháng cự đà giảm — bounce dễ bị chặn ở</b>'+

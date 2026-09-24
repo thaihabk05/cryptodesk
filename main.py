@@ -1380,6 +1380,24 @@ def api_arb_status():
         else:
             now_note = "Giá ở vùng trung tính."
         entry_plan = {"direction": direction, "now_note": now_note, "setups": setups}
+        # ── ĐIỂM CHẤT LƯỢNG SHORT (0-100): chấm số yếu tố bearish-confirmation ──
+        # Short chỉ đáng khi cấu trúc ĐÃ turn, không phải đoán đỉnh. Điểm thấp = uptrend/
+        # chop, đừng short. Điểm cao = nhiều xác nhận (gãy structure, downtrend, rejection...).
+        ss = 0; sf = []
+        if close < e200_h1: ss += 25; sf.append("dưới EMA200 H1 (gãy cấu trúc)")
+        if th1 == "DOWN":   ss += 15; sf.append("downtrend H1")
+        if rel7 <= 0:       ss += 15; sf.append(f"thua/ngang BTC 7d ({rel7:+.0f}pp)")
+        if mom_state == "YẾU ĐI": ss += 15; sf.append("đà 4h yếu đi")
+        _rj = (float(arb1["high"].iloc[-1]) >= e34_h1 or float(arb1["high"].iloc[-2]) >= e34_h1) and close < float(arb1["open"].iloc[-1])
+        if _rj and close < e34_h1: ss += 10; sf.append("rejection tại EMA34")
+        if fund is not None and fund >= 0.03: ss += 10; sf.append(f"funding cao {fund:+.3f}% (long đông)")
+        if 40 <= rsi_h1 <= 62: ss += 10; sf.append("RSI chưa quá bán (còn dư địa giảm)")
+        slab = "MẠNH" if ss >= 75 else "KHÁ" if ss >= 55 else "TRUNG BÌNH" if ss >= 30 else "YẾU"
+        s_note = ("Nhiều xác nhận bearish — setup short chất lượng" if ss >= 75 else
+                  "Setup short đang hình thành — cân nhắc khi có rejection" if ss >= 55 else
+                  "Chưa đủ xác nhận — chờ thêm (mất EMA200 H1 / downtrend)" if ss >= 30 else
+                  "KHÔNG nên short — uptrend/đi ngang, thiếu xác nhận bearish")
+        short_score = {"score": ss, "label": slab, "note": s_note, "factors": sf}
         # ── TÓM TẮT (BLUF): vào là thấy ngay tình hình + nên làm gì ──
         situation = f"{headline} · {strength}"
         if pos30 >= 88: situation += " · sát đỉnh 30d"
@@ -1411,7 +1429,7 @@ def api_arb_status():
             "price": close, "trend_h1": th1, "trend_h4": th4, "trend_d1": tD,
             "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
             "headline": headline, "hkey": hkey, "st_state": st_state, "st_reason": st_reason,
-            "dn_res": dn_res, "dn_tgt": dn_tgt, "air_pocket": air_pocket,
+            "dn_res": dn_res, "dn_tgt": dn_tgt, "air_pocket": air_pocket, "short_score": short_score,
             "rsi_h1": rsi_h1, "rsi_h4": rsi_h4, "rsi_d1": rsi_d1,
             "arb_24h": round(arb24,1), "arb_7d": round(arb7,1), "arb_30d": round(arb30,1),
             "btc_24h": round(btc24,1), "btc_7d": round(btc7,1), "btc_30d": round(btc30,1),
@@ -1633,6 +1651,12 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
         pill('Rel Δ',sgn(m.rel_delta_pp)+'pp',relCls(m.rel_delta_pp))+pill('RSI slope',sgn(m.rsi_slope),relCls(m.rsi_slope))+
         pill('Vol mua',m.buy_vol_pct+'%',m.buy_vol_pct>=58?'pos':m.buy_vol_pct<=42?'neg':'')+
         '<div class="why">'+m.note+'</div></div>';})()+
+    (function(){var q=a.short_score;if(!q)return '';
+      var sc=q.score>=75?'var(--sh)':q.score>=55?'var(--wt)':q.score>=30?'var(--mu)':'var(--lg)';
+      return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+        '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🎯 Điểm SHORT</b> '+
+        '<span style="font-weight:800;color:'+sc+'">'+q.score+'/100 · '+q.label+'</span>'+
+        '<div class="why">'+q.note+(q.factors&&q.factors.length?' · Yếu tố: '+q.factors.join(', '):'')+'</div></div>';})()+
     (function(){var dr=a.dn_res;if(!dr||!dr.length)return '';
       return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
         '<b style="color:var(--sh);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🔻 Kháng cự đà giảm — bounce dễ bị chặn ở</b>'+

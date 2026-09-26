@@ -1174,7 +1174,16 @@ def api_arb_status():
         btcD = fetch_klines("BTCUSDT","1d",300, force_futures=True)
         c1, cD = arb1["close"], arbD["close"]
         close = float(c1.iloc[-1])
-        th1, th4, tD = trend(arb1), trend(arb4), trend(arbD)
+        th1, th4, tD = trend(arb1), trend(arb4), trend(arbD)   # raw (cho logic)
+        # Nhãn HIỂN THỊ: thêm mũi tên hướng gần đây (3 nến) để không nhầm "UP mà nến đỏ".
+        # UP↘ = uptrend đang chỉnh · DOWN↗ = downtrend đang hồi.
+        def _tlabel(base, df):
+            cc = df["close"]
+            r = "up" if float(cc.iloc[-1]) > float(cc.iloc[-4]) else "down" if float(cc.iloc[-1]) < float(cc.iloc[-4]) else "flat"
+            if base == "UP" and r == "down": return "UP↘"
+            if base == "DOWN" and r == "up": return "DOWN↗"
+            return base
+        th1_d, th4_d, tD_d = _tlabel(th1, arb1), _tlabel(th4, arb4), _tlabel(tD, arbD)
         e200_h4 = float(ema(arb4["close"],200).iloc[-1])
         e200_d1 = float(ema(cD,200).iloc[-1])
         above_h4, above_d1 = close > e200_h4, close > e200_d1
@@ -1446,7 +1455,7 @@ def api_arb_status():
                   + (f" + mạnh hơn BTC 7d ({rel7:+.1f}pp)" if rel7 > 0 else "")
                   + " → uptrend/outperform: short-monitor TẮT (đúng thiết kế)")
         data = {
-            "price": close, "trend_h1": th1, "trend_h4": th4, "trend_d1": tD,
+            "price": close, "trend_h1": th1_d, "trend_h4": th4_d, "trend_d1": tD_d,
             "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
             "headline": headline, "hkey": hkey, "st_state": st_state, "st_reason": st_reason,
             "dn_res": dn_res, "dn_tgt": dn_tgt, "air_pocket": air_pocket,
@@ -1631,7 +1640,7 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
 
 function pill(l,v,cls){return '<span class="pill"><b>'+l+'</b><span class="'+(cls||'')+'">'+v+'</span></span>';}
 function sgn(n){return (n>0?'+':'')+n;}
-function trendSpan(t){return '<span class="t'+t+'">'+t+'</span>';}
+function trendSpan(t){var b=(t||'').replace(/[↘↗]/g,'');return '<span class="t'+b+'">'+t+'</span>';}
 function relCls(v){return v>0?'pos':v<0?'neg':'';}
 function lvlList(arr){return (arr&&arr.length)? arr.map(function(x){
   return '<div class="lvl"><span class="mono">'+fmt(x.level)+'</span> <span class="'+(x.pct>0?'pos':'neg')+'">('+sgn(x.pct)+'%)</span></div>';}).join('')
@@ -1652,7 +1661,8 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
     bluf+
     '<div class="badge" style="color:'+bc+'">'+bl+'</div>'+
     '<div class="why" style="margin:3px 0 10px">'+a.bias_note+'</div>'+
-    '<div>'+pill('Giá',fmt(a.price))+pill('H1',trendSpan(a.trend_h1))+pill('H4',trendSpan(a.trend_h4))+pill('D1',trendSpan(a.trend_d1))+'</div>'+
+    '<div>'+pill('Giá',fmt(a.price))+pill('H1',trendSpan(a.trend_h1))+pill('H4',trendSpan(a.trend_h4))+pill('D1',trendSpan(a.trend_d1))+
+      ((/[↘↗]/.test((a.trend_h1||'')+(a.trend_h4||'')+(a.trend_d1||'')))?'<span style="color:var(--mu);font-size:10px">(↘ trend up đang chỉnh · ↗ trend down đang hồi)</span>':'')+'</div>'+
     '<div>'+pill('RSI H1',a.rsi_h1)+pill('RSI H4',a.rsi_h4)+pill('RSI D1',a.rsi_d1)+pill('vs EMA200 D1',sgn(a.dist_ema200_d1_pct)+'%',relCls(a.dist_ema200_d1_pct))+'</div>'+
     '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
       '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Sức mạnh vs BTC</b><br>'+

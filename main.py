@@ -1216,6 +1216,19 @@ def api_arb_status():
             flow = f"SPOT-driven: volume spike {vol_max24_x:g}× baseline mà funding thấp ({fund:+.3f}%) → cầu THẬT, không quá đòn bẩy (lành)"
         else:
             flow = f"Bình thường (funding {fund:+.3f}%, vol {vol_now_x:g}× baseline)"
+        # ── Lực MUA/BÁN (taker aggressive) + xu hướng dòng tiền (mạnh lên/yếu đi) ──
+        from core.binance import fetch_taker_ratio
+        _tk = fetch_taker_ratio("ARBUSDT", period="1h", limit=12)
+        if _tk:
+            _tr = _tk.get("buy_ratio", 1.0)
+            _bs = ("🟢 MUA mạnh" if _tr >= 1.2 else "mua nhỉnh" if _tr >= 1.05 else
+                   "🔴 BÁN mạnh" if _tr <= 0.83 else "bán nhỉnh" if _tr <= 0.95 else "cân bằng")
+            taker = {"ratio": round(_tr, 2), "label": _bs}
+        else:
+            taker = None
+        _v6 = float(arb1["volume"].iloc[-6:].mean()); _v6p = float(arb1["volume"].iloc[-12:-6].mean())
+        flow_chg = round((_v6/_v6p - 1)*100) if _v6p > 0 else 0
+        flow_dir = "tăng dần (tiền vào)" if flow_chg > 15 else "yếu dần (nhạt)" if flow_chg < -15 else "đi ngang"
         # ── Đà ngắn hạn (4h): mạnh lên / yếu đi — đo HƯỚNG, lọc nhiễu 15m ──
         rsi_c1 = _rsi_series(c1)
         bc1 = btc1["close"]
@@ -1468,6 +1481,7 @@ def api_arb_status():
             "above_ema200_h4": above_h4, "above_ema200_d1": above_d1, "dist_ema200_d1_pct": round(dist_d1,1),
             "range30_low": round(lo30,5), "range30_high": round(hi30,5), "range30_pos_pct": round(pos30),
             "vol_now_x": vol_now_x, "vol_max24_x": vol_max24_x, "funding": fund, "flow_note": flow,
+            "taker": taker, "flow_dir": flow_dir, "flow_chg": flow_chg,
             "momentum": momentum, "summary": summary,
             "resistances": resistances, "supports": supports, "watch": watch, "entry_plan": entry_plan,
             "short_monitor": "ON" if short_on else "OFF", "reason": reason,
@@ -1671,7 +1685,9 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
     '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
       '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Dòng tiền</b><br>'+
       pill('Vol hiện tại',a.vol_now_x+'×')+pill('Spike 24h',a.vol_max24_x+'×')+
-      pill('Funding',(a.funding!=null?sgn(a.funding)+'%':'—'),(a.funding>=0.03?'neg':a.funding<=-0.03?'pos':''))+
+      pill('Funding',(a.funding!=null?sgn(a.funding)+'%':'—'),(a.funding>=0.03?'neg':a.funding<=-0.03?'pos':''))+'<br>'+
+      (a.taker?pill('Lực mua/bán',a.taker.label+' ('+a.taker.ratio+')',(a.taker.ratio>=1.05?'pos':a.taker.ratio<=0.95?'neg':'')):'')+
+      pill('Xu hướng tiền',a.flow_dir+' '+sgn(a.flow_chg)+'%',(a.flow_chg>15?'pos':a.flow_chg<-15?'neg':''))+
       '<div class="why">'+a.flow_note+'</div></div>'+
     (function(){var m=a.momentum;if(!m)return '';
       var mc=m.state==='MẠNH LÊN'?'var(--lg)':m.state==='YẾU ĐI'?'var(--sh)':'var(--wt)';

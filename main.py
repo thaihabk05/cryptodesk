@@ -1218,7 +1218,7 @@ def api_arb_status():
             flow = f"Bình thường (funding {fund:+.3f}%, vol {vol_now_x:g}× baseline)"
         # ── Lực MUA/BÁN (taker aggressive) + xu hướng dòng tiền (mạnh lên/yếu đi) ──
         from core.binance import fetch_taker_ratio
-        _tk = fetch_taker_ratio("ARBUSDT", period="1h", limit=12)
+        _tk = fetch_taker_ratio("ARBUSDT", period="1h", limit=6)
         if _tk:
             _tr = _tk.get("buy_ratio", 1.0)
             _bs = ("🟢 MUA mạnh" if _tr >= 1.2 else "mua nhỉnh" if _tr >= 1.05 else
@@ -1414,6 +1414,8 @@ def api_arb_status():
         if _rj and close < e34_h1: ss += 10; sf.append("rejection tại EMA34")
         if fund is not None and fund >= 0.03: ss += 10; sf.append(f"funding cao {fund:+.3f}% (long đông)")
         if 40 <= rsi_h1 <= 62: ss += 10; sf.append("RSI chưa quá bán (còn dư địa giảm)")
+        if mom_state == "MẠNH LÊN": ss -= 15; sf.append("⚠️ đang bounce lên — timing short xấu")
+        ss = max(0, ss)
         slab = "MẠNH" if ss >= 75 else "KHÁ" if ss >= 55 else "TRUNG BÌNH" if ss >= 30 else "YẾU"
         s_note = ("Nhiều xác nhận bearish — setup short chất lượng" if ss >= 75 else
                   "Setup short đang hình thành — cân nhắc khi có rejection" if ss >= 55 else
@@ -1433,6 +1435,7 @@ def api_arb_status():
         if 40 <= rsi_h1 <= 66: ls += 10; lf.append("RSI chưa quá mua")
         if dist_d1 > 60:   ls -= 25; lf.append(f"⚠️ quá căng +{dist_d1:.0f}% trên EMA200 D1 — đuổi đỉnh")
         elif dist_d1 > 40: ls -= 15; lf.append(f"⚠️ căng +{dist_d1:.0f}% trên EMA200 D1")
+        if mom_state == "YẾU ĐI": ls -= 15; lf.append("⚠️ đang giảm — timing long xấu")
         ls = max(0, ls)
         llab = "MẠNH" if ls >= 75 else "KHÁ" if ls >= 55 else "TRUNG BÌNH" if ls >= 30 else "YẾU"
         l_note = ("Setup long sạch (uptrend + xác nhận, chưa quá căng)" if ls >= 75 else

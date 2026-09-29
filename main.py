@@ -1251,8 +1251,20 @@ def api_arb_status():
         mom_state = "MẠNH LÊN" if msc >= 3 else "YẾU ĐI" if msc <= -3 else "GIỮ NGUYÊN"
         mom_note = (f"vs BTC {'nới rộng' if rel_delta >= 0 else 'thu hẹp'} {rel_delta:+.1f}pp/4h · "
                     f"RSI {'↑' if rsi_slope >= 0 else '↓'}{abs(rsi_slope):.0f} · vol mua {buy_pct:.0f}%")
+        # ── CONVICTION: ghép chuyển động + xu hướng volume → độ tin của nhịp ──
+        conviction = None
+        _fade = "yếu dần" in flow_dir; _rise = "tăng dần" in flow_dir
+        if mom_state == "MẠNH LÊN" and _fade:
+            conviction = "⚠️ Tăng/bounce trên VOLUME NHẠT — độ tin THẤP, dễ fail tại kháng cự"
+        elif mom_state == "MẠNH LÊN" and _rise:
+            conviction = "🟢 Tăng KÈM volume tăng — độ tin CAO (tiền thật vào)"
+        elif mom_state == "YẾU ĐI" and _fade:
+            conviction = "⚠️ Giảm trên volume nhạt — lực bán có thể đang cạn (canh bounce)"
+        elif mom_state == "YẾU ĐI" and _rise:
+            conviction = "🔴 Giảm KÈM volume tăng — bán có LỰC, nguy hiểm"
         momentum = {"state": mom_state, "rel_delta_pp": round(rel_delta,1),
-                    "rsi_slope": round(rsi_slope,1), "buy_vol_pct": round(buy_pct), "note": mom_note}
+                    "rsi_slope": round(rsi_slope,1), "buy_vol_pct": round(buy_pct),
+                    "note": mom_note, "conviction": conviction}
         # ── Kháng cự / Hỗ trợ: pivot D1 (±4 nến) + range 30d, gộp mức gần ~2% ──
         H, L, W = arbD["high"].values, arbD["low"].values, 4
         piv_hi = [float(H[i]) for i in range(W,len(H)-W) if H[i]==max(H[i-W:i+W+1])]
@@ -1700,7 +1712,8 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
         '<span style="font-weight:800;color:'+mc+'">'+mi+' '+m.state+'</span><br>'+
         pill('Rel Δ',sgn(m.rel_delta_pp)+'pp',relCls(m.rel_delta_pp))+pill('RSI slope',sgn(m.rsi_slope),relCls(m.rsi_slope))+
         pill('Vol mua',m.buy_vol_pct+'%',m.buy_vol_pct>=58?'pos':m.buy_vol_pct<=42?'neg':'')+
-        '<div class="why">'+m.note+'</div></div>';})()+
+        '<div class="why">'+m.note+'</div>'+
+        (m.conviction?'<div class="why" style="font-weight:600;color:'+(m.conviction.indexOf("⚠️")>=0||m.conviction.indexOf("🔴")>=0?'var(--sh)':'var(--lg)')+'">'+m.conviction+'</div>':'')+'</div>';})()+
     (function(){var qs=a.short_score,ql=a.long_score;if(!qs&&!ql)return '';
       function colL(s){return s>=55?'var(--lg)':s>=30?'var(--wt)':'var(--sh)';}
       function colS(s){return s>=55?'var(--sh)':s>=30?'var(--wt)':'var(--lg)';}

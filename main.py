@@ -1232,6 +1232,12 @@ def api_arb_status():
             xfund = cross_funding("ARB", binance_funding_pct=fund)
         except Exception as _e:
             xfund = {"available": False, "reason": str(_e)}
+        # ── Thanh lý gần đây (OKX public) — cụm giá & squeeze, hỗ trợ đặt SL ──
+        try:
+            from core.liquidations import recent_liquidations
+            liq = recent_liquidations("ARB")
+        except Exception as _e:
+            liq = {"available": False, "reason": str(_e)}
         # ── Lực MUA/BÁN (taker aggressive) + xu hướng dòng tiền (mạnh lên/yếu đi) ──
         from core.binance import fetch_taker_ratio
         _tk = fetch_taker_ratio("ARBUSDT", period="1h", limit=6)
@@ -1541,7 +1547,7 @@ def api_arb_status():
             "above_ema200_h4": above_h4, "above_ema200_d1": above_d1, "dist_ema200_d1_pct": round(dist_d1,1),
             "range30_low": round(lo30,5), "range30_high": round(hi30,5), "range30_pos_pct": round(pos30),
             "vol_now_x": vol_now_x, "vol_max24_x": vol_max24_x, "funding": fund, "flow_note": flow,
-            "xfund": xfund,
+            "xfund": xfund, "liq": liq,
             "taker": taker, "flow_dir": flow_dir, "flow_chg": flow_chg,
             "momentum": momentum, "summary": summary,
             "resistances": resistances, "supports": supports, "watch": watch, "entry_plan": entry_plan,
@@ -1846,6 +1852,13 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
             var run=m.runner_frac>0?(' → runner '+Math.round(m.runner_frac*100)+'% trailing'):'';
             return '<div class="lvl" style="font-size:11px">⚙️ '+lbl+': '+steps+run+' · <b>kế hoạch +'+m.plan_R+'R</b> · BE <span class="mono">'+fmt(m.breakeven)+'</span></div>';}
           return mgmt(z.mgmt_short,'Quản trị SHORT')+mgmt(z.mgmt_long,'Quản trị LONG');
+        })()+
+        (function(){var L=a.liq;if(!L||!L.available||!L.n)return '';
+          var bc={'short_squeeze':'var(--sh)','long_squeeze':'var(--sh)','mixed':'var(--mu)','none':'var(--mu)'}[L.bias]||'var(--mu)';
+          var cl=(L.clusters||[]).map(function(c){return '<span class="mono">'+fmt(c.px)+'</span> ($'+(c.usd/1000).toFixed(0)+'K)';}).join(' · ');
+          return '<div class="why" style="font-size:11px;margin-top:4px;border-top:1px dashed var(--bd);padding-top:4px">'+
+            '💥 <b>Thanh lý '+L.span_min.toFixed(0)+'′ ('+L.src+'):</b> long $'+(L.long_usd/1000).toFixed(0)+'K vs short $'+(L.short_usd/1000).toFixed(0)+'K · '+
+            '<span style="color:'+bc+';font-weight:700">'+L.bias_label+'</span><br>Cụm giá (nam châm): '+cl+' — đặt SL NGOÀI cụm, né wick quét.</div>';
         })()+
         '<div class="why" style="font-size:11px">ARB wick 5-9% là thường → ĐỪNG đặt SL chặt &lt;3% (sẽ bị quét). SL rộng + size nhỏ + đòn bẩy thấp. Chốt từng phần + dời BE sau TP1 để lệnh không thành lỗ.</div></div>';})()+
     '<div class="why" style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+(on?'🔴':'🟢')+' '+a.reason+'</div>'+

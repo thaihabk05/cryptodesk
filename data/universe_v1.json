@@ -22,7 +22,15 @@
       "vol_coverage": 0.9,
       "avg_daily_vol_usd": 50000000,
       "note": "added manual \u2014 Rule A funding-short"
+    },
+    {
+      "symbol": "BNBUSDT",
+      "tier": "major",
+      "listing_days": 1080,
+      "vol_coverage": 1.0,
+      "avg_daily_vol_usd": 279000000,
+      "note": "added 2026-11 \u2014 phase8 coin-select: funding-short exp +0.184R, 100% qu\u00fd d\u01b0\u01a1ng, thanh kho\u1ea3n s\u00e2u. Follow + validate forward."
     }
   ],
-  "note": "T\u1ea1m th\u1eddi thu h\u1eb9p v\u1ec1 BTC+ARB (2026-07) \u2014 focus validate ARB. Kh\u00f4i ph\u1ee5c universe \u0111\u1ea7y \u0111\u1ee7 khi c\u1ea7n."
+  "note": "BTC+ARB+BNB (2026-11). BNB ch\u1ecdn qua phase8_coin_select (edge cao nh\u1ea5t + nh\u1ea5t qu\u00e1n 100% qu\u00fd + thanh kho\u1ea3n \u1ed5n). Kh\u00f4i ph\u1ee5c universe \u0111\u1ea7y \u0111\u1ee7 khi c\u1ea7n."
 }

@@ -1140,6 +1140,16 @@ def api_paper_trades():
     return jsonify({"open": opens, "closed": closed, "stats": stats})
 
 
+@app.route("/api/forward")
+def api_forward():
+    """Forward-tracker: edge LIVE vs backtest + cảnh báo edge-decay (thống kê)."""
+    try:
+        from core.forward_tracker import forward_report
+        return jsonify(forward_report())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 def _rsi_series(s, n=14):
     d = s.diff()
     g = d.clip(lower=0).rolling(n, min_periods=1).mean()
@@ -1641,6 +1651,8 @@ td.mono{font-family:ui-monospace,monospace}
 <h1>📊 Edge v1 — Paper Trade (funding-short)</h1>
 <div class="sub">SHORT khi funding ≥0.03% + giá rời 24h-high ≥1.5% + close &lt; EMA9 H1 · SL 3×ATR / TP 2×ATR · KHÔNG tiền thật</div>
 <div class="ref">📐 <b>Backtest 3 năm @ 0.03% (baseline validate):</b> WR 62% · expectancy +0.051R · 1193 lệnh · 80% quý dương. Forward phải khớp ~đây. (Tiền thật sau này dùng 0.05%: WR 67% / +0.13R)</div>
+<div class="sec">🧭 Forward-tracker — edge LIVE vs backtest (tự giám sát edge-decay)</div>
+<div class="arb" id="fwdBox">Đang tải forward-tracker…</div>
 <div class="sec">🎯 ARB Monitor — regime &amp; gate</div>
 <div class="arb" id="arbBox">Đang tải ARB…</div>
 <div class="sec" style="font-size:12px">📰 Tin gần đây (ARB)</div>
@@ -1684,6 +1696,38 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
     '<td class="mono '+((p.pnl_r||0)>0?'win':'loss')+'">'+((p.pnl_r||0)>0?'+':'')+p.pnl_r+'R</td></tr>').join('')+'</tbody></table>'
   ) : '<div class="empty">Chưa có lệnh đóng.</div>';
 }).catch(e=>{document.getElementById('cards').innerHTML='<div class="empty">Lỗi tải: '+e.message+'</div>';});
+
+// ── Forward-tracker ──────────────────────────────────────────────────────
+fetch('/api/forward').then(r=>r.json()).then(f=>{
+  var el=document.getElementById('fwdBox');
+  if(f.error){el.innerHTML='⚠️ '+f.error;return;}
+  var v=f.verdict||{}, o=f.overall||{};
+  var col={'OK':'var(--lg)','THEO DÕI':'var(--wt)','CẢNH BÁO':'var(--sh)','THU THẬP':'var(--mu)'}[v.state]||'var(--mu)';
+  var h='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
+    '<span class="badge" style="color:'+col+'">'+(v.emoji||'')+' '+(v.state||'—')+'</span>'+
+    '<span class="cmp">(so baseline: WR 62% · exp +0.051R · 3y backtest)</span></div>';
+  h+='<div style="font-size:12px;margin-bottom:10px">'+(v.msg||'')+'</div>';
+  if(o.n>0){
+    function m(l,val,cls){return '<span class="pill"><b>'+l+' </b><span class="mono '+(cls||'')+'">'+val+'</span></span>';}
+    var expCls=o.exp>0.02?'pos':o.exp<-0.02?'neg':'';
+    h+='<div style="margin-bottom:6px">'+
+      m('n đóng',o.n)+m('WR',(o.wr*100).toFixed(0)+'%',o.wr>=0.55?'pos':o.wr>=0.45?'':'neg')+
+      m('exp',(o.exp>0?'+':'')+o.exp.toFixed(3)+'R',expCls)+
+      m('CI95','['+o.ci_lo.toFixed(3)+','+o.ci_hi.toFixed(3)+']')+
+      m('totR',(o.totR>0?'+':'')+o.totR+'R',o.totR>0?'pos':'neg')+'</div>';
+    var rb=f.rolling20||{};
+    if(rb.n>=1){h+='<div class="cmp" style="margin-bottom:6px">20 gần nhất: n='+rb.n+' · WR '+(rb.wr*100).toFixed(0)+'% · exp '+(rb.exp>0?'+':'')+rb.exp.toFixed(3)+'R</div>';}
+    if((f.per_coin||[]).length){
+      h+='<div class="cmp" style="margin-top:4px">Theo coin: '+f.per_coin.map(function(c){
+        return '<b>'+c.symbol.replace('USDT','')+'</b> '+c.n+'L/WR'+(c.wr*100).toFixed(0)+'%/'+(c.exp>0?'+':'')+c.exp.toFixed(2)+'R';
+      }).join(' · ')+'</div>';
+    }
+  }else{
+    h+='<div class="cmp">Chưa có lệnh đóng — tracker bắt đầu thống kê khi paper engine đóng lệnh đầu tiên. '+
+       'Cần ~'+f.min_n+' lệnh để qua pha THU THẬP.</div>';
+  }
+  el.innerHTML=h;
+}).catch(e=>{document.getElementById('fwdBox').innerHTML='⚠️ Lỗi forward-tracker: '+e.message;});
 
 function pill(l,v,cls){return '<span class="pill"><b>'+l+'</b><span class="'+(cls||'')+'">'+v+'</span></span>';}
 function sgn(n){return (n>0?'+':'')+n;}

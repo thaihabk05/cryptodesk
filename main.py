@@ -1455,6 +1455,24 @@ def api_arb_status():
                   "Uptrend nhưng căng/thiếu xác nhận — chờ pullback, đừng đuổi" if ls >= 30 else
                   "KHÔNG nên long — downtrend/đang giảm")
         long_score = {"score": ls, "label": llab, "note": l_note, "factors": lf}
+        # ── VÙNG SL AN TOÀN (sống qua wick) — SL dưới hỗ trợ/đáy 24h + đệm ATR ──
+        _h = arb1["high"]; _l = arb1["low"]; _pc = arb1["close"].shift()
+        _tr = (_h - _l)
+        _tr = _tr.where(_tr >= (_h-_pc).abs(), (_h-_pc).abs())
+        _tr = _tr.where(_tr >= (_l-_pc).abs(), (_l-_pc).abs())
+        _atr = float(_tr.rolling(14).mean().iloc[-1])
+        atr_pct = round(_atr/close*100, 1)
+        lo24 = float(arb1["low"].iloc[-24:].min()); hi24 = float(arb1["high"].iloc[-24:].max())
+        sl_long = round(lo24 - _atr*0.5, 5); sl_short = round(hi24 + _atr*0.5, 5)
+        sl_long_pct = round((sl_long/close-1)*100, 1); sl_short_pct = round((sl_short/close-1)*100, 1)
+        size_long = round(1/abs(sl_long_pct)*100) if sl_long_pct else 0
+        size_short = round(1/abs(sl_short_pct)*100) if sl_short_pct else 0
+        # Đòn bẩy tối đa an toàn: thanh lý nằm cách ~2× khoảng SL (đệm cho wick vượt SL).
+        lev_long = max(1, min(10, int(50/abs(sl_long_pct)))) if sl_long_pct else 1
+        lev_short = max(1, min(10, int(50/abs(sl_short_pct)))) if sl_short_pct else 1
+        sl_zone = {"atr_pct": atr_pct,
+                   "sl_long": sl_long, "sl_long_pct": sl_long_pct, "size_long": size_long, "lev_long": lev_long,
+                   "sl_short": sl_short, "sl_short_pct": sl_short_pct, "size_short": size_short, "lev_short": lev_short}
         # ── TÓM TẮT (BLUF): vào là thấy ngay tình hình + nên làm gì ──
         situation = f"{headline} · {strength}"
         if pos30 >= 88: situation += " · sát đỉnh 30d"
@@ -1487,7 +1505,7 @@ def api_arb_status():
             "bias": bias, "bias_note": note, "strength": strength, "overheat": overheat,
             "headline": headline, "hkey": hkey, "st_state": st_state, "st_reason": st_reason,
             "dn_res": dn_res, "dn_tgt": dn_tgt, "air_pocket": air_pocket,
-            "short_score": short_score, "long_score": long_score,
+            "short_score": short_score, "long_score": long_score, "sl_zone": sl_zone,
             "rsi_h1": rsi_h1, "rsi_h4": rsi_h4, "rsi_d1": rsi_d1,
             "arb_24h": round(arb24,1), "arb_7d": round(arb7,1), "arb_30d": round(arb30,1),
             "btc_24h": round(btc24,1), "btc_7d": round(btc7,1), "btc_30d": round(btc30,1),
@@ -1749,6 +1767,12 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
           '</span> · RR <b>'+(s.rr!=null?s.rr:'—')+'</b><div class="setupnote">'+s.note+'</div></div>';}).join('');}
       else{h+='<div class="why">Thị trường đi ngang — chờ break biên, tránh đánh giữa range.</div>';}
       return h+'</div>';})()+
+    (function(){var z=a.sl_zone;if(!z)return '';
+      return '<div style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+
+        '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🛡️ Vùng SL an toàn (sống qua wick) · ATR H1 '+z.atr_pct+'%</b>'+
+        '<div class="lvl">📈 LONG: SL dưới <span class="mono">'+fmt(z.sl_long)+'</span> ('+z.sl_long_pct+'%) · đòn bẩy ≤ <b>'+z.lev_long+'x</b> · rủi ro 1% TK → ~'+z.size_long+'% vốn</div>'+
+        '<div class="lvl">📉 SHORT: SL trên <span class="mono">'+fmt(z.sl_short)+'</span> (+'+z.sl_short_pct+'%) · đòn bẩy ≤ <b>'+z.lev_short+'x</b> · rủi ro 1% TK → ~'+z.size_short+'% vốn</div>'+
+        '<div class="why" style="font-size:11px">ARB wick 5-9% là thường → ĐỪNG đặt SL chặt &lt;3% (sẽ bị quét). SL rộng + size nhỏ + đòn bẩy thấp.</div></div>';})()+
     '<div class="why" style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+(on?'🔴':'🟢')+' '+a.reason+'</div>'+
     '<div class="why" style="opacity:.7;font-style:italic">Phân tích tham khảo (giá/EMA/pivot) — không phải lời khuyên đầu tư.</div>';
 }).catch(e=>{document.getElementById('arbBox').innerHTML='⚠️ Lỗi tải ARB: '+e.message;});

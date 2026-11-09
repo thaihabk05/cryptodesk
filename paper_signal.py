@@ -204,12 +204,11 @@ def arb_monitor():
                   f"(aboveEMA200H4={above_macro} rel7d={rel7:+.1f}pp st_break={st_break})")
             return
 
-        # GUARD HỒI PHỤC: EMA-ordering "downtrend" có thể còn stale sau cú giảm lớn.
-        # Chỉ short khi EMA34 H1 THỰC SỰ đang xuống (≤ 6 nến trước) — nếu EMA34 đang
-        # dốc LÊN = downtrend yếu đi/đảo, cú chạm EMA34 là pullback-mua, short sẽ sai
-        # (vd tín hiệu 0.178 ngày 10/10 → giá bật +3.7% hit SL).
-        e34_falling = e34 <= float(arb["e34"].iloc[-6])
-        bearish = (downtrend or st_break) and e34_falling
+        # bearish = downtrend H1 HOẶC breakdown ngắn hạn (st_break).
+        # LƯU Ý: từng thử thêm guard e34_falling (10/11) để chặn 1 tín hiệu sai 01:30,
+        # NHƯNG backtest 3 năm (phase7) cho thấy nó HẠI: lệnh 645→274, exp +0.153→+0.128,
+        # quý+ 85%→62% → ĐÃ REVERT. Bài học: đừng tune theo 1 ví dụ đơn lẻ, phải backtest.
+        bearish = downtrend or st_break
         _tag = "Breakdown ngắn hạn (thủng EMA200 H1)" if (st_break and not downtrend) else "Downtrend"
 
         # Rule B — bearish + hồi chạm EMA34 + rejection (RSI≥45 tránh short đáy quá bán)

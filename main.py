@@ -1483,6 +1483,17 @@ def api_arb_status():
         sl_zone = {"atr_pct": atr_pct,
                    "sl_long": sl_long, "sl_long_pct": sl_long_pct, "size_long": size_long, "lev_long": lev_long,
                    "sl_short": sl_short, "sl_short_pct": sl_short_pct, "size_short": size_short, "lev_short": lev_short}
+        # ── Kế hoạch quản trị lệnh (chốt từng phần + dời BE + trailing) ──
+        try:
+            from core.risk import trade_plan
+            _mgmt_s = trade_plan("SHORT", close, sl_short, atr=_atr)
+            _mgmt_l = trade_plan("LONG", close, sl_long, atr=_atr)
+            sl_zone["mgmt_short"] = {k: _mgmt_s.get(k) for k in
+                                     ("breakeven", "ladder", "runner_frac", "plan_R", "trail")}
+            sl_zone["mgmt_long"] = {k: _mgmt_l.get(k) for k in
+                                    ("breakeven", "ladder", "runner_frac", "plan_R", "trail")}
+        except Exception as _e:
+            print(f"[risk mgmt err] {_e}")
         # ── TÓM TẮT (BLUF): vào là thấy ngay tình hình + nên làm gì ──
         situation = f"{headline} · {strength}"
         if pos30 >= 88: situation += " · sát đỉnh 30d"
@@ -1816,7 +1827,14 @@ fetch('/api/arb/status').then(r=>r.json()).then(a=>{
         '<b style="color:var(--mu);font-size:10px;text-transform:uppercase;letter-spacing:.4px">🛡️ Vùng SL an toàn (sống qua wick) · ATR H1 '+z.atr_pct+'%</b>'+
         '<div class="lvl">📈 LONG: SL dưới <span class="mono">'+fmt(z.sl_long)+'</span> ('+z.sl_long_pct+'%) · đòn bẩy ≤ <b>'+z.lev_long+'x</b> · rủi ro 1% TK → ~'+z.size_long+'% vốn</div>'+
         '<div class="lvl">📉 SHORT: SL trên <span class="mono">'+fmt(z.sl_short)+'</span> (+'+z.sl_short_pct+'%) · đòn bẩy ≤ <b>'+z.lev_short+'x</b> · rủi ro 1% TK → ~'+z.size_short+'% vốn</div>'+
-        '<div class="why" style="font-size:11px">ARB wick 5-9% là thường → ĐỪNG đặt SL chặt &lt;3% (sẽ bị quét). SL rộng + size nhỏ + đòn bẩy thấp.</div></div>';})()+
+        (function(){
+          function mgmt(m,lbl){if(!m||!m.ladder)return '';
+            var steps=m.ladder.map(function(t){return t.tp+' '+t.rr+'R→<span class="mono">'+fmt(t.price)+'</span> ('+t.action.replace('Chốt ','').replace(' · dời SL về hoà (breakeven)',' +BE')+')';}).join(' → ');
+            var run=m.runner_frac>0?(' → runner '+Math.round(m.runner_frac*100)+'% trailing'):'';
+            return '<div class="lvl" style="font-size:11px">⚙️ '+lbl+': '+steps+run+' · <b>kế hoạch +'+m.plan_R+'R</b> · BE <span class="mono">'+fmt(m.breakeven)+'</span></div>';}
+          return mgmt(z.mgmt_short,'Quản trị SHORT')+mgmt(z.mgmt_long,'Quản trị LONG');
+        })()+
+        '<div class="why" style="font-size:11px">ARB wick 5-9% là thường → ĐỪNG đặt SL chặt &lt;3% (sẽ bị quét). SL rộng + size nhỏ + đòn bẩy thấp. Chốt từng phần + dời BE sau TP1 để lệnh không thành lỗ.</div></div>';})()+
     '<div class="why" style="margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'+(on?'🔴':'🟢')+' '+a.reason+'</div>'+
     '<div class="why" style="opacity:.7;font-style:italic">Phân tích tham khảo (giá/EMA/pivot) — không phải lời khuyên đầu tư.</div>';
 }).catch(e=>{document.getElementById('arbBox').innerHTML='⚠️ Lỗi tải ARB: '+e.message;});

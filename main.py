@@ -1150,6 +1150,63 @@ def api_forward():
         return jsonify({"error": str(e)}), 500
 
 
+_watch_cache = {"ts": 0.0, "data": None}
+
+@app.route("/api/watch")
+def api_watch():
+    """Dải 'đang canh': mỗi coin universe — funding, rời đỉnh, dưới EMA9, độ gần setup funding-short."""
+    import time as _t, json as _j, os as _os
+    now = _t.time()
+    if _watch_cache["data"] and now - _watch_cache["ts"] < 60:
+        return jsonify(_watch_cache["data"])
+    from core.binance import fetch_klines, fetch_all_funding_rates, ban_remaining
+    FMIN, OFFMIN = 0.03, 0.015
+    if ban_remaining() > 0:
+        return jsonify({"error": "binance backoff", "banned": True, "coins": []})
+    try:
+        uni = [u["symbol"] for u in _j.load(open(_os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)), "data", "universe_v1.json")))["coins"]]
+    except Exception as e:
+        return jsonify({"error": str(e), "coins": []})
+    try:
+        fundings = fetch_all_funding_rates()
+    except Exception:
+        fundings = {}
+    coins = []
+    for sym in uni:
+        row = {"symbol": sym, "short": sym.replace("USDT", "")}
+        try:
+            f = fundings.get(sym)
+            row["funding"] = round(f, 4) if f is not None else None
+            df = fetch_klines(sym, "1h", 60, force_futures=True)
+            close = float(df["close"].iloc[-1])
+            ema9 = float(df["close"].ewm(span=9, adjust=False).mean().iloc[-1])
+            hi24 = float(df["high"].iloc[-24:].max())
+            off = (hi24 - close) / hi24 * 100 if hi24 > 0 else 0
+            row.update(price=round(close, 6), off_high=round(off, 2),
+                       below_ema9=bool(close < ema9))
+            c_fund = f is not None and f >= FMIN
+            c_off = off >= OFFMIN * 100
+            c_ema = close < ema9
+            row["conds"] = {"funding": c_fund, "off_high": c_off, "below_ema9": c_ema}
+            if c_fund and c_off and c_ema:
+                row["state"] = "READY"; row["note"] = "🔴 Setup SHORT sẵn sàng (đủ 3 điều kiện)"
+            elif not c_fund:
+                need = f"funding {f:+.3f}% (cần ≥{FMIN}%)" if f is not None else "chưa có funding"
+                row["state"] = "FAR"; row["note"] = f"Chưa — {need}"
+            else:
+                miss = []
+                if not c_off: miss.append(f"rời đỉnh {off:.1f}% (<{OFFMIN*100:.1f}%)")
+                if not c_ema: miss.append("giá ≥ EMA9")
+                row["state"] = "NEAR"; row["note"] = "Gần — funding đạt, chờ: " + ", ".join(miss)
+        except Exception as e:
+            row["state"] = "ERR"; row["note"] = str(e)[:60]
+        coins.append(row)
+    data = {"coins": coins}
+    _watch_cache.update(ts=now, data=data)
+    return jsonify(data)
+
+
 def _rsi_series(s, n=14):
     d = s.diff()
     g = d.clip(lower=0).rolling(n, min_periods=1).mean()
@@ -1675,6 +1732,8 @@ td.mono{font-family:ui-monospace,monospace}
 <h1>📊 Edge v1 — Paper Trade (funding-short)</h1>
 <div class="sub">SHORT khi funding ≥0.03% + giá rời 24h-high ≥1.5% + close &lt; EMA9 H1 · SL 3×ATR / TP 2×ATR · KHÔNG tiền thật</div>
 <div class="ref">📐 <b>Backtest 3 năm @ 0.03% (baseline validate):</b> WR 62% · expectancy +0.051R · 1193 lệnh · 80% quý dương. Forward phải khớp ~đây. (Tiền thật sau này dùng 0.05%: WR 67% / +0.13R)</div>
+<div class="sec">👀 Đang canh — universe funding-short (ARB · BTC · BNB)</div>
+<div id="watchBox" class="arb">Đang tải danh sách canh…</div>
 <div class="sec">🧭 Forward-tracker — edge LIVE vs backtest (tự giám sát edge-decay)</div>
 <div class="arb" id="fwdBox">Đang tải forward-tracker…</div>
 <div class="sec">🎯 ARB Monitor — regime &amp; gate</div>
@@ -1720,6 +1779,27 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
     '<td class="mono '+((p.pnl_r||0)>0?'win':'loss')+'">'+((p.pnl_r||0)>0?'+':'')+p.pnl_r+'R</td></tr>').join('')+'</tbody></table>'
   ) : '<div class="empty">Chưa có lệnh đóng.</div>';
 }).catch(e=>{document.getElementById('cards').innerHTML='<div class="empty">Lỗi tải: '+e.message+'</div>';});
+
+// ── Đang canh (watchlist universe) ───────────────────────────────────────
+fetch('/api/watch').then(r=>r.json()).then(w=>{
+  var el=document.getElementById('watchBox');
+  if(w.error){el.innerHTML='⚠️ '+(w.banned?'Binance đang backoff, thử lại sau.':w.error);return;}
+  if(!w.coins||!w.coins.length){el.innerHTML='<span style="color:var(--mu)">Chưa có coin nào.</span>';return;}
+  var col={'READY':'var(--sh)','NEAR':'var(--wt)','FAR':'var(--mu)','ERR':'var(--mu)'};
+  var tag={'READY':'🔴 SẴN SÀNG','NEAR':'🟡 GẦN','FAR':'⚪ CHƯA','ERR':'⚠️ lỗi'};
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">'+
+    w.coins.map(function(c){
+      var fc=(c.funding>=0.03?'neg':c.funding<=-0.03?'pos':'');
+      return '<div style="border:1px solid var(--bd);border-radius:8px;padding:9px 11px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center">'+
+          '<b style="font-size:14px">'+c.short+'</b>'+
+          '<span style="color:'+(col[c.state]||'var(--mu)')+';font-weight:700;font-size:11px">'+(tag[c.state]||c.state)+'</span></div>'+
+        '<div class="mono" style="font-size:11px;margin-top:3px">giá '+fmt(c.price)+' · funding <span class="'+fc+'">'+(c.funding!=null?sgn(c.funding)+'%':'—')+'</span></div>'+
+        '<div class="mono" style="font-size:11px">rời đỉnh '+(c.off_high!=null?c.off_high+'%':'—')+' · '+(c.below_ema9?'dưới EMA9 ✓':'trên EMA9 ✗')+'</div>'+
+        '<div class="why" style="font-size:10.5px;margin-top:3px">'+(c.note||'')+'</div></div>';
+    }).join('')+'</div>'+
+    '<div class="why" style="font-size:10.5px;margin-top:6px;color:var(--mu)">Khi 1 coin đủ 3 điều kiện → paper engine tự mở lệnh SHORT + báo Telegram. BNB/BTC chưa có card phân tích sâu như ARB (chỉ ARB có monitor đầy đủ).</div>';
+}).catch(e=>{document.getElementById('watchBox').innerHTML='⚠️ Lỗi tải watch: '+e.message;});
 
 // ── Forward-tracker ──────────────────────────────────────────────────────
 fetch('/api/forward').then(r=>r.json()).then(f=>{

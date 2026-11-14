@@ -37,3 +37,4 @@ research/data/funding_long/
 research/data/trades_*.parquet
 research/*.log
 data/paper_trades_v1.json
+research/data/klines_recent/

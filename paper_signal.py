@@ -18,7 +18,10 @@ from core.binance import fetch_klines, fetch_all_funding_rates
 
 ROOT       = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR   = os.path.join(ROOT, "data")
-PAPER_FILE = os.path.join(DATA_DIR, "paper_trades_v1.json")
+from core.forward_tracker import state_file
+PAPER_FILE = state_file("paper_trades_v1.json")   # Railway Volume nếu có → bền qua deploy
+ALERT_FILE = state_file("arb_alerts_v1.json")     # sổ alert Rule B/C (ghi + tự chấm SL/TP)
+MAX_HOLD_H = 72                                    # timeout như backtest (simulate_trade max_bars=72)
 UNIVERSE   = os.path.join(DATA_DIR, "universe_v1.json")
 CONFIG     = os.path.join(DATA_DIR, "config.json")
 TZ = timezone(timedelta(hours=7))
@@ -66,32 +69,78 @@ def _indicators(df):
     return df
 
 
-def _check_open(p):
+def _entry_utc(pos):
+    """entry_time lưu ISO +07:00; index nến Binance là UTC naive → phải ĐỔI múi giờ, không chỉ bỏ tz.
+    (Bản cũ tz_localize(None) làm lệch 7h: bỏ sót 7 giờ đầu sau entry khi chấm SL/TP.)"""
+    t = pd.to_datetime(pos["entry_time"])
+    if t.tzinfo is not None:
+        t = t.tz_convert("UTC").tz_localize(None)
+    return t
+
+
+def _resolve(pos):
+    """Chấm 1 lệnh SHORT đang mở bằng nến 15m. SL xét trước (bi quan). Trả (status, pnl_r, exit) hoặc None."""
+    df = fetch_klines(pos["symbol"], "15m", 300, force_futures=True)
+    et = _entry_utc(pos)
+    after = df[df.index >= et]
+    risk = pos["sl"] - pos["entry"]
+    if risk <= 0:
+        return ("INVALID", 0.0, pos["entry"])
+    for _, r in after.iterrows():
+        if float(r["high"]) >= pos["sl"]:
+            return ("LOSS", -1.0, pos["sl"])
+        if float(r["low"]) <= pos["tp"]:
+            return ("WIN", round((pos["entry"] - pos["tp"]) / risk, 2), pos["tp"])
+    if len(after) and (after.index[-1] - et) >= pd.Timedelta(hours=MAX_HOLD_H):
+        last = float(after["close"].iloc[-1])
+        return ("TIMEOUT", round((pos["entry"] - last) / risk, 2), last)
+    return None
+
+
+def _check_open(p, label="PAPER"):
     still = []
     for pos in p["open"]:
         try:
-            df = fetch_klines(pos["symbol"], "1h", 50, force_futures=True)
-            entry_dt = pd.to_datetime(pos["entry_time"]).tz_localize(None)
-            after = df[df.index > entry_dt]
-            hit = None
-            for _, r in after.iterrows():
-                if float(r["high"]) >= pos["sl"]:
-                    hit = ("LOSS", -1.0, pos["sl"]); break
-                if float(r["low"]) <= pos["tp"]:
-                    rr = (pos["entry"] - pos["tp"]) / (pos["sl"] - pos["entry"])
-                    hit = ("WIN", round(rr, 2), pos["tp"]); break
+            hit = _resolve(pos)
             if hit:
                 pos.update({"status": hit[0], "pnl_r": hit[1], "exit": hit[2], "exit_time": _now()})
                 p["closed"].append(pos)
-                _tg(f"📕 [PAPER] ĐÓNG {pos['symbol']} SHORT → {hit[0]} {hit[1]:+}R "
+                _name = f"Rule {pos['rule']}" if pos.get("rule") else "SHORT"
+                _tg(f"📕 [{label}] ĐÓNG {pos['symbol']} {_name} → {hit[0]} {hit[1]:+}R "
                     f"(entry {pos['entry']:.6g} exit {hit[2]:.6g})")
             else:
                 still.append(pos)
         except Exception as e:
-            print(f"[paper check err] {pos['symbol']}: {e}")
+            print(f"[{label} check err] {pos['symbol']}: {e}")
             still.append(pos)
     p["open"] = still
     return p
+
+
+def _load_alerts():
+    if os.path.exists(ALERT_FILE):
+        try: return json.load(open(ALERT_FILE))
+        except Exception: pass
+    return {"open": [], "closed": []}
+
+def _save_alerts(a):
+    try: json.dump(a, open(ALERT_FILE, "w"), indent=2, default=str)
+    except Exception as e: print(f"[alert save err] {e}")
+
+def _alert_recent(a, hours=4):
+    """Cooldown gộp 4h giữa các alert B/C (như backtest) — đọc từ sổ nên bền qua restart."""
+    cutoff = datetime.now(TZ) - timedelta(hours=hours)
+    for x in a["open"] + a["closed"][-20:]:
+        try:
+            if pd.to_datetime(x["entry_time"]) > cutoff: return True
+        except Exception: pass
+    return False
+
+def _check_alerts():
+    a = _load_alerts()
+    if a["open"]:
+        a = _check_open(a, label="ARB MONITOR")
+        _save_alerts(a)
 
 
 def _recent(p, sym):
@@ -144,7 +193,7 @@ def _stats(p):
 
 # ── ARB monitor — Rule B/C (chỉ CẢNH BÁO, KHÔNG auto paper-trade) ─────────
 # Rule B/C single-coin dễ overfit → không tự đặt lệnh, chỉ báo để anh tự quyết.
-_arb_monitor_cooldown = {"B": 0, "C": 0}
+_arb_monitor_cooldown = {"B": 0, "C": 0, "BC": 0}
 
 def _emas(df):
     for p in [9,34,89,200]: df[f"e{p}"]=df["close"].ewm(span=p,adjust=False).mean()
@@ -196,10 +245,22 @@ def arb_monitor():
             # ARB mạnh + CHƯA gãy ngắn hạn → KHÔNG short. Cảnh báo strength bất thường.
             if rel7 >= 10 and now - _arb_monitor_cooldown.get("S", 0) > 86400:  # 1 lần/ngày
                 _arb_monitor_cooldown["S"] = now
-                _tg(f"⚠️ [ARB MONITOR] ARB đang MẠNH bất thường\n"
-                    f"ARB 7d {arb7:+.1f}% vs BTC {btc7:+.1f}% (hơn {rel7:+.1f}pp) | giá {close:.5g}\n"
-                    f"→ ARB uptrend/outperform BTC. KHÔNG short. Có thể có tin/catalyst — check news.\n"
-                    f"(short-monitor tạm TẮT tới khi ARB yếu lại)")
+                hi7 = float(arb["high"].iloc[-168:].max())
+                off7 = (hi7 - close) / hi7 * 100
+                if off7 >= 6 and close < e34:
+                    # Đã rời đỉnh sâu + mất EMA34: KHÔNG được gọi là "mạnh" nữa (10/11: báo MẠNH ở
+                    # 0.171 khi đã -9% từ đỉnh, sau đó rơi tiếp -19%). Chỉ đổi CÂU CHỮ, gate giữ nguyên
+                    # (phase9: mở gate sớm hơn chỉ thêm 11 lệnh/3 năm, exp âm → không đổi luật).
+                    _tg(f"⚠️ [ARB MONITOR] ARB ĐANG ĐIỀU CHỈNH sau pump\n"
+                        f"Giá {close:.5g} = {-off7:.1f}% từ đỉnh 7d {hi7:.5g}, đã mất EMA34 H1 | "
+                        f"7d vẫn hơn BTC {rel7:+.1f}pp\n"
+                        f"→ KHÔNG phải tín hiệu mua. Short-monitor vẫn TẮT tới khi gãy cấu trúc "
+                        f"(đóng dưới EMA200 H1 ~{e200:.5g}) — lịch sử: short sớm hơn mốc này không có lợi.")
+                else:
+                    _tg(f"⚠️ [ARB MONITOR] ARB đang MẠNH bất thường\n"
+                        f"ARB 7d {arb7:+.1f}% vs BTC {btc7:+.1f}% (hơn {rel7:+.1f}pp) | giá {close:.5g}\n"
+                        f"→ ARB uptrend/outperform BTC. KHÔNG short. Có thể có tin/catalyst — check news.\n"
+                        f"(short-monitor tạm TẮT tới khi ARB yếu lại)")
             print(f"[arb monitor] SKIP short — uptrend/outperform "
                   f"(aboveEMA200H4={above_macro} rel7d={rel7:+.1f}pp st_break={st_break})")
             return
@@ -214,34 +275,49 @@ def arb_monitor():
         # Rule B — bearish + hồi chạm EMA34 + rejection (RSI≥45 tránh short đáy quá bán)
         touched = float(prev["high"]) >= float(prev["e34"]) or float(row["high"]) >= e34
         rejected = below9 and close < float(row["open"])
-        if bearish and touched and rejected and rsi >= 45:
-            if now - _arb_monitor_cooldown["B"] > 14400:  # cooldown 4h
-                _arb_monitor_cooldown["B"] = now
-                sl = max(float(row["high"]), float(prev["high"])) + atr*0.5
-                _tg(f"🔍 [ARB MONITOR] Rule B — Rejection ({_tag})\n"
-                    f"Hồi chạm EMA34 rồi bị đẩy xuống\n"
-                    f"Giá {close:.5g} | gợi ý SHORT: SL ~{sl:.5g} TP ~{close-atr*2:.5g}\n"
-                    f"(discretionary — anh tự quyết, KHÔNG auto)")
-
+        b_fire = bearish and touched and rejected and rsi >= 45
         # Rule C — thua BTC + short khi HỒI lên chạm EMA34 bị đẩy xuống (KHÔNG short
         # lúc đang rơi/vào đáy — đó là chỗ dễ bounce ngược, entry tệ).
         btc24 = (float(btc["close"].iloc[-1])/float(btc["close"].iloc[-25])-1)*100
-        c_reject = (float(prev["high"]) >= float(prev["e34"]) or float(row["high"]) >= e34) and close < float(row["open"])
-        if (arb24 - btc24) <= -3 and bearish and c_reject and rsi >= 42:
-            if now - _arb_monitor_cooldown["C"] > 14400:
-                _arb_monitor_cooldown["C"] = now
+        c_reject = touched and close < float(row["open"])
+        c_fire = (arb24 - btc24) <= -3 and bearish and c_reject and rsi >= 42
+
+        # ĐIỀU KIỆN B/C GIỮ NGUYÊN (phase9 11/2026: không biến thể nào tốt hơn ở cả data cũ lẫn mới).
+        # Đổi: (1) B và C cùng bắn → 1 tin duy nhất; (2) GHI vào sổ để forward-tracker tự chấm SL/TP;
+        # (3) cooldown gộp 4h đọc từ sổ (bền qua restart, khớp backtest).
+        if b_fire or c_fire:
+            al = _load_alerts()
+            if not _alert_recent(al, 4) and now - _arb_monitor_cooldown.get("BC", 0) > 14400:
+                _arb_monitor_cooldown["BC"] = now
+                rule = "B+C" if (b_fire and c_fire) else ("B" if b_fire else "C")
                 sl = max(float(row["high"]), float(prev["high"])) + atr*0.5
-                _tg(f"🔍 [ARB MONITOR] Rule C — Yếu hơn BTC + rejection ({_tag})\n"
-                    f"ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp) · hồi chạm EMA34 bị đẩy xuống\n"
-                    f"Giá {close:.5g} | gợi ý SHORT: SL ~{sl:.5g} TP ~{close-atr*2:.5g}\n"
-                    f"(discretionary — anh tự quyết, KHÔNG auto)")
+                tp = close - atr*2
+                rr = (close - tp) / (sl - close) if sl > close else 0
+                al["open"].append({"symbol": "ARBUSDT", "direction": "SHORT", "rule": rule, "tag": _tag,
+                                   "entry_time": _now(), "entry": round(close, 8),
+                                   "sl": round(sl, 8), "tp": round(tp, 8),
+                                   "btc24": round(btc24, 2), "arb24": round(arb24, 2),
+                                   "rsi": round(rsi, 1), "status": "OPEN"})
+                _save_alerts(al)
+                why = {"B": "Hồi chạm EMA34 rồi bị đẩy xuống",
+                       "C": f"ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp) · hồi chạm EMA34 bị đẩy xuống",
+                       "B+C": f"Hồi chạm EMA34 bị đẩy xuống · ARB 24h {arb24:+.1f}% vs BTC {btc24:+.1f}% (thua {arb24-btc24:.1f}pp)"}[rule]
+                hist = "Lịch sử 3 năm: thắng ~51%, +0.14R/lệnh (4 tháng gần: +0.04R) → thua 1 trong 2 lệnh là BÌNH THƯỜNG."
+                if rule == "B+C":
+                    hist += "\nLưu ý: B+C trùng nhau KHÔNG mạnh hơn B đơn lẻ (lịch sử n=42, ~−0.1R) — đừng tăng size."
+                _tg(f"🔍 [ARB MONITOR] Rule {rule} — Rejection ({_tag})\n{why}\n"
+                    f"Giá {close:.5g} | gợi ý SHORT: SL ~{sl:.5g} TP ~{tp:.5g} (RR {rr:.1f})\n"
+                    f"{hist}\n"
+                    f"(discretionary — anh tự quyết, KHÔNG auto · kết quả sẽ tự chấm trên /paper)")
     except Exception as e:
         print(f"[arb monitor err] {e}")
 
 
 def run_once():
     p = _load(); p = _check_open(p); p, new = _scan(p); _save(p)
-    arb_monitor()   # Rule B/C — chỉ cảnh báo, không đụng paper state
+    try: _check_alerts()   # chấm SL/TP các alert B/C đang mở
+    except Exception as e: print(f"[alert check err] {e}")
+    arb_monitor()   # Rule B/C — cảnh báo + ghi sổ alert (không đụng paper state Rule A)
     print(f"[PAPER {_now()}] signal mới: {new} | {_stats(p)}")
     return new
 

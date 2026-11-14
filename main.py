@@ -1117,7 +1117,8 @@ def index():
 def api_paper_trades():
     """Trả về paper trades v1 + stats (forward vs backtest)."""
     import os as _os
-    pf = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "data", "paper_trades_v1.json")
+    from core.forward_tracker import state_file as _sf
+    pf = _sf("paper_trades_v1.json")   # cùng chỗ paper_signal ghi (Volume nếu có)
     if not _os.path.exists(pf):
         return jsonify({"open": [], "closed": [], "stats": None})
     try:
@@ -1801,35 +1802,37 @@ fetch('/api/watch').then(r=>r.json()).then(w=>{
     '<div class="why" style="font-size:10.5px;margin-top:6px;color:var(--mu)">Khi 1 coin đủ 3 điều kiện → paper engine tự mở lệnh SHORT + báo Telegram. BNB/BTC chưa có card phân tích sâu như ARB (chỉ ARB có monitor đầy đủ).</div>';
 }).catch(e=>{document.getElementById('watchBox').innerHTML='⚠️ Lỗi tải watch: '+e.message;});
 
-// ── Forward-tracker ──────────────────────────────────────────────────────
+// ── Forward-tracker (2 sổ: alert B/C + Rule A) ───────────────────────────
 fetch('/api/forward').then(r=>r.json()).then(f=>{
   var el=document.getElementById('fwdBox');
   if(f.error){el.innerHTML='⚠️ '+f.error;return;}
-  var v=f.verdict||{}, o=f.overall||{};
-  var col={'OK':'var(--lg)','THEO DÕI':'var(--wt)','CẢNH BÁO':'var(--sh)','THU THẬP':'var(--mu)'}[v.state]||'var(--mu)';
-  var h='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
-    '<span class="badge" style="color:'+col+'">'+(v.emoji||'')+' '+(v.state||'—')+'</span>'+
-    '<span class="cmp">(so baseline: WR 62% · exp +0.051R · 3y backtest)</span></div>';
-  h+='<div style="font-size:12px;margin-bottom:10px">'+(v.msg||'')+'</div>';
-  if(o.n>0){
-    function m(l,val,cls){return '<span class="pill"><b>'+l+' </b><span class="mono '+(cls||'')+'">'+val+'</span></span>';}
-    var expCls=o.exp>0.02?'pos':o.exp<-0.02?'neg':'';
-    h+='<div style="margin-bottom:6px">'+
-      m('n đóng',o.n)+m('WR',(o.wr*100).toFixed(0)+'%',o.wr>=0.55?'pos':o.wr>=0.45?'':'neg')+
-      m('exp',(o.exp>0?'+':'')+o.exp.toFixed(3)+'R',expCls)+
-      m('CI95','['+o.ci_lo.toFixed(3)+','+o.ci_hi.toFixed(3)+']')+
-      m('totR',(o.totR>0?'+':'')+o.totR+'R',o.totR>0?'pos':'neg')+'</div>';
-    var rb=f.rolling20||{};
-    if(rb.n>=1){h+='<div class="cmp" style="margin-bottom:6px">20 gần nhất: n='+rb.n+' · WR '+(rb.wr*100).toFixed(0)+'% · exp '+(rb.exp>0?'+':'')+rb.exp.toFixed(3)+'R</div>';}
-    if((f.per_coin||[]).length){
-      h+='<div class="cmp" style="margin-top:4px">Theo coin: '+f.per_coin.map(function(c){
-        return '<b>'+c.symbol.replace('USDT','')+'</b> '+c.n+'L/WR'+(c.wr*100).toFixed(0)+'%/'+(c.exp>0?'+':'')+c.exp.toFixed(2)+'R';
-      }).join(' · ')+'</div>';
+  var COL={'OK':'var(--lg)','THEO DÕI':'var(--wt)','CẢNH BÁO':'var(--sh)','THU THẬP':'var(--mu)'};
+  function m(l,val,cls){return '<span class="pill"><b>'+l+' </b><span class="mono '+(cls||'')+'">'+val+'</span></span>';}
+  function rtxt(x){return (x>0?'+':'')+x+'R';}
+  var h=(f.books||[]).map(function(bk,i){
+    var v=bk.verdict||{}, o=bk.overall||{};
+    var s='<div style="'+(i?'margin-top:10px;border-top:1px solid var(--bd);padding-top:10px':'')+'">'+
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">'+
+      '<b>'+bk.title+'</b><span class="badge" style="font-size:12px;color:'+(COL[v.state]||'var(--mu)')+'">'+(v.emoji||'')+' '+(v.state||'—')+'</span>'+
+      '<span class="cmp">'+bk.baseline+'</span></div>';
+    if(o.n>0){
+      s+='<div style="font-size:12px;margin-bottom:6px">'+(v.msg||'')+'</div><div>'+
+        m('n đóng',o.n)+m('WR',(o.wr*100).toFixed(0)+'%',o.wr>=0.55?'pos':o.wr>=0.45?'':'neg')+
+        m('exp',(o.exp>0?'+':'')+o.exp.toFixed(3)+'R',o.exp>0.02?'pos':o.exp<-0.02?'neg':'')+
+        m('CI95','['+o.ci_lo.toFixed(2)+','+o.ci_hi.toFixed(2)+']')+
+        m('totR',rtxt(o.totR),o.totR>0?'pos':'neg')+'</div>';
+      if((bk.per_group||[]).length>1){s+='<div class="cmp">Theo nhóm: '+bk.per_group.map(function(c){
+        return '<b>'+c.name+'</b> '+c.n+'L/WR'+(c.wr*100).toFixed(0)+'%/'+(c.exp>0?'+':'')+c.exp.toFixed(2)+'R';}).join(' · ')+'</div>';}
+      if((bk.recent||[]).length){s+='<div class="cmp" style="margin-top:3px">Gần nhất: '+bk.recent.map(function(t){
+        return t.time+' '+t.name+' <span class="'+(t.pnl_r>0?'pos':'neg')+'">'+t.status+' '+rtxt(t.pnl_r)+'</span>';}).join(' · ')+'</div>';}
+    }else{
+      s+='<div class="cmp">'+o.n+'/'+f.min_n+' lệnh đóng. '+bk.empty+'</div>';
     }
-  }else{
-    h+='<div class="cmp">Chưa có lệnh đóng — tracker bắt đầu thống kê khi paper engine đóng lệnh đầu tiên. '+
-       'Cần ~'+f.min_n+' lệnh để qua pha THU THẬP.</div>';
-  }
+    if(bk.open_count){s+='<div class="cmp" style="margin-top:3px">⏳ Đang mở '+bk.open_count+': '+bk.open.map(function(p){
+      return (p.rule?('Rule '+p.rule+' '):'')+(p.symbol||'').replace('USDT','')+' @'+fmt(p.entry)+' (SL '+fmt(p.sl)+' · TP '+fmt(p.tp)+' · '+p.age_h+'h)';}).join(' · ')+'</div>';}
+    return s+'</div>';
+  }).join('');
+  if(!f.persistent){h+='<div class="why" style="margin-top:8px;color:var(--wt)">⚠️ Chưa gắn Railway Volume (/data) → sổ lệnh bị XOÁ mỗi lần deploy. Gắn Volume mount path <span class="mono">/data</span> để tracker tích luỹ được dữ liệu.</div>';}
   el.innerHTML=h;
 }).catch(e=>{document.getElementById('fwdBox').innerHTML='⚠️ Lỗi forward-tracker: '+e.message;});
 

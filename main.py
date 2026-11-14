@@ -1453,22 +1453,26 @@ def api_arb_status():
         if direction == "LONG" and R1 and S1 and S2:
             pe = (S1 + e34_h1)/2
             setups.append({"name":"Pullback (RR tốt)","dir":"LONG",
-                "zone":f"{min(S1,e34_h1):g}–{max(S1,e34_h1):g}", "stop":round(S2*0.99,5),
+                "zone":f"{min(S1,e34_h1):g}–{max(S1,e34_h1):g}", "entry":round(pe,5),
+                "entry_lo":round(min(S1,e34_h1),5), "entry_hi":round(max(S1,e34_h1),5), "stop":round(S2*0.99,5),
                 "target":R1, "rr":_rr(pe, S2*0.99, R1),
                 "note":"Chờ giá chỉnh về hỗ trợ/EMA34 rồi mua — mua support, không mua tường"})
             if R2:
                 setups.append({"name":"Breakout","dir":"LONG",
-                    "zone":f"retest {R1:g} sau khi ĐÓNG H1 > {R1:g}", "stop":round(R1*0.985,5),
+                    "zone":f"retest {R1:g} sau khi ĐÓNG H1 > {R1:g}", "entry":round(R1,5),
+                    "trigger":f"chỉ hợp lệ SAU KHI nến H1 đóng trên {R1:g}", "stop":round(R1*0.985,5),
                     "target":R2, "rr":_rr(R1, R1*0.985, R2),
                     "note":"Chỉ vào khi break-hold; đóng lại dưới thì hủy"})
         elif direction == "SHORT" and R1 and S1:
             setups.append({"name":"Rejection kháng cự","dir":"SHORT",
-                "zone":f"{R1:g} (khi bị đẩy xuống)", "stop":round(R1*1.015,5),
+                "zone":f"{R1:g} (khi bị đẩy xuống)", "entry":round(R1,5),
+                "trigger":"chờ giá chạm rồi BỊ ĐẨY XUỐNG (rejection) mới vào", "stop":round(R1*1.015,5),
                 "target":S1, "rr":_rr(R1, R1*1.015, S1),
                 "note":"Short khi rejection tại kháng cự, SL trên đỉnh"})
             if S2:
                 setups.append({"name":"Breakdown","dir":"SHORT",
-                    "zone":f"retest {S1:g} sau khi ĐÓNG H1 < {S1:g}", "stop":round(S1*1.015,5),
+                    "zone":f"retest {S1:g} sau khi ĐÓNG H1 < {S1:g}", "entry":round(S1,5),
+                    "trigger":f"chỉ hợp lệ SAU KHI nến H1 đóng dưới {S1:g}", "stop":round(S1*1.015,5),
                     "target":S2, "rr":_rr(S1, S1*1.015, S2),
                     "note":"Chỉ vào khi phá hỗ trợ dứt khoát"})
         # Retest mức intraday VỪA PHÁ — chèn LÊN ĐẦU (điểm vào RR tốt nhất)
@@ -1476,12 +1480,14 @@ def api_arb_status():
         if direction == "LONG" and bro and R1 and bro < close:
             sb = round(bro*0.985, 5)
             setups.insert(0, {"name":"Retest mức vừa phá (ưu tiên)","dir":"LONG",
-                "zone":f"~{bro:g} (chờ về + GIỮ)", "stop":sb, "target":R1, "rr":_rr(bro, sb, R1),
+                "zone":f"~{bro:g} (chờ về + GIỮ)", "entry":round(bro,5),
+                "trigger":"chờ giá về đây và BẬT lên (giữ được) mới vào", "stop":sb, "target":R1, "rr":_rr(bro, sb, R1),
                 "note":"Kháng cự cũ vừa phá → hỗ trợ mới. Vào khi giá về đây và BẬT lên; thủng thì cắt"})
         elif direction == "SHORT" and bro and S1 and bro > close:
             sb = round(bro*1.015, 5)
             setups.insert(0, {"name":"Retest mức vừa phá (ưu tiên)","dir":"SHORT",
-                "zone":f"~{bro:g} (chờ hồi lên + rejection)", "stop":sb, "target":S1, "rr":_rr(bro, sb, S1),
+                "zone":f"~{bro:g} (chờ hồi lên + rejection)", "entry":round(bro,5),
+                "trigger":"chờ giá hồi lên đây rồi BỊ ĐẨY XUỐNG mới vào", "stop":sb, "target":S1, "rr":_rr(bro, sb, S1),
                 "note":"Hỗ trợ cũ vừa phá → kháng cự mới. Vào khi giá hồi lên đây rồi bị đẩy xuống"})
         d_r = (R1/close-1)*100 if R1 else 99
         d_s = (close/S1-1)*100 if S1 else 99
@@ -1550,7 +1556,7 @@ def api_arb_status():
         # Đòn bẩy tối đa an toàn: thanh lý nằm cách ~2× khoảng SL (đệm cho wick vượt SL).
         lev_long = max(1, min(10, int(50/abs(sl_long_pct)))) if sl_long_pct else 1
         lev_short = max(1, min(10, int(50/abs(sl_short_pct)))) if sl_short_pct else 1
-        sl_zone = {"atr_pct": atr_pct,
+        sl_zone = {"atr_pct": atr_pct, "atr": round(_atr, 6),
                    "sl_long": sl_long, "sl_long_pct": sl_long_pct, "size_long": size_long, "lev_long": lev_long,
                    "sl_short": sl_short, "sl_short_pct": sl_short_pct, "size_short": size_short, "lev_short": lev_short}
         # ── Kế hoạch quản trị lệnh (chốt từng phần + dời BE + trailing) ──
@@ -1622,6 +1628,19 @@ _NEWS_FEEDS = [("CoinTelegraph","https://cointelegraph.com/rss"),
                ("CoinDesk","https://www.coindesk.com/arc/outboundfeeds/rss/"),
                ("Decrypt","https://decrypt.co/feed"),
                ("TheBlock","https://www.theblock.co/rss.xml")]
+
+@app.route("/api/arb/check")
+def api_arb_check():
+    """Kiểm tra lệnh định vào (dir, entry) — đối chiếu với CHÍNH gợi ý đang hiện trên card ARB.
+    Dùng lại dữ liệu arb_status (cache 60s) → không gọi thêm Binance, không có logic tín hiệu mới."""
+    try:
+        from core.pretrade import check_entry
+        resp = api_arb_status()
+        d = resp.get_json() if hasattr(resp, "get_json") else None
+        return jsonify(check_entry(d, request.args.get("dir"), request.args.get("entry")))
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 
 @app.route("/api/arb/news")
 def api_arb_news():
@@ -1739,6 +1758,17 @@ td.mono{font-family:ui-monospace,monospace}
 <div class="arb" id="fwdBox">Đang tải forward-tracker…</div>
 <div class="sec">🎯 ARB Monitor — regime &amp; gate</div>
 <div class="arb" id="arbBox">Đang tải ARB…</div>
+<div class="sec">🧮 Kiểm tra lệnh ARB định vào — đối chiếu với gợi ý hệ thống ở trên</div>
+<div class="arb" id="chkBox">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <button type="button" id="chkL" onclick="chkDir('LONG')" style="padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--mu);font-weight:700;cursor:pointer">LONG</button>
+    <button type="button" id="chkS" onclick="chkDir('SHORT')" style="padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--mu);font-weight:700;cursor:pointer">SHORT</button>
+    <label for="chkEntry" style="font-size:12px;color:var(--mu)">Entry</label>
+    <input id="chkEntry" type="number" step="any" inputmode="decimal" placeholder="để trống = giá hiện tại" onkeydown="if(event.key==='Enter')runCheck()" style="width:230px;padding:7px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-family:ui-monospace,monospace">
+    <button type="button" onclick="runCheck()" style="padding:7px 16px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:#fff;font-weight:700;cursor:pointer">Kiểm tra</button>
+  </div>
+  <div id="chkOut" style="margin-top:8px"><span class="cmp">Chọn hướng, nhập giá định vào → hệ thống đối chiếu với Gợi ý vùng vào lệnh, điểm setup, mốc kháng cự/hỗ trợ và Vùng SL, rồi chỉ ra chỗ đặt SL.</span></div>
+</div>
 <div class="sec" style="font-size:12px">📰 Tin gần đây (ARB)</div>
 <div class="arb" id="arbNews">Đang tải tin…</div>
 <div class="cards" id="cards"></div>
@@ -1780,6 +1810,35 @@ fetch('/api/paper/trades').then(r=>r.json()).then(d=>{
     '<td class="mono '+((p.pnl_r||0)>0?'win':'loss')+'">'+((p.pnl_r||0)>0?'+':'')+p.pnl_r+'R</td></tr>').join('')+'</tbody></table>'
   ) : '<div class="empty">Chưa có lệnh đóng.</div>';
 }).catch(e=>{document.getElementById('cards').innerHTML='<div class="empty">Lỗi tải: '+e.message+'</div>';});
+
+// ── Kiểm tra lệnh định vào ───────────────────────────────────────────────
+var _chkDir=null;
+function chkDir(d){_chkDir=d;
+  var L=document.getElementById('chkL'),S=document.getElementById('chkS');
+  L.style.background=d==='LONG'?'var(--lg)':'var(--bg)';L.style.color=d==='LONG'?'#fff':'var(--mu)';
+  S.style.background=d==='SHORT'?'var(--sh)':'var(--bg)';S.style.color=d==='SHORT'?'#fff':'var(--mu)';}
+function runCheck(){
+  var out=document.getElementById('chkOut');
+  if(!_chkDir){out.innerHTML='<span style="color:var(--wt)">Chọn LONG hoặc SHORT trước.</span>';return;}
+  var e=document.getElementById('chkEntry').value.trim();
+  out.innerHTML='<span class="cmp">Đang đối chiếu…</span>';
+  fetch('/api/arb/check?dir='+_chkDir+(e?'&entry='+encodeURIComponent(e):'')).then(r=>r.json()).then(c=>{
+    if(c.error){out.innerHTML='<span style="color:var(--sh)">⚠️ '+c.error+'</span>';return;}
+    var VC={'ok':'var(--lg)','warn':'var(--wt)','bad':'var(--sh)'}, IC={'ok':'✅','warn':'⚠️','bad':'⛔','info':'ℹ️'};
+    var v=c.verdict, h='<div style="border:1px solid '+VC[v.key]+';border-radius:8px;padding:9px 12px;margin-bottom:8px">'+
+      '<b style="color:'+VC[v.key]+'">'+v.emoji+' '+v.state+'</b> — '+v.msg+
+      '<div class="cmp" style="margin-top:2px">Giá hiện tại '+fmt(c.price)+' · ATR H1 '+c.atr_pct+'%</div></div>';
+    h+=c.items.map(function(i){return '<div class="lvl" style="margin:4px 0;font-size:12px">'+IC[i.status]+' <b>'+i.title+':</b> '+i.text+'</div>';}).join('');
+    var s=c.sl;
+    h+='<div style="margin-top:8px;border-top:1px solid var(--bd);padding-top:8px">'+
+      '<b>🛡️ Đặt SL: <span class="mono">'+fmt(s.price)+'</span></b> <span class="cmp">('+(c.direction==='LONG'?'−':'+')+s.dist_pct+'% · '+s.atr_mult+' ATR · '+s.source+')</span>';
+    (c.sl_alts||[]).forEach(function(a){h+='<div class="lvl" style="font-size:11.5px">↳ Phương án SL '+a.kind+': <span class="mono">'+fmt(a.price)+'</span> ('+a.dist_pct+'% · '+a.atr_mult+' ATR · '+a.source+') — '+a.note+'</div>';});
+    h+='<div class="lvl" style="font-size:11.5px">Đòn bẩy tối đa ≤ <b>'+c.lev_max+'x</b> · rủi ro 1% tài khoản → khối lượng ≈ '+c.size_pct_1risk+'% vốn · hoà vốn sau phí '+fmt(c.breakeven)+'</div>';
+    if(c.ladder){h+='<div class="lvl" style="font-size:11.5px">Thoát lệnh: '+c.ladder.map(function(t){return t.tp+' '+t.rr+'R → <span class="mono">'+fmt(t.price)+'</span> ('+t.action+')';}).join(' → ')+(c.runner_frac>0?' → giữ '+Math.round(c.runner_frac*100)+'% chạy theo trailing':'')+'</div>';}
+    h+='</div><div class="why" style="opacity:.7;font-style:italic;margin-top:6px">'+c.disclaimer+'</div>';
+    out.innerHTML=h;
+  }).catch(function(e){out.innerHTML='<span style="color:var(--sh)">⚠️ Lỗi: '+e.message+'</span>';});
+}
 
 // ── Đang canh (watchlist universe) ───────────────────────────────────────
 fetch('/api/watch').then(r=>r.json()).then(w=>{
